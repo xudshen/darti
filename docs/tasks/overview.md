@@ -13,7 +13,7 @@
 | POC-1 | Kernel 加载与遍历 | `poc/poc-1-kernel.md` | ✅ 完成 |
 | POC-2 | 双视图值栈性能 | `poc/poc-2-bench.md` | ✅ 完成 |
 | POC-3 | Bridge / 互调机制 | `poc/poc-3-bridge.md` | ✅ 完成 |
-| POC-4 | 端到端最小原型 | `poc/poc-4-e2e.md` | 待开始 |
+| POC-4 | 端到端最小原型 | `poc/poc-4-e2e.md` | ✅ 完成 |
 
 ### 依赖关系
 
