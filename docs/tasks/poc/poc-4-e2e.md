@@ -47,10 +47,10 @@
 
 **依赖:** Task 16
 **产出文件:**
-- `test/e2e/handwritten_counter_test.dart`
+- `test/e2e/handwritten_bytecode_test.dart`
 
 **TDD 步骤:**
-- [x] 写集成测试 `handwritten_counter_test.dart`
+- [x] 写集成测试 `handwritten_bytecode_test.dart`
 - [x] 运行验证测试失败
 - [x] 调试直到测试通过
 - [x] **Commit**（分发循环 + 集成测试）
@@ -62,11 +62,11 @@
 - `lib/src/compiler/kernel_loader.dart`
 - `lib/src/compiler/simple_compiler.dart`
 - `lib/src/compiler/bytecode_emitter.dart`
-- `test/compiler/simple_compiler_test.dart`
+- `test/e2e/compiler_e2e_test.dart`
 - `test/fixtures/counter.dart`
 
 **TDD 步骤:**
-- [x] 写失败测试 `simple_compiler_test.dart`
+- [x] 写失败测试 `compiler_e2e_test.dart`
 - [x] 运行验证测试失败
 - [x] 实现 `kernel_loader.dart`
 - [x] 实现 `simple_compiler.dart`

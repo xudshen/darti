@@ -31,10 +31,10 @@
 **依赖:** Task 20
 **产出文件:**
 - `lib/src/runtime/dispatch_loop.dart`（修改）
-- `test/runtime/fuel_test.dart`
+- `test/runtime/dispatch_loop_test.dart`（合并）
 
 **TDD 步骤:**
-- [x] 写失败测试 `fuel_test.dart`
+- [x] 写失败测试（合入 `dispatch_loop_test.dart`）
 - [x] 运行验证测试失败
 - [x] 修改 `dispatch_loop.dart` 添加 fuel + async API
 - [x] 更新现有测试适配 async API
@@ -48,15 +48,15 @@
 - `lib/src/runtime/opcodes.dart`（修改）
 - `lib/src/runtime/types.dart`（修改）
 - `lib/src/runtime/dispatch_loop.dart`（修改）
-- `test/runtime/async_test.dart`
+- `test/runtime/dispatch_loop_test.dart`（合并）
 
 **TDD 步骤:**
-- [x] 写失败测试 `async_test.dart`
+- [x] 写失败测试（合入 `dispatch_loop_test.dart`）
 - [x] 运行验证测试失败
 - [x] 在 `opcodes.dart` 添加 INIT_ASYNC / AWAIT / ASYNC_RETURN
 - [x] 在 `types.dart` 添加 `InterpreterFrame`
 - [x] 在 `dispatch_loop.dart` 实现 AWAIT 分支
-- [x] 运行 `async_test.dart` 验证通过
+- [x] 运行 `dispatch_loop_test.dart` 验证通过
 - [x] 运行全部测试确认不破坏
 - [x] **Commit** `fce24bf`（AWAIT 挂起/恢复）
 

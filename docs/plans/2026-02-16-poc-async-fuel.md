@@ -51,13 +51,13 @@ _driveInterpreter() {
 
 ### Task 20: CallStack + 迭代分发循环
 
-**依赖:** Task 17 (handwritten_counter_test)
+**依赖:** Task 17 (handwritten_bytecode_test)
 **产出文件:**
 - `lib/src/runtime/call_stack.dart`（新建）
 - `lib/src/runtime/dispatch_loop.dart`（重写为迭代版）
 - `test/runtime/call_stack_test.dart`（新建）
 - `test/runtime/dispatch_loop_test.dart`（更新）
-- `test/e2e/handwritten_counter_test.dart`（验证不破坏）
+- `test/e2e/handwritten_bytecode_test.dart`（验证不破坏）
 
 **设计要点:**
 
@@ -77,7 +77,7 @@ CallStack 用 `Uint32List` 存储帧元数据，每帧 5 个槽位：
 - [ ] 实现 `call_stack.dart`
 - [ ] 运行 `call_stack_test.dart` 验证通过
 - [ ] 重写 `dispatch_loop.dart` 为迭代版本（同步，暂不加 fuel）
-- [ ] 运行全部现有测试验证不破坏（dispatch_loop_test + handwritten_counter_test + simple_compiler_test）
+- [ ] 运行全部现有测试验证不破坏（dispatch_loop_test + handwritten_bytecode_test + compiler_e2e_test）
 - [ ] **Commit**（flat call stack + 迭代分发）
 
 ### Task 21: Fuel-based 调度
@@ -85,7 +85,7 @@ CallStack 用 `Uint32List` 存储帧元数据，每帧 5 个槽位：
 **依赖:** Task 20
 **产出文件:**
 - `lib/src/runtime/dispatch_loop.dart`（修改，添加 fuel + async API）
-- `test/runtime/fuel_test.dart`（新建）
+- `test/runtime/dispatch_loop_test.dart`（合并）
 
 **设计要点:**
 
@@ -95,10 +95,10 @@ POC 简化：不实现 `_runQueue`（多帧并发调度），仅验证 fuel 耗�
 
 **TDD 步骤:**
 
-- [ ] 写失败测试 `fuel_test.dart`：验证 fuel 耗尽后通过 Timer.run 恢复执行并得到正确结果
+- [ ] 写失败测试（合入 `dispatch_loop_test.dart`）：验证 fuel 耗尽后通过 Timer.run 恢复执行并得到正确结果
 - [ ] 运行验证测试失败
 - [ ] 修改 `dispatch_loop.dart`：`execute()` → `Future<Object?>`，加 fuel 计数 + `Timer.run`
-- [ ] 更新现有测试适配 async API（dispatch_loop_test、handwritten_counter_test、simple_compiler_test 加 `await`）
+- [ ] 更新现有测试适配 async API（dispatch_loop_test、handwritten_bytecode_test、compiler_e2e_test 加 `await`）
 - [ ] 运行全部测试验证通过
 - [ ] **Commit**（fuel-based 调度）
 
@@ -109,7 +109,7 @@ POC 简化：不实现 `_runQueue`（多帧并发调度），仅验证 fuel 耗�
 - `lib/src/runtime/opcodes.dart`（修改，添加 INIT_ASYNC / AWAIT / ASYNC_RETURN）
 - `lib/src/runtime/types.dart`（修改，添加 InterpreterFrame）
 - `lib/src/runtime/dispatch_loop.dart`（修改，实现 AWAIT 处理）
-- `test/runtime/async_test.dart`（新建）
+- `test/runtime/dispatch_loop_test.dart`（合并）
 
 **设计要点:**
 
@@ -124,12 +124,12 @@ POC 简化版 async 流程：
 
 **TDD 步骤:**
 
-- [ ] 写失败测试 `async_test.dart`：手写字节码测试 async 函数 await 一个 delayed Future 后返回结果
+- [ ] 写失败测试（合入 `dispatch_loop_test.dart`）：手写字节码测试 async 函数 await 一个 delayed Future 后返回结果
 - [ ] 运行验证测试失败
 - [ ] 在 `opcodes.dart` 添加 INIT_ASYNC / AWAIT / ASYNC_RETURN 常量
 - [ ] 在 `types.dart` 添加 `InterpreterFrame` 类
 - [ ] 在 `dispatch_loop.dart` 实现 AWAIT 分支
-- [ ] 运行 `async_test.dart` 验证通过
+- [ ] 运行 `dispatch_loop_test.dart` 验证通过
 - [ ] 运行全部测试确认不破坏
 - [ ] **Commit**（AWAIT 挂起/恢复）
 

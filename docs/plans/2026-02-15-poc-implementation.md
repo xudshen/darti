@@ -2644,13 +2644,13 @@ git commit -m "feat(poc-4): implement dispatch loop with 22-opcode ISA subset"
 ## Task 17: POC-4 — 手写字节码集成测试（Counter 程序）
 
 **Files:**
-- Test: `test/e2e/handwritten_counter_test.dart`
+- Test: `test/e2e/handwritten_bytecode_test.dart`
 
 **目的**：在引入编译器之前，用手写字节码验证运行时能正确执行 Counter 程序。
 
 **Step 1: 编写测试**
 
-`test/e2e/handwritten_counter_test.dart`:
+`test/e2e/handwritten_bytecode_test.dart`:
 ```dart
 import 'dart:typed_data';
 import 'package:darti/src/runtime/opcodes.dart';
@@ -2764,7 +2764,7 @@ void main() {
 
 **Step 2: 运行测试**
 
-Run: `dart test test/e2e/handwritten_counter_test.dart`
+Run: `dart test test/e2e/handwritten_bytecode_test.dart`
 Expected: PASS（可能需要微调 dispatch_loop.dart 的可见性）
 
 **Step 3: Commit**
@@ -2784,7 +2784,7 @@ git commit -m "test(poc-4): hand-written Counter bytecode integration test"
 - Create: `lib/src/compiler/kernel_loader.dart`
 - Create: `lib/src/compiler/simple_compiler.dart`
 - Create: `lib/src/compiler/bytecode_emitter.dart`
-- Test: `test/compiler/simple_compiler_test.dart`
+- Test: `test/e2e/compiler_e2e_test.dart`
 
 **前置条件**：POC-1 验证了 Kernel 加载可行。此处复用 `package:kernel`。
 
@@ -2809,7 +2809,7 @@ Run: `dart pub get`
 
 **Step 2: 编写编译器测试**
 
-`test/compiler/simple_compiler_test.dart`:
+`test/e2e/compiler_e2e_test.dart`:
 ```dart
 import 'dart:io';
 import 'package:darti/src/compiler/simple_compiler.dart';
@@ -3012,7 +3012,7 @@ class SimpleCompiler {
 
 **Step 4: 运行测试**
 
-Run: `dart test test/compiler/simple_compiler_test.dart`
+Run: `dart test test/e2e/compiler_e2e_test.dart`
 Expected: 初始可能 FAIL（编译器需要迭代完善）
 
 **Step 5: 迭代直到测试通过**
@@ -3022,7 +3022,7 @@ Expected: 初始可能 FAIL（编译器需要迭代完善）
 **Step 6: Commit**
 
 ```bash
-git add lib/src/compiler/ test/compiler/ test/fixtures/counter.dart
+git add lib/src/compiler/ test/e2e/compiler_e2e_test.dart test/fixtures/counter.dart
 git commit -m "feat(poc-4): implement minimal Kernel-to-bytecode compiler"
 ```
 
