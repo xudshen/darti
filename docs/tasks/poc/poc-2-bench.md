@@ -51,29 +51,50 @@
 
 ## 关键发现
 
-### 1. JIT vs AOT 性能差异
+### 1. AOT 完整对比（10M 迭代，10 次取中位数）
 
-| 基准 | JIT (ops/sec) | AOT (ops/sec) | 说明 |
-|------|--------------|---------------|------|
-| int_arith (dual-view) | ~370M | ~485M | AOT 更快 |
-| int_arith (boxed) | ~1.28B | ~413M | JIT 推测优化大幅领先 |
-| int_arith (native) | ~1.3B | ~1.78B | 裸 int 基线 |
-| double_arith (dual-view) | ~310M | ~360M | 与 int 类似 |
+| 场景 | dual-view | boxed | native | dual/boxed | dual/native |
+|------|-----------|-------|--------|------------|-------------|
+| **int** | 491M | 466M | 1.70B | 1.05x | 29% |
+| **double** | 238M | 139M | 247M | **1.71x** | 96% |
+| **mixed** | 204M | 126M | — | **1.63x** | — |
 
-### 2. 双视图 vs 装箱性能
+### 2. JIT 完整对比
 
-- **JIT 模式**: 装箱 (`List<Object?>`) 反而 **3x 快于** 双视图。原因：Dart VM JIT 能对 `List<Object?>` 做推测性类型专化，消除拆箱开销。
-- **AOT 模式**: 双视图 **1.2x 快于** 装箱。AOT 无推测优化，typed_data 视图的静态类型优势体现。
-- **结论**: darti 解释器以 AOT 编译为目标场景时，双视图方案成立。
+| 场景 | dual-view | boxed | native | dual/boxed |
+|------|-----------|-------|--------|------------|
+| **int** | 364M | 1.25B | 1.34B | 0.29x |
+| **double** | 261M | 133M | 1.12B | 1.97x |
+| **mixed** | 272M | 212M | — | 1.28x |
 
-### 3. 与原生代码的差距
+### 3. 分析
 
-- AOT 下 dual-view 约为 native 的 **27%** (~485M vs ~1.78B)
-- 目标 1/5~1/3 → **27% 落在 1/4 区间，符合目标**
+**int 场景差异小（AOT 1.05x）:**
+- int 不涉及堆分配，装箱/拆箱只是类型检查开销
+- AOT 编译器对 int 的优化已经很好，双视图优势微弱
 
-### 4. 分发循环
+**double 场景差异大（AOT 1.71x）:**
+- 装箱 double 每次写入都需要堆分配 `Double` 对象
+- 双视图直接写 `Float64List` 槽位，零分配
+- 双视图 double 达到 native 的 **96%**，几乎无损
+
+**mixed 场景（AOT 1.63x）:**
+- 同时操作 int/double，更接近真实解释器工作负载
+- 装箱方案的 double 堆分配拖累整体性能
+
+**JIT 反转现象:**
+- JIT 下 int 装箱反而 **3.4x 快于** 双视图（VM 推测性类型专化）
+- 但 double/mixed 场景 JIT 下双视图也更快，说明推测优化对 double 不生效
+
+**结论:** darti 解释器将同时处理 int/double，双视图方案在 AOT 下有 **63%~71%** 性能优势，方案成立。
+
+### 4. 与原生代码的差距
+
+- int: AOT 下 dual-view 约为 native 的 **29%**（491M vs 1.70B）→ 符合 1/5~1/3 目标
+- double: AOT 下 dual-view 约为 native 的 **96%**（238M vs 247M）→ 远超目标
+
+### 5. 分发循环
 
 - 32 位定宽指令编码（ABC/AsBx 格式）工作正常
 - 跳转偏移公式 `offset = target_pc - current_pc - 1`（因 dispatch loop 先 `pc++` 再 switch）
 - 迭代 Fibonacci 对小 n 值执行太快（<1μs），需更大计算量才能体现 interp/native 比值
-- fib(40) 级别能稳定测出比值

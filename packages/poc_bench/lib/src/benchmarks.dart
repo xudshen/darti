@@ -66,6 +66,56 @@ BenchResult benchBoxedArith(int iterations) {
   });
 }
 
+BenchResult benchBoxedDoubleArith(int iterations) {
+  final stack = List<Object?>.filled(16, null);
+  return runBench('double_arith (boxed)', iterations, () {
+    stack[0] = 0.0;
+    for (int i = 0; i < iterations; i++) {
+      stack[1] = i.toDouble();
+      stack[2] = (stack[1] as double) * 3.14;
+      stack[0] = (stack[0] as double) + (stack[2] as double);
+    }
+  });
+}
+
+BenchResult benchNativeDoubleArith(int iterations) {
+  return runBench('double_arith (native)', iterations, () {
+    double sum = 0.0;
+    for (int i = 0; i < iterations; i++) {
+      sum += i.toDouble() * 3.14;
+    }
+    if (sum < 0) print(sum);
+  });
+}
+
+BenchResult benchMixedArith(int iterations) {
+  final vs = ValueStack(16);
+  return runBench('mixed_arith (dual-view)', iterations, () {
+    vs.intView[0] = 0;
+    vs.doubleView[2] = 0.0;
+    for (int i = 0; i < iterations; i++) {
+      vs.intView[1] = i * 3 + 1;
+      vs.intView[0] = vs.intView[0] + vs.intView[1];
+      vs.doubleView[3] = vs.intView[1].toDouble() * 2.5;
+      vs.doubleView[2] = vs.doubleView[2] + vs.doubleView[3];
+    }
+  });
+}
+
+BenchResult benchBoxedMixedArith(int iterations) {
+  final stack = List<Object?>.filled(16, null);
+  return runBench('mixed_arith (boxed)', iterations, () {
+    stack[0] = 0;
+    stack[2] = 0.0;
+    for (int i = 0; i < iterations; i++) {
+      stack[1] = i * 3 + 1;
+      stack[0] = (stack[0] as int) + (stack[1] as int);
+      stack[3] = (stack[1] as int).toDouble() * 2.5;
+      stack[2] = (stack[2] as double) + (stack[3] as double);
+    }
+  });
+}
+
 BenchResult benchNativeArith(int iterations) {
   return runBench('int_arith (native)', iterations, () {
     int sum = 0;

@@ -16,6 +16,10 @@ void main() {
     'int (boxed)': () => benchBoxedArith(iterations),
     'int (native)': () => benchNativeArith(iterations),
     'double (dual-view)': () => benchDoubleArith(iterations),
+    'double (boxed)': () => benchBoxedDoubleArith(iterations),
+    'double (native)': () => benchNativeDoubleArith(iterations),
+    'mixed (dual-view)': () => benchMixedArith(iterations),
+    'mixed (boxed)': () => benchBoxedMixedArith(iterations),
   };
 
   for (final entry in arithBenches.entries) {
