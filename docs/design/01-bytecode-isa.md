@@ -157,8 +157,8 @@ WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不
 0x51  CALL_STATIC   A, Bx         refStack[A] = call staticFunc[Bx]
                                   参数数量和类型从 funcProto[Bx].paramCount 获取
                                   参数从 refStack[A+1] 开始连续排列
-0x52  CALL_HOST     A, Bx         refStack[A] = hostBindings[Bx](args...)
-                                  参数数量从绑定表元数据获取，从 refStack[A+1] 开始排列
+0x52  CALL_HOST     A, B, C       refStack[A] = hostBindings[C](refStack[A..A+B-1])
+                                  A=baseReg, B=argCount, C=hostId; 参数从 refStack[A] 开始连续排列
 0x53  CALL_VIRTUAL  A, B, C       refStack[A] = refStack[B].method(IC)(args)
                                   关联内联缓存槽
 0x54  CALL_SUPER    A, Bx         refStack[A] = super.method[Bx](args)

@@ -96,24 +96,17 @@
 - 编译器可直接用 `x.interfaceTarget.enclosingClass` 等属性
 - 无需 canonicalName fallback hack
 
-### 2. boxInt / unboxInt 操作码
-
-双栈模型下，int 值存在 ValueStack（Int64List view），Object 引用存在 RefStack。
-当需要跨越边界（如 int 参数传给 host 方法）时，需要显式 box/unbox：
-- `boxInt ref[A] = val[B]`  — 将 int64 装箱为 Object?
-- `unboxInt val[A] = ref[B]` — 将 Object? 拆箱为 int64
-
-### 3. callHost ABC 格式
+### 2. callHost ABC 格式（设计文档已同步更新）
 
 原始设计用 ABx（单参数），但 `list.add(element)` 需要传 receiver + argument。
 改为 ABC 格式：A=baseReg, B=argCount, C=hostId，参数从 ref[A..A+B-1] 取。
 
-### 4. CFE 会将 list literal 脱糖为 `_GrowableList._literal*`
+### 3. CFE 会将 list literal 脱糖为 `_GrowableList._literal*`（设计文档已同步更新）
 
 `<int>[1, 2, 3]` 在 Kernel AST 中变成 `StaticInvocation(_GrowableList._literal3(1, 2, 3))`。
 编译器需检测 `_literal*` 模式并转为 `List.create` host binding 调用。
 
-### 5. 编译器整体架构
+### 4. 编译器整体架构（POC 简化方案，正式版按设计走 LSRA）
 
 3-pass 编译：
 1. **注册 class** → ClassInfo + fieldOffsets

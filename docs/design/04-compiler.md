@@ -53,7 +53,7 @@ Component loadKernel(String dillPath) {
 }
 ```
 
-平台 .dill（dart:core 等标准库）**不在编译器中加载执行**。Kernel AST 中对标准库的引用通过 `CanonicalName` 解析为 Bridge 绑定标识。编译器维护一份 **Bridge 注册表**，记录预生成库中可用的绑定符号名：
+编译器输入为 **linked-platform .dill**（`dart compile kernel` 默认输出，不使用 `--no-link-platform`）。平台库的 AST 节点完整链接，所有 `Reference`（如 `interfaceTarget`、`target`）均可直接解析。编译器通过 `interfaceTarget.enclosingClass` 等属性识别平台类型，映射到 Bridge 绑定标识。编译器维护一份 **Bridge 注册表**，记录预生成库中可用的绑定符号名：
 
 ```dart
 class BridgeRegistry {
@@ -81,7 +81,7 @@ class BridgeRegistry {
 }
 ```
 
-编译器遇到对 `dart:core::List.add` 的引用时，查找 Bridge 注册表确认绑定存在，分配一个**本地绑定索引**，生成 `CALL_HOST A, Bx`。Bx 是本地索引，不是运行时 ID。如果引用的类未在 Bridge 注册表中，编译器报错。
+编译器遇到对 `dart:core::List.add` 的引用时，通过 `interfaceTarget.enclosingClass` 识别宿主类，查找 Bridge 注册表确认绑定存在，分配一个**本地绑定索引**，生成 `CALL_HOST A, B, C`（A=baseReg, B=argCount, C=本地绑定索引）。如果引用的类未在 Bridge 注册表中，编译器报错。
 
 **编译期与运行时的解耦**：编译器不需要知道运行时 `HostBindings` 的注册顺序。`.dartib` 文件中存储完整的绑定名称表（符号名列表），运行时加载时通过 `HostBindings.lookupByName()` 解析每个符号名为真实的运行时 ID，构建重定位表。这使得编译产物与 Bridge 库版本解耦——只要符号名存在，ID 如何分配无关紧要。详见下方「加载时符号解析」。
 
@@ -368,6 +368,7 @@ Kernel 的 `ConstantExpression` 引用 `Constant` 节点（`InstanceConstant`、
 | Super parameters (`super.x`) | 构造函数参数转发 |
 | Named arguments anywhere | 参数已重排至正确位置 |
 | Spread collections (`...list`) | 命令式 `add`/`addAll` 调用 |
+| List literal (`<int>[1,2,3]`) | `StaticInvocation(_GrowableList._literal3(1, 2, 3))` |
 | Control flow collections (`if`/`for` in `[]`) | 命令式展开 |
 | Enhanced enums | 普通 `Class` + `Procedure` |
 | Wildcards (`_`) | 解析层处理，Kernel 中无痕迹 |
@@ -447,7 +448,7 @@ DartiB 文件格式
 │   [bindingCount]                 │
 │   每个条目: 符号名字符串           │
 │   (如 "dart:core::List::add")    │
-│   字节码中 CALL_HOST 的 Bx       │
+│   字节码中 CALL_HOST 的 C 操作数   │
 │   是此表的本地索引                │
 ├─────────────────────────────────┤
 │ 常量池                           │
@@ -527,10 +528,13 @@ class DartiModule {
 
 ```dart
 case OpCode.CALL_HOST:
-  final localIndex = (instr >> 16) & 0xFFFF;
+  final a = decodeA(instr);     // baseReg
+  final b = decodeB(instr);     // argCount
+  final localIndex = decodeC(instr);  // 本地绑定索引
   final runtimeId = module.bindingRelocationTable[localIndex];
+  final args = [for (int i = 0; i < b; i++) _rs.slots[a + i]];
   final result = hostBindings.invoke(runtimeId, args);
-  _rs.slots[destReg] = result;
+  _rs.slots[a] = result;
 ```
 
 **序列化与运行时命名映射**：.dartib 的序列化字段名与 Chapter 2 运行时类的字段名存在对应关系：`methodTable` → `ClassInfo.methods`，`refFieldCount`/`valueFieldCount` → `ClassInfo.refFieldCount`/`ClassInfo.valueFieldCount`，`typeParamCount` → `ClassInfo.typeParamCount`。序列化存储紧凑形式（计数值、偏移量），运行时反序列化为结构化对象。
