@@ -242,6 +242,96 @@ bool isSubtypeOf(RuntimeType sub, RuntimeType sup) {
 }
 ```
 
+### TypeParameterType 解析
+
+`INSTANCEOF` / `CAST` 指令的目标类型可能包含 `TypeParameterType` 引用（如 `value is T`，其中 T 是泛型函数的类型参数）。运行时必须在调用 `isSubtypeOf` 之前将类型模板中的 `TypeParameterType` 解析为具体的 `RuntimeType`。
+
+解析路径：
+
+```dart
+/// 将类型模板中的 TypeParameterType 解析为具体类型
+RuntimeType resolveType(
+  TypeTemplate template,
+  List<RuntimeType>? ita,  // 类的实例化类型参数
+  List<RuntimeType>? fta,  // 函数的类型参数
+) {
+  if (template is ConcreteTypeTemplate) {
+    // 已是具体类型（如 int, String），直接返回驻留实例
+    return template.runtimeType;
+  }
+
+  if (template is TypeParameterTemplate) {
+    // TypeParameterType：de Bruijn 索引 → ITA/FTA 查找
+    if (template.isClassTypeParam) {
+      return ita![template.index];   // 类型参数来自类（ITA）
+    } else {
+      return fta![template.index];   // 类型参数来自泛型函数（FTA）
+    }
+  }
+
+  if (template is GenericTypeTemplate) {
+    // 泛型类型（如 List<T>）：递归解析类型参数
+    final resolvedArgs = [
+      for (final arg in template.typeArgTemplates)
+        resolveType(arg, ita, fta),
+    ];
+    return typeRegistry.intern(
+      template.classId, resolvedArgs, template.nullability);
+  }
+
+  throw DarticInternalError('Unknown type template: $template');
+}
+```
+
+INSTANCEOF 指令的完整执行流（以 `value is T` 为例）：
+
+```dart
+case OpCode.INSTANCEOF:
+  // INSTANCEOF A, B, Cx — valueStack[A] = refStack[B] is type[Cx] ? 1 : 0
+  final typeTemplate = constPool.refs[cx] as TypeTemplate;
+  // 用当前帧的 ITA/FTA 解析类型参数引用
+  final targetType = resolveType(typeTemplate, frame.ita, frame.fta);
+  final objType = extractType(refStack[b], typeRegistry);
+  valueStack[a] = isSubtypeOf(objType, targetType) ? 1 : 0;
+```
+
+这确保了泛型函数体内的 `value is T` 在运行时正确解析为调用者传入的实际类型参数。编译器在生成 INSTANCEOF 时，将目标类型编码为 `TypeTemplate`（可能含 `TypeParameterTemplate`），由运行时的 `resolveType` 延迟绑定。
+
+### TypeParameterType 边界约束
+
+当子类型检查涉及有界类型参数时（如 `<T extends num>`），需要在 `isSubtypeOf` 中处理类型参数的边界：
+
+```dart
+// 在 isSubtypeOf 中，当 sub 来自已解析的 TypeParameterType 时，
+// 其实际类型由 resolveType 替换为调用者传入的具体类型。
+// 但函数类型的子类型检查需要验证类型参数边界的协变/逆变关系。
+
+// 示例：检查 void Function<T extends num>(T) <: void Function<U extends Object>(U)
+// 需要验证 num <: Object（边界的协变检查）
+bool isFunctionSubtype(RuntimeFunctionType sub, RuntimeFunctionType sup) {
+  // 类型参数数量必须一致
+  if (sub.typeParams.length != sup.typeParams.length) return false;
+
+  // 类型参数边界检查：sub 的边界必须是 sup 边界的子类型
+  for (int i = 0; i < sub.typeParams.length; i++) {
+    if (!isSubtypeOf(sub.typeParams[i].bound, sup.typeParams[i].bound)) {
+      return false;
+    }
+  }
+
+  // 返回类型：协变
+  if (!isSubtypeOf(sub.returnType, sup.returnType)) return false;
+
+  // 参数类型：逆变
+  for (int i = 0; i < sup.positionalTypes.length; i++) {
+    if (!isSubtypeOf(sup.positionalTypes[i], sub.positionalTypes[i])) return false;
+  }
+  return true;
+}
+```
+
+编译器需要在 `RuntimeFunctionType` 中保留类型参数边界信息（`TypeParam.bound`），运行时 `resolveType` 在解析 `FunctionType` 模板时同时解析边界。
+
 ### FutureOr\<T\> 特殊处理
 
 `FutureOr<T>` 不是普通的接口类型，子类型检查需要拆分处理：
@@ -283,21 +373,15 @@ Null              → Never?（在可空性层面）
 
 ### 函数类型子类型检查
 
-函数类型的参数是**逆变**的，返回类型是**协变**的：
+函数类型的参数是**逆变**的，返回类型是**协变**的，类型参数边界是**协变**的。完整算法见上方「TypeParameterType 边界约束」节的 `isFunctionSubtype`。
 
-```dart
-bool isFunctionSubtype(RuntimeFunctionType sub, RuntimeFunctionType sup) {
-  // 返回类型：协变
-  if (!isSubtypeOf(sub.returnType, sup.returnType)) return false;
+### Record 类型子类型检查
 
-  // 参数类型：逆变（注意方向反转）
-  for (int i = 0; i < sup.positionalTypes.length; i++) {
-    if (!isSubtypeOf(sup.positionalTypes[i], sub.positionalTypes[i])) return false;
-  }
-  // 命名参数同理...
-  return true;
-}
-```
+> **Phase 2**：Dart 3 Record 类型的子类型检查基于结构化比较（字段数量 + 字段类型 + 命名字段名），与接口类型的名义子类型检查不同。Phase 1 中 Record 字面量可创建和访问字段，但 `is (int, String)` 等类型检查不支持。需要补充：
+>
+> 1. `RuntimeRecordType` 数据结构（位置字段类型列表 + 命名字段映射）
+> 2. `isRecordSubtype` 算法（逐字段协变检查 + 命名字段集合包含关系）
+> 3. `RecordShape`（Ch1 `CREATE_RECORD` 的 Bx 常量池条目）到 `RuntimeRecordType` 的映射
 
 ### _findSuperTypeArgs
 
@@ -315,7 +399,13 @@ final Map<int, Map<int, List<TypeArgTemplate>>> _superTypeMap;
 
 ### 解释器 → VM
 
-初期统一使用 `List<dynamic>.from()` 等动态类型兜底，类型化创建留待需要时添加。
+初期统一使用 `List<dynamic>.from()` 等动态类型兜底。
+
+**已知局限**：解释器创建的集合跨边界传递时，VM 侧的 `is List<int>` 等泛型类型检查会失败（运行时类型为 `List<dynamic>`），功能不受影响但违反静态类型约束。
+
+**Phase 1 Workaround**：业务代码中避免对跨边界集合做精确泛型类型检查。
+
+> **Phase 2**：为高频泛型组合预生成类型化创建路径。Bridge 生成器分析解释器代码中的集合创建点，为 `List<int>`、`List<String>`、`Map<String, dynamic>` 等常见组合生成专用工厂，确保跨边界后 `is` 检查正确。
 
 ### VM → 解释器
 

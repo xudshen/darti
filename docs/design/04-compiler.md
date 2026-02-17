@@ -285,6 +285,13 @@ class ExceptionHandler {
   final int valueStackDepth;   // 进入 try 时的值栈深度（异常时回退值栈指针）
   final int refStackDepth;     // 进入 try 时的引用栈深度（异常时回退引用栈指针 + 存放异常对象）
 }
+
+// 嵌套 try/catch 的处理器排序规则：
+// 1. 按 (startPC, endPC) 排序——内层 try 范围更小，排在前面
+// 2. 运行时异常查表时，顺序扫描 handlerTable，返回第一个匹配的处理器
+//    （PC 在 [startPC, endPC) 范围内 且 catchType 匹配）
+// 3. 内层 catch 未捕获的异常，重新查表从下一个处理器继续匹配（外层 try）
+// 4. 所有处理器都不匹配时，异常传播到调用者帧
 ```
 
 ### switch → 跳转表或二分查找

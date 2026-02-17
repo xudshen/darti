@@ -62,7 +62,15 @@ class InterpreterFrame {
 
 ## 异步帧与全局栈的交互
 
-Chapter 2 的运行时使用全局 ValueStack/RefStack。多个 async 帧可能并发挂起，它们的栈区间在全局栈上可能重叠——后启动的帧分配到与先挂起帧相同的栈位置。因此挂起时必须快照栈数据，恢复时拷回。
+Chapter 2 的运行时使用全局 ValueStack/RefStack。多个 async 帧可能并发挂起，它们的栈区间在全局栈上可能重叠——后启动的帧分配到与先挂起帧相同的栈位置。因此挂起时必须快照栈数据，恢复时在栈顶重新分配空间（不写回原位置，避免覆盖其他活跃帧）。
+
+### 栈恢复不变式
+
+恢复帧时必须满足以下不变式：
+
+1. **新空间分配**：恢复帧总是在当前 `_vs.sp` / `_rs.sp` 位置（栈顶）分配新空间，**绝不**写回原 `savedVBase` / `savedRBase` 位置
+2. **无重叠保证**：恢复后的帧区间 `[newBase, newBase+size)` 不与任何活跃帧的栈区间重叠——因为总是在栈顶分配，而活跃帧的数据在栈顶以下
+3. **基址更新**：恢复后 `frame.savedVBase` / `frame.savedRBase` 更新为新位置，后续字节码中的寄存器访问使用新基址
 
 **挂起时**（AWAIT 遇到真 Future）：
 
@@ -92,24 +100,38 @@ void _suspendFrame(InterpreterFrame frame) {
 
 **恢复时**（Future 完成，`_resumeFrame` 调用前）：
 
+恢复时**不写回原位置**——原栈区间可能已被其他活跃帧占用。改为在栈顶分配新空间：
+
 ```dart
 void _restoreFrameStack(InterpreterFrame frame) {
-  final vBase = frame.savedVBase;
-  final rBase = frame.savedRBase;
+  final vSize = frame.savedValueSlots?.length ?? 0;
+  final rSize = frame.savedRefSlots?.length ?? 0;
 
-  // 恢复值栈
+  // 在栈顶分配新空间（不使用原 vBase/rBase）
+  final newVBase = _vs.sp;
+  final newRBase = _rs.sp;
+
+  // 恢复值栈到新位置
   if (frame.savedValueSlots != null) {
-    _vs.intView.setRange(vBase, vBase + frame.savedValueSlots!.length, frame.savedValueSlots!);
-    frame.savedValueSlots = null;  // 释放快照
+    _vs.intView.setRange(newVBase, newVBase + vSize, frame.savedValueSlots!);
+    frame.savedValueSlots = null;
   }
 
-  // 恢复引用栈
+  // 恢复引用栈到新位置
   if (frame.savedRefSlots != null) {
-    for (int i = 0; i < frame.savedRefSlots!.length; i++) {
-      _rs.slots[rBase + i] = frame.savedRefSlots![i];
+    for (int i = 0; i < rSize; i++) {
+      _rs.slots[newRBase + i] = frame.savedRefSlots![i];
     }
     frame.savedRefSlots = null;
   }
+
+  // 更新帧基址和栈指针
+  frame.savedVBase = newVBase;
+  frame.savedRBase = newRBase;
+  frame.savedVSP = newVBase + vSize;
+  frame.savedRSP = newRBase + rSize;
+  _vs.sp = newVBase + vSize;
+  _rs.sp = newRBase + rSize;
 }
 ```
 
@@ -124,8 +146,9 @@ INIT_ASYNC      A, Bx    创建 Completer<T>，refStack[A] = completer.future
 
 AWAIT           A, Bx    弹出 refStack[A] 作为待 await 的值
                           Bx 为恢复点 PC
-                          if value is! Future → push value, 继续执行
-                          if value is Future → 注册回调, 返回 SUSPENDED
+                          总是挂起帧，通过 scheduleMicrotask 恢复：
+                          if value is Future → 注册 then/error 回调
+                          if value is! Future → 直接 scheduleMicrotask 恢复
 
 ASYNC_RETURN    A        completer.complete(refStack[A])
                           if refStack[A] is Future → 隐式 await（Future 展平）
@@ -173,10 +196,15 @@ Future<T> callInterpreterAsync<T>(
 _Signal executeAwait(InterpreterFrame frame, int destReg, int resumePC) {
   final value = _rs.slots[destReg];
 
-  // 快速路径：非 Future
+  // 非 Future 值：仍需通过 scheduleMicrotask 让出一次 microtask
+  // （符合 Dart 语言规范：await e 总是让出，即使 e 不是 Future）
   if (value is! Future) {
-    // 值已在 destReg 中，无需移动
-    return _Signal.continue_;
+    frame.pc = resumePC;
+    frame.awaitDestReg = destReg;
+    frame.resumeValue = value;
+    _suspendFrame(frame);
+    frame.capturedZone.scheduleMicrotask(() => _resumeFrame(frame));
+    return _Signal.suspended;
   }
 
   // 保存恢复点和目标寄存器
@@ -208,7 +236,14 @@ _Signal executeAwait(InterpreterFrame frame, int destReg, int resumePC) {
 ### 帧恢复
 
 ```dart
+// 连续恢复计数器（防止频繁 await-resume 绕过 fuel）
+int _resumeCounter = 0;
+static const int _maxResumesPerRound = 64;  // 连续恢复上限
+
 void _resumeFrame(InterpreterFrame frame) {
+  // 先恢复栈快照（在栈顶分配新空间）
+  _restoreFrameStack(frame);
+
   if (frame.resumeException != null) {
     // 异常恢复：查找异常处理器
     final handler = _findHandler(frame, frame.pc);
@@ -231,9 +266,16 @@ void _resumeFrame(InterpreterFrame frame) {
     frame.resumeValue = null;
   }
 
-  _restoreFrameStack(frame);  // 恢复栈快照
   _runQueue.addFirst(frame);
-  _scheduleDrive();
+
+  // 防止频繁 await-resume 绕过 fuel：连续恢复超限后降级为 Timer.run
+  _resumeCounter++;
+  if (_resumeCounter >= _maxResumesPerRound) {
+    _resumeCounter = 0;
+    Timer.run(_driveInterpreter);  // 让出事件循环
+  } else {
+    _scheduleDrive();
+  }
 }
 ```
 
@@ -407,19 +449,16 @@ class SyncStarIterator<T> implements Iterator<T> {
 
 ## 分发循环中的异步集成
 
-分发循环主路径不因 async 支持变慢。AWAIT 的快速路径（非 Future 值）仅是一个 `is! Future` 类型检查 + 继续执行：
+AWAIT 指令总是导致帧挂起——无论 await 的值是否为 Future。非 Future 值通过 `scheduleMicrotask` 调度恢复，符合 Dart 语言规范（`await e` 总是让出至少一次 microtask）：
 
 ```dart
 case OpCode.AWAIT:
-  final signal = executeAwait(frame, decodeA(instr), decodeBx(instr));
-  if (signal == _Signal.suspended) {
-    _runQueue.removeFirst();
-    break innerLoop;
-  }
-  // 快速路径：非 Future，继续内循环
+  executeAwait(frame, decodeA(instr), decodeBx(instr));
+  _runQueue.removeFirst();
+  break innerLoop;  // 总是挂起，等待 microtask 恢复
 ```
 
-大多数 async 函数在无 await 时同步完成（Dart VM 统计中很常见），此时 INIT_ASYNC 仅创建一个 Completer，ASYNC_RETURN 同步完成它，全程不挂起。
+分发循环主路径不因 async 支持变慢——大多数 async 函数在无 await 时同步完成（Dart VM 统计中很常见），此时 INIT_ASYNC 仅创建一个 Completer，ASYNC_RETURN 同步完成它，全程不挂起。性能敏感代码应避免无意义的 `await null`。
 
 ## Completer 生命周期
 

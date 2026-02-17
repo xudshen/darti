@@ -201,6 +201,12 @@ class CallbackProxy {
 }
 ```
 
+**已知局限：泛型签名丢失**。CallbackProxy 统一使用 `Object? Function(Object?, ...)` 签名，丢失了原始回调的参数和返回类型信息。在严格类型检查场景（如 `List<int>.map<String>((int x) => x.toString())` 中回调的 `int → String` 签名）可能触发运行时类型错误。
+
+**Phase 1 Workaround**：宿主 API 的回调参数使用宽松类型（`dynamic`），避免在回调边界做严格类型检查。
+
+> **Phase 2**：Bridge 生成器分析需要回调的宿主方法签名，为常见回调类型预生成特化 proxy 变体（如 `int Function(String)` → `(String s) => _runtime.invokeClosure(_closure, [s]) as int`），保留原始类型信息。
+
 HostClassWrapper 在转发回调参数时识别 InterpreterObject（闭包），自动创建 CallbackProxy：
 
 ```dart
@@ -294,6 +300,46 @@ Object createInstance(int classId, RuntimeType type) {
 ### noSuchMethod 转发（接口代理）
 
 对于 implements 宿主接口但不 extends 具体类的场景，未来可通过 noSuchMethod 转发实现轻量级代理。
+
+### Mixin 组合的 Bridge 支持
+
+> **Phase 2**：当前 Bridge 生成覆盖 `extends` 和 `implements` 场景，但未处理 mixin 组合模式。Flutter 中大量使用 mixin（如 `SingleTickerProviderStateMixin`、`AutomaticKeepAliveClientMixin`）。
+>
+> 需要解决：
+> 1. Bridge 类如何 `with` 宿主 mixin（如 `class $State$bridge<T> extends State<T> with SingleTickerProviderStateMixin`）
+> 2. mixin 方法的委托转发——mixin 中调用 `super.xxx` 时的分发路径
+> 3. 多 mixin 组合的线性化顺序与解释器虚方法表的一致性
+>
+> Phase 1 中需要 mixin 的解释器类必须手写 Bridge 或重构为不使用 mixin。
+
+## 异常跨边界传播契约
+
+解释器与宿主 VM 之间异常传播遵循以下规则：
+
+### 解释器 → VM（解释器代码抛出异常）
+
+| 场景 | VM 侧行为 |
+|------|-----------|
+| async 函数未捕获异常 | `completer.completeError(error, trace)` → VM 的 `await` 收到原始异常对象 |
+| Bridge 方法中抛出 | 异常自然传播到 VM 调用者（Bridge 方法是 VM 级别的方法） |
+| CallbackProxy 执行中抛出 | 异常自然传播到触发回调的 VM 代码（如 `list.forEach` 内部） |
+
+**异常类型保留**：解释器抛出的 `throw MyException()` 创建的是 `InterpreterObject`。跨边界时通过 `ProxyManager.wrapForVM()` 包装为 `GenericProxy`。VM 侧 `catch (e)` 捕获到的是 `GenericProxy` 实例，**不是** `MyException` 类型——因此 `on MyException catch (e)` 无法匹配。
+
+**规避方式**：如果需要 VM 侧按类型捕获，解释器代码应抛出宿主 VM 已知的异常类型（通过 `CALL_HOST` 创建 VM 异常对象后 `THROW`）。
+
+### VM → 解释器（VM 代码抛出异常）
+
+| 场景 | 解释器侧行为 |
+|------|-------------|
+| `CALL_HOST` 执行中 VM 抛异常 | 分发循环捕获异常，查找当前帧的异常处理器表 |
+| `await` 的 VM Future 带异常完成 | `errorCallback` 将异常存入 `frame.resumeException`，帧恢复后查处理器 |
+
+**异常类型保留**：VM 异常直接存入引用栈，解释器的 `catch (e)` 可正常捕获。`on FormatException catch (e)` 通过 `INSTANCEOF` 检查 VM 对象类型，**可以正常匹配**（VM 对象支持 `is` 检查）。
+
+### 栈追踪拼接
+
+跨边界异常的栈追踪通过 `CombinedStackTrace` 拼接解释器帧和 VM 帧信息，提供完整的调用链追踪。
 
 ## 对象身份一致性
 

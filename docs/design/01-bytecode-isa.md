@@ -57,19 +57,64 @@ int decodeAx(int instr) => (instr >> 8) & 0xFFFFFF;
 
 ### WIDE 前缀
 
-当操作数超出 8 位或 16 位范围时，`WIDE` 前缀将下一条指令的操作数宽度扩展。`WIDE` 后紧跟一条 32 位扩展字：
+当操作数超出 8 位或 16 位范围时，`WIDE` 前缀将下一条指令的操作数宽度扩展。`WIDE` 后紧跟一条 32 位扩展字（高位扩展），再跟原指令：
 
 ```
-WIDE           [0xFE][padding:24]
-扩展操作数      [ext_A:16][ext_Bx:16]    或其他拆分方式
-
-解释器处理：
-  case OpCode.wide:
-    final ext = code[pc++];   // 读取扩展字
-    final nextInstr = code[pc++];
-    // 从 ext 中提取扩展后的操作数
-    // ... 正常执行 nextInstr 但使用扩展操作数
+WIDE    [0xFE][padding:24]            ← 前缀
+扩展字  [layout depends on format]     ← 高位扩展（见下表）
+原指令  [op:8][operands:24]            ← 正常编码
 ```
+
+#### 各格式的扩展字布局
+
+扩展字的位域拆分与下一条指令的编码格式对应，为每个操作数提供高位：
+
+```
+ABC  指令：扩展字  [_:8][extA:8][extB:8][extC:8]
+           组合后  A' = (extA << 8) | A     → 16 位寄存器索引
+                   B' = (extB << 8) | B     → 16 位
+                   C' = (extC << 8) | C     → 16 位
+
+ABx  指令：扩展字  [_:8][extA:8][extBx:16]
+           组合后  A'  = (extA << 8) | A    → 16 位
+                   Bx' = (extBx << 16) | Bx → 32 位无符号
+
+AsBx 指令：扩展字  [_:8][extA:8][extSBx:16]
+           组合后  A'   = (extA << 8) | A   → 16 位
+                   sBx' = ((extSBx << 16) | unsigned_Bx) - 0x7FFFFFFF → 32 位有符号
+
+Ax   指令：扩展字  [_:8][extAx:24]
+           组合后  Ax' = (extAx << 24) | Ax → 48 位无符号
+```
+
+#### 解释器处理
+
+```dart
+case OpCode.wide:
+  final ext = code[pc++];        // 读取扩展字
+  final nextInstr = code[pc++];  // 读取原指令
+  final op = decodeOp(nextInstr);
+
+  switch (OpCode.format(op)) {
+    case InstrFormat.ABC:
+      final a = ((ext >> 8) & 0xFF) << 8 | decodeA(nextInstr);
+      final b = ((ext >> 16) & 0xFF) << 8 | decodeB(nextInstr);
+      final c = ((ext >> 24) & 0xFF) << 8 | decodeC(nextInstr);
+      // 执行 op(a, b, c)
+    case InstrFormat.ABx:
+      final a = ((ext >> 8) & 0xFF) << 8 | decodeA(nextInstr);
+      final bx = ((ext >> 16) & 0xFFFF) << 16 | decodeBx(nextInstr);
+      // 执行 op(a, bx)
+    // AsBx, Ax 同理
+  }
+```
+
+#### WIDE 约束规则
+
+1. **位置约束**：WIDE 前缀后必须跟 2 个字（扩展字 + 原指令），即 `pc + 2 < codeLength` 必须成立。WIDE 不得出现在字节码末尾 2 个位置内
+2. **不可嵌套**：扩展字后的原指令不得为 WIDE（`OpCode.isWideCompatible(op)` 排除 WIDE 自身）
+3. **格式一致性**：扩展字的位域拆分必须与原指令的编码格式（ABC/ABx/AsBx/Ax）严格对应，验证器在加载时检查格式匹配
+4. **PC 计算**：包含 WIDE 前缀的指令序列占 3 个字（前缀 + 扩展字 + 原指令），跳转目标计算和 PC 步进必须正确处理 3 字宽度
 
 WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不影响主路径性能。
 
@@ -114,7 +159,7 @@ WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不
 0x1A  SHL           A, B, C       valueStack[A] = valueStack[B] << valueStack[C]
 0x1B  SHR           A, B, C       valueStack[A] = valueStack[B] >> valueStack[C]
 0x1C  USHR          A, B, C       valueStack[A] = valueStack[B] >>> valueStack[C]
-0x1D  ADD_INT_IMM   A, B, C       valueStack[A] = valueStack[B] + C (立即数加法)
+0x1D  ADD_INT_IMM   A, B, C       valueStack[A] = valueStack[B] + C (C 为无符号 8 位立即数 [0, 255])
 ```
 
 ### 浮点算术 (0x20-0x2F)

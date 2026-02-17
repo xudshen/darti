@@ -282,12 +282,9 @@ class DarticRuntime {
 
           case OpCode.AWAIT:
             frame.pc = pc;
-            final signal = _executeAwait(frame, instr);
-            if (signal == _Signal.suspended) {
-              _runQueue.removeFirst();
-              break innerLoop;
-            }
-            // 快速路径（非 Future）：继续执行
+            _executeAwait(frame, instr);
+            _runQueue.removeFirst();
+            break innerLoop;  // 总是挂起，等待 microtask 恢复（详见 Ch6）
 
           case OpCode.RETURN_REF:
             final retVal = _rs.slots[(instr >> 8) & 0xFF];
