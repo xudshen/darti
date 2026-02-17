@@ -184,6 +184,7 @@ GlobalTable 存储静态字段和顶层变量。每个槽位初始为 `_uninitia
 │  │  │    ├─ CALL → 保存 PC，push 新帧，break 内循环         │ │ │
 │  │  │    ├─ RETURN → pop 帧，恢复调用者，break 内循环       │ │ │
 │  │  │    ├─ AWAIT → 保存帧，移出队列，break 内循环(详见Ch6) │ │ │
+│  │  │    ├─ ASYNC_RETURN → 完成Completer，移出队列(详见Ch6) │ │ │
 │  │  │    └─ HALT → pop 帧，break 内循环                     │ │ │
 │  │  │                                                       │ │ │
 │  │  └───────────────────────────────────────────────────────┘ │ │
