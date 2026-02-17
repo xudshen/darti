@@ -1,33 +1,174 @@
 # Chapter 7: 安全与沙箱
 
+## 模块定位
+
+安全与沙箱层负责保护宿主应用不因解释器代码的错误而崩溃。它提供加载时字节码验证和运行时资源限制两道防线，确保格式错误的字节码不会被执行、运行中的解释器代码不会卡死或耗尽宿主资源。在架构中位于最顶层——字节码在进入运行时（Ch2）之前必须先通过本模块的验证。
+
+## 与其他模块的关系
+
+| 方向 | 模块 | 接口 |
+|------|------|------|
+| 输入来源 | Ch4 编译器 | 编译器输出的 `.darticb` 字节码文件是验证器的检查对象 |
+| 输入来源 | Ch1 ISA | 验证器依据 ISA 定义的操作码合法性、编码格式、WIDE 规则进行检查 |
+| 输出去向 | Ch2 运行时 | 验证通过的模块交给运行时执行，运行时不再做边界检查 |
+| 复用机制 | Ch2 运行时 | fuel 计数和调用深度限制由 Ch2 分发循环实现，本章仅定义安全语义（详见 Ch2） |
+| 复用机制 | Ch3 Bridge | Bridge 注册表天然形成 API 边界，控制解释器可访问的宿主 API 范围 |
+
 ## 设计决策
 
-| 决策项 | 选择 | 理由 |
+| 决策项 | 选择 | 备选方案与拒绝理由 | 理由 |
+|--------|------|-------------------|------|
+| 安全模型 | 最小安全（验证 + 资源限制） | 能力模型 / 权限沙箱：过度设计，当前目标是热更新和插件，不是不可信代码执行 | 覆盖崩溃防护需求，实现成本低 |
+| 验证时机 | 加载时静态验证 | 运行时动态检查：每条指令都做边界检查，吞吐量下降 30-50% | 一次验证，运行时零安全开销 |
+| 资源限制 | fuel 计数 + 调用栈深度 | 显式超时器：定时器精度依赖平台，且需额外线程 | 复用运行时分发循环已有机制，防无限循环和无限递归 |
+| 内存保护 | 不实现显式内存上限 | 分配计数器：增加每次分配的开销，且宿主 GC 已提供背压 | 栈空间预分配固定大小，堆对象由宿主 VM GC 管理 |
+
+## 核心概念
+
+### 安全目标
+
+dartic 的安全目标是**保护宿主应用不因解释器代码的错误而崩溃**，而非隔离不可信代码。
+
+| 保障项 | 机制 | 说明 |
 |--------|------|------|
-| 安全模型 | 最小安全 | 字节码验证 + 指令计数 + 调用深度限制，不做能力模型 |
-| 验证时机 | 加载时静态验证 | 一次验证，运行时零开销 |
-| 资源限制 | fuel 计数 + 调用栈深度 | 防无限循环和无限递归，复用运行时已有机制 |
-| 不实现 | 能力模型 / 权限沙箱 | 过度设计，当前目标是热更新和插件，不是不可信代码执行 |
+| 不因格式错误的字节码崩溃 | 加载时验证 | 所有字节码结构在执行前校验合法性 |
+| 不因无限循环卡死 | fuel 计数 | fuel 耗尽时让出控制权（详见 Ch2） |
+| 不因无限递归栈溢出 | 调用深度限制 | 超过 `maxCallDepth` 抛出异常（详见 Ch2） |
+| 不因越界访问内存损坏 | 加载时验证 | 常量池、寄存器索引在加载时验证边界 |
 
-## 安全目标
+**不在目标内**：阻止解释器调用任意宿主 API（由 Bridge 注册表控制）、OS 级文件/网络隔离（需 isolate 级沙箱）、防御侧信道攻击。
 
-dartic 的安全目标是**保护宿主应用不因解释器代码的错误而崩溃**，而非隔离不可信代码。具体保障：
+### 错误分类
 
-1. **不因格式错误的字节码崩溃**：加载时验证确保所有字节码结构合法
-2. **不因无限循环卡死**：fuel 计数机制确保解释器定期让出控制权
-3. **不因无限递归栈溢出**：调用深度限制防止栈溢出
-4. **不因越界访问内存损坏**：常量池、寄存器索引在加载时验证
+| 错误类型 | 触发条件 | 处理方式 |
+|----------|----------|----------|
+| DarticLoadError | 字节码格式/验证失败（magic 错误、校验和不匹配、越界引用） | 拒绝加载，宿主应用 `catch` 后继续运行 |
+| DarticError | 运行时可恢复错误（栈溢出、fuel 耗尽、未捕获异常） | 终止当前解释器执行，宿主应用 `catch` 后继续运行 |
+| DarticInternalError | 解释器自身实现 bug（不应发生） | 记录并上报，表示解释器内部逻辑错误 |
 
-**不在目标内**：
-- 阻止解释器代码调用任意宿主 API（由 Bridge 注册表控制暴露范围）
-- 文件系统/网络等 OS 级隔离（需要 isolate 级沙箱，不在 dartic 范围内）
-- 防御恶意字节码的信息泄漏或侧信道攻击
+宿主应用通过 `try/catch` 隔离所有解释器错误，确保解释器的任何异常不会导致宿主崩溃。
 
-## 加载时字节码验证
+## 工作流程
 
-### 验证器架构
+### 验证→加载→执行 流水线
+
+```
+                    字节码文件 (.darticb)
+                          │
+                          ▼
+              ┌───────────────────────┐
+              │  ① 反序列化          │
+              │  bytes → DarticModule │
+              └───────────┬───────────┘
+                          │
+                          ▼
+              ┌───────────────────────┐
+              │  ② BytecodeVerifier   │
+              │  静态验证（见下表）    │──── 失败 → DarticLoadError
+              └───────────┬───────────┘
+                          │ 通过
+                          ▼
+              ┌───────────────────────┐
+              │  ③ Bridge 依赖检查    │
+              │  确认所需宿主 API 已注册│──── 缺失 → DarticLoadError
+              └───────────┬───────────┘
+                          │ 通过
+                          ▼
+              ┌───────────────────────┐
+              │  ④ 返回已验证模块      │
+              │  运行时零安全开销执行  │
+              └───────────────────────┘
+```
+
+验证通过后，运行时的分发循环**不执行任何边界检查**——所有安全保证由加载时验证提供。
+
+### BytecodeVerifier 验证项
+
+验证器对模块逐项扫描，收集所有错误后统一报告：
+
+| 检查项 | 内容 | 违规后果 |
+|--------|------|----------|
+| 文件头 | magic number = `0xDART1B00`，版本号 ≤ 当前版本，CRC32 校验和匹配 | 加载拒绝 |
+| 常量池边界 | 常量池内部引用不越界 | 运行时读取非法内存 |
+| 操作码合法性 | 每条指令的 opcode 在 ISA 定义范围内（详见 Ch1） | 分发循环跳转到非法地址 |
+| 跳转目标 | 跳转偏移量在函数字节码范围 `[0, codeLength)` 内 | 执行越界指令 |
+| 寄存器索引 | A/B/C 操作数 < 函数声明的 `regCount`，按指令编码格式（ABC/ABx/AsBx/Ax）分别校验 | 栈越界访问 |
+| 常量池索引 | 引用常量池的指令，索引 < 对应分区长度 | 读取非法常量 |
+| WIDE 前缀 | WIDE 不在字节码末尾，后跟指令兼容 WIDE 扩展（详见 Ch1 WIDE 规则） | 解码错误 |
+| 函数/方法引用 | `CALL` 类指令的函数 ID 在函数表范围内（或为已注册的宿主绑定） | 调用不存在的函数 |
+| 异常处理器表 | `[startPC, endPC)` 范围合法且非空，`handlerPC` 在范围内，栈深度 ≥ 0 | 异常分发失败 |
+| 类表 | 超类 ID 在类表范围内，方法引用指向合法函数 | 继承链断裂或虚方法分发失败 |
+| 入口点 | 模块声明的入口函数存在且合法 | 无法启动执行 |
+
+## 运行时资源限制
+
+### Fuel 计数（防无限循环）
+
+fuel 机制由 Ch2 分发循环实现（详见 Ch2）。本章定义其安全语义：
+
+- 每回合分配固定 fuel 预算（`_fuelBudget`），每执行一条指令消耗 1 fuel
+- fuel 耗尽时通过 `Timer.run` 让出控制权，防止宿主事件循环饿死
+- 回调重入（`CALL_HOST` → CallbackProxy → 解释器）**共享当前回合的 fuel**，不分配独立预算
+- 回调中的无限循环同样受 fuel 保护
+
+### 调用深度限制（防栈溢出）
+
+调用深度限制由 Ch2 运行时实现（详见 Ch2）。安全语义：超过 `maxCallDepth`（512）时抛出 `DarticError`。该值足以覆盖正常递归场景，同时防止无限递归耗尽宿主内存。
+
+### 执行超时（可选）
+
+宿主应用可配置两个可选限制，默认不启用：
+
+| 限制项 | 类型 | 说明 |
+|--------|------|------|
+| maxTotalFuel | int? | 跨回合累计指令数上限，超出后清空运行队列并抛出 DarticError |
+| executionTimeout | Duration? | 执行总时长上限，通过 Stopwatch 计时，超出后抛出 DarticError |
+
+### Bridge 注册表作为 API 边界
+
+Bridge 注册表天然形成 API 边界（详见 Ch3）——解释器代码只能访问已注册的宿主 API。宿主开发者通过选择性注册控制暴露范围：不注册 `dart:io` Bridge，解释器即无法访问文件/网络。这不是安全沙箱（已注册 API 可能间接暴露 IO），但提供了基本的 API 表面控制。
+
+### 内存保护
+
+不实现显式内存上限。栈空间（ValueStack、RefStack、CallStack）在初始化时预分配固定大小，不会无限增长。堆对象（InterpreterObject）由宿主 Dart VM GC 管理，共享内存压力。如需限制，宿主可通过 Dart VM 参数（如 `--old-gen-heap-size`）控制。
+
+## 关键约束与边界条件
+
+| 约束 | 值 | 来源 |
+|------|-----|------|
+| fuel 预算（每回合） | 50000 条指令 | Ch2 分发循环，基于 ~200us Timer.run 开销和 ~10ms 目标回合时间 |
+| 最大调用深度 | 512 | Ch2 运行时，覆盖正常递归场景 |
+| magic number | 0xDART1B00 | 字节码文件格式定义 |
+| 校验和算法 | CRC32 | 文件头验证 |
+| 栈空间 | 预分配固定大小 | ValueStack / RefStack / CallStack 初始化时确定 |
+| 内存上限 | 不限制（依赖宿主 VM GC） | 设计决策 |
+
+## 已知局限与演进路径
+
+| 局限 | 影响 | 演进计划 |
+|------|------|---------|
+| 无能力模型 | 解释器通过已注册 API 可间接访问 IO | 当前目标场景不需要，Bridge 注册表提供基本控制 |
+| 无内存上限 | 解释器可通过大量分配消耗宿主内存 | 多租户资源隔离场景需追踪分配计数 |
+| 无字节码签名 | 字节码文件可被篡改 | 属于分发管线职责，由上层应用自行实现 |
+
+> **Phase 2**：内存上限追踪。触发条件：需要多租户资源隔离时，追踪 InterpreterObject 分配计数。
+
+> **Phase 2**：API 白名单。触发条件：需要细粒度权限控制时，在 HostBindings 层添加权限检查。
+
+> **Phase 2**：字节码签名验证（Ed25519 / HMAC）。触发条件：热更新场景需要防篡改保障时。
+
+### 业务层面关注点（不在核心设计范围内）
+
+以下属于部署/业务层面，由上层应用自行决策和实现，不纳入解释器核心设计：
+
+- **热更新版本管理**：字节码版本兼容性检查、灰度发布、回滚策略等
+- **CDN 分发与缓存策略**：字节码的传输和存储优化
+
+<details>
+<summary>附录：验证器与错误隔离参考实现</summary>
 
 ```dart
+// BytecodeVerifier 核心入口
 class BytecodeVerifier {
   final List<String> errors = [];
 
@@ -42,396 +183,19 @@ class BytecodeVerifier {
     return errors.isEmpty;
   }
 }
-```
 
-### 验证项
-
-#### 1. 文件头验证
-
-```dart
-void _verifyHeader(DarticModule module) {
-  if (module.magic != 0xDART1B00) {
-    errors.add('Invalid magic number');
-  }
-  if (module.version > currentVersion) {
-    errors.add('Unsupported version: ${module.version}');
-  }
-  if (module.checksum != _computeCRC32(module.payload)) {
-    errors.add('Checksum mismatch');
-  }
-}
-```
-
-#### 2. 常量池边界验证
-
-```dart
-void _verifyConstantPool(ConstantPool pool) {
-  // 每个引用常量池条目不引用越界索引
-  for (int i = 0; i < pool.refs.length; i++) {
-    final entry = pool.refs[i];
-    if (entry is ConstantPoolReference && entry.index >= pool.refs.length) {
-      errors.add('Constant pool ref[$i] references out-of-bounds index ${entry.index}');
-    }
-  }
-}
-```
-
-#### 3. 函数字节码验证
-
-每个函数的字节码逐指令扫描：
-
-```dart
-void _verifyFunction(FuncProto func, DarticModule module) {
-  final codeLength = func.bytecode.length;
-
-  for (int pc = 0; pc < codeLength; pc++) {
-    final instr = func.bytecode[pc];
-    final op = instr & 0xFF;
-
-    // a) 操作码合法性
-    if (!OpCode.isValid(op)) {
-      errors.add('${func.name}@$pc: invalid opcode 0x${op.toRadixString(16)}');
-      continue;
-    }
-
-    // b) 跳转目标验证
-    if (OpCode.isJump(op)) {
-      final target = _decodeJumpTarget(instr, pc);
-      if (target < 0 || target >= codeLength) {
-        errors.add('${func.name}@$pc: jump target $target out of bounds [0, $codeLength)');
-      }
-    }
-
-    // c) 寄存器索引验证
-    _verifyRegisterBounds(func, instr, op, pc);
-
-    // d) 常量池索引验证
-    if (OpCode.usesConstantPool(op)) {
-      final cpIndex = _decodeConstantIndex(instr);
-      if (cpIndex >= module.constantPool.length(op)) {
-        errors.add('${func.name}@$pc: constant pool index $cpIndex out of bounds');
-      }
-    }
-
-    // e) WIDE 前缀验证
-    if (op == OpCode.WIDE) {
-      if (pc + 1 >= codeLength) {
-        errors.add('${func.name}@$pc: WIDE at end of bytecode, missing next instruction');
-      } else {
-        final nextInstr = func.bytecode[pc + 1];
-        final nextOp = nextInstr & 0xFF;
-        if (!OpCode.isWideCompatible(nextOp)) {
-          errors.add('${func.name}@$pc: WIDE before non-compatible opcode 0x${nextOp.toRadixString(16)}');
-        }
-      }
-      pc++;  // 跳过 WIDE 后的扩展字
-      continue;
-    }
-
-    // f) 方法/函数引用验证
-    if (OpCode.isCall(op)) {
-      final funcId = _decodeFuncId(instr);
-      if (funcId >= module.functions.length && !_isHostBinding(funcId)) {
-        errors.add('${func.name}@$pc: function reference $funcId out of bounds');
-      }
-    }
-  }
-
-  // g) 异常处理器表验证
-  _verifyExceptionTable(func);
-}
-```
-
-#### 4. 寄存器边界验证
-
-```dart
-void _verifyRegisterBounds(FuncProto func, int instr, int op, int pc) {
-  final format = OpCode.format(op);
-
-  switch (format) {
-    case InstrFormat.ABC:
-      final a = (instr >> 8) & 0xFF;
-      final b = (instr >> 16) & 0xFF;
-      final c = (instr >> 24) & 0xFF;
-      if (a >= func.regCount || b >= func.regCount || c >= func.regCount) {
-        errors.add('${func.name}@$pc: register index exceeds regCount ${func.regCount}');
-      }
-    case InstrFormat.ABx:
-      final a = (instr >> 8) & 0xFF;
-      if (a >= func.regCount) {
-        errors.add('${func.name}@$pc: register A=$a exceeds regCount ${func.regCount}');
-      }
-    // ... 其他格式
-  }
-}
-```
-
-#### 5. 异常处理器表验证
-
-```dart
-void _verifyExceptionTable(FuncProto func) {
-  final codeLength = func.bytecode.length;
-
-  for (final handler in func.exceptionTable) {
-    if (handler.startPC >= codeLength || handler.endPC > codeLength) {
-      errors.add('${func.name}: exception handler range [${handler.startPC}, ${handler.endPC}) out of bounds');
-    }
-    if (handler.startPC >= handler.endPC) {
-      errors.add('${func.name}: exception handler has empty range');
-    }
-    if (handler.handlerPC >= codeLength) {
-      errors.add('${func.name}: exception handler target ${handler.handlerPC} out of bounds');
-    }
-    if (handler.valueStackDepth < 0) {
-      errors.add('${func.name}: exception handler has negative value stack depth');
-    }
-    if (handler.refStackDepth < 0) {
-      errors.add('${func.name}: exception handler has negative ref stack depth');
-    }
-  }
-}
-```
-
-#### 6. 类表验证
-
-```dart
-void _verifyClassTable(DarticModule module) {
-  for (final cls in module.classes) {
-    // 超类引用合法
-    if (cls.superClassId >= 0 && cls.superClassId >= module.classes.length) {
-      errors.add('Class ${cls.name}: superClassId ${cls.superClassId} out of bounds');
-    }
-    // 方法引用合法
-    for (final entry in cls.methods.entries) {
-      if (entry.value >= module.functions.length) {
-        errors.add('Class ${cls.name}: method references invalid function ${entry.value}');
-      }
-    }
-  }
-}
-```
-
-### 验证时机与流程
-
-```dart
-DarticModule loadModule(Uint8List bytes) {
-  // 1. 反序列化
-  final module = DarticModuleDeserializer.deserialize(bytes);
-
-  // 2. 验证
-  final verifier = BytecodeVerifier();
-  if (!verifier.verify(module)) {
-    throw DarticLoadError(
-      'Bytecode verification failed:\n${verifier.errors.join('\n')}'
-    );
-  }
-
-  // 3. Bridge 依赖检查
-  _checkBridgeDependencies(module);
-
-  // 4. 返回已验证模块（运行时不再检查）
-  return module;
-}
-```
-
-验证通过后，运行时的分发循环**不执行任何边界检查**——所有安全保证由加载时验证提供。这确保了运行时零安全开销。
-
-## 运行时资源限制
-
-### Fuel 计数（防无限循环）
-
-复用 Chapter 2 分发循环中已有的 fuel 机制：
-
-```dart
-static const int _fuelBudget = 50000;  // 根据 profiling 调优
-
-void _driveInterpreter() {
-  int fuel = _fuelBudget;
-
-  while (fuel > 0 && _runQueue.isNotEmpty) {
-    final frame = _runQueue.first;
-    // ...
-    innerLoop:
-    while (fuel-- > 0) {
-      // 执行指令
-    }
-  }
-
-  if (_runQueue.isNotEmpty) {
-    Timer.run(_driveInterpreter);  // 让出控制权，下一轮继续
-  }
-}
-```
-
-fuel 耗尽时通过 `Timer.run` 让出控制权，不会导致宿主事件循环饿死。这不是显式的安全机制，而是协作调度的自然结果——但它有效防止了无限循环卡死宿主应用。
-
-### 回调重入的 Fuel 语义
-
-当 `CALL_HOST` 触发 VM 回调（通过 CallbackProxy 重新进入解释器）时，回调执行的 fuel 规则：
-
-- 回调执行**共享当前回合的 fuel budget**，不分配独立 fuel
-- 回调中的指令消耗与普通指令相同的 fuel
-- 如果回调中的代码耗尽 fuel（例如回调包含无限循环），分发循环正常让出控制权（`Timer.run`）
-- 回调返回后，外层分发循环继续使用剩余 fuel
-
-```dart
-// CallbackProxy 重入示例：
-// list.forEach((x) { /* 解释器代码 */ })
-//
-// 执行流：
-//   解释器 → CALL_HOST(forEach) → VM forEach → CallbackProxy → 解释器（共享 fuel）
-//                                                                    ↓
-//                                                          fuel 耗尽 → Timer.run
-```
-
-这确保了通过回调重入的无限循环（如 `list.forEach((x) { while(true) {} })`）仍然受 fuel 机制保护，不会卡死宿主事件循环。
-
-### 调用深度限制（防栈溢出）
-
-```dart
-class DarticRuntime {
-  static const int maxCallDepth = 512;
-  int _currentCallDepth = 0;
-
-  void _pushFrame(InterpreterFrame frame) {
-    _currentCallDepth++;
-    if (_currentCallDepth > maxCallDepth) {
-      _currentCallDepth--;
-      throw DarticError('Stack overflow: call depth exceeded $maxCallDepth');
-    }
-    _runQueue.addFirst(frame);
-  }
-
-  void _popFrame() {
-    _currentCallDepth--;
-    _runQueue.removeFirst();
-  }
-}
-```
-
-深度限制值 512 足以覆盖正常递归场景，同时防止恶意或错误的无限递归耗尽宿主内存。
-
-### 执行超时（可选）
-
-fuel 机制保证单回合不超时，但无法限制累计执行时间。宿主应用可配置以下可选限制：
-
-```dart
-class DarticRuntime {
-  int? maxTotalFuel;         // 跨回合累计指令数上限（null = 不限）
-  Duration? executionTimeout; // 执行超时（null = 不限）
-
-  int _totalFuelConsumed = 0;
-  Stopwatch? _executionTimer;
-
-  void _driveInterpreter() {
-    if (executionTimeout != null) {
-      _executionTimer ??= Stopwatch()..start();
-      if (_executionTimer!.elapsed >= executionTimeout!) {
-        _runQueue.clear();
-        throw DarticError('Execution timeout exceeded');
-      }
-    }
-
-    int fuel = _fuelBudget;
-    // ... 正常分发循环 ...
-    _totalFuelConsumed += _fuelBudget - fuel;
-
-    if (maxTotalFuel != null && _totalFuelConsumed >= maxTotalFuel!) {
-      _runQueue.clear();
-      throw DarticError('Total fuel budget exceeded');
-    }
-  }
-}
-```
-
-这些限制是可选的——默认不启用，由宿主应用根据需要配置。
-
-### 内存保护
-
-不实现显式的内存上限。依赖宿主 Dart VM 的 GC 和 OS 级内存限制：
-
-- 栈空间在初始化时预分配固定大小（ValueStack、RefStack、CallStack），不会无限增长
-- 堆对象（InterpreterObject）由 VM GC 管理，与宿主应用共享内存压力
-- 如果需要内存限制，宿主应用可通过 Dart 的 `--old-gen-heap-size` 等 VM 参数控制
-
-## Bridge 注册表作为 API 边界
-
-虽然 dartic 不实现能力模型，但 Bridge 注册表天然形成了 API 边界——解释器代码只能访问已注册的宿主 API：
-
-```dart
-final runtime = DarticRuntime();
-
-// 仅注册核心库，不注册 dart:io
-registerCoreBridges(runtime.hostBindings);
-// 不调用 registerIoBridges → 解释器无法访问文件/网络
-
-runtime.loadAndRun('plugin.darticb');
-```
-
-这不是安全沙箱（解释器可以通过已注册的 API 间接访问 IO），但提供了基本的 API 表面控制。宿主应用的开发者决定暴露哪些能力给解释器代码。
-
-## 错误隔离
-
-解释器运行时的错误不应导致宿主应用崩溃：
-
-```dart
+// 宿主应用错误隔离模式
 Future<void> runPlugin(DarticRuntime runtime, String path) async {
   try {
     final module = runtime.loadModule(File(path).readAsBytesSync());
     await runtime.execute(module);
   } on DarticLoadError catch (e) {
-    // 字节码验证失败 → 拒绝加载
     log.warning('Plugin load failed: $e');
   } on DarticError catch (e) {
-    // 运行时错误（栈溢出、未捕获异常等） → 隔离处理
     log.warning('Plugin execution error: $e');
   }
   // 宿主应用继续运行
 }
 ```
 
-### 异常分类
-
-```dart
-/// 加载时错误：字节码格式/验证失败
-class DarticLoadError implements Exception {
-  final String message;
-  DarticLoadError(this.message);
-}
-
-/// 运行时错误：解释器执行中的可恢复错误
-class DarticError implements Exception {
-  final String message;
-  DarticError(this.message);
-}
-
-/// 内部错误：解释器实现 bug（不应发生）
-class DarticInternalError implements Exception {
-  final String message;
-  DarticInternalError(this.message);
-}
-```
-
-`DarticError` 和 `DarticLoadError` 是预期的、可恢复的。`DarticInternalError` 表示解释器自身的 bug，应当记录并上报。
-
-## 未来扩展点
-
-当前的最小安全模型为未来扩展预留了空间，但不预先实现：
-
-| 扩展方向 | 触发条件 | 复杂度 |
-|----------|----------|--------|
-| 内存上限 | 需要多租户资源隔离 | 低：追踪 InterpreterObject 分配计数 |
-| API 白名单 | 需要细粒度权限控制 | 中：在 HostBindings 层添加权限检查 |
-| 执行超时 | 需要硬时间限制 | 低：已设计 `executionTimeout` + `maxTotalFuel`，默认不启用 |
-| 字节码签名 | 需要防篡改 | 低：在文件头添加 HMAC/Ed25519 签名 |
-
-这些扩展都可以在不改变核心架构的前提下增量添加。
-
-### 业务层面关注点（不在核心设计范围内）
-
-以下属于部署/业务层面，由上层应用自行决策和实现，不纳入解释器核心设计：
-
-- **字节码签名验证**（Ed25519 / HMAC）：热更新场景的防篡改需求，属于分发管线的职责
-- **API 权限白/黑名单**：细粒度的宿主 API 访问控制，由 Bridge 注册策略承载
-- **热更新版本管理**：字节码版本兼容性检查、灰度发布、回滚策略等
-- **CDN 分发与缓存策略**：字节码的传输和存储优化
+</details>
