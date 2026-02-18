@@ -1,4 +1,4 @@
-# Chapter 6: 异步与生成器
+# Chapter 7: 异步与生成器
 
 ## 模块定位
 
@@ -34,47 +34,13 @@
 
 ### DarticFrame 字段
 
-DarticFrame 的异步相关字段按功能分为三组（基础字段详见 Ch2）：
+DarticFrame 的完整字段定义（21 个字段，三组分类）见 Ch2。本章关注这些字段在异步流程中的行为语义：
 
-**基础与栈快照字段**
+- **基础与栈快照字段**（funcProto, pc, savedVBase, savedRBase, savedVSP, savedRSP, savedValueSlots, savedRefSlots）：挂起时快照栈数据到帧对象，恢复时在栈顶重新分配空间并拷回
+- **异步与生成器控制字段**（resultCompleter, thenCallback, errorCallback, streamController, streamPaused, isSuspendedAtYield, cancelled）：控制 async/async* 函数的生命周期状态
+- **挂起恢复字段**（awaitDestReg, resumeValue, resumeException, resumeStackTrace, capturedZone, awaiterFrame）：传递 Future 完成结果和异常信息
 
-> 注意：这里的 `savedVSP` / `savedRSP` / `savedVBase` / `savedRBase` 是 DarticFrame 堆对象上的字段，用于异步挂起时的**深保存**（快照栈数据到堆）。它们与 Ch2 CallStack 中同名的 `savedVSP` / `savedRSP` 不同——CallStack 中的字段用于同步调用链的帧切换（保存调用者的栈指针），存储在 `Uint32List` 中，随 CALL/RETURN 自动管理。
-
-| 字段名 | 类型 | 用途 |
-|--------|------|------|
-| funcProto | DarticFuncProto | 当前函数原型（含 bytecode、icTable、exceptionTable 等） |
-| pc | int | 程序计数器，挂起时保存恢复点 |
-| savedVBase | int | 挂起时值栈帧基址 |
-| savedRBase | int | 挂起时引用栈帧基址 |
-| savedVSP | int | 挂起时的值栈指针 |
-| savedRSP | int | 挂起时的引用栈指针 |
-| savedValueSlots | Int64List? | 值栈快照（帧占用区间），恢复后置 null |
-| savedRefSlots | List\<Object?\>? | 引用栈快照（帧占用区间），恢复后置 null |
-
-> 帧通过 `funcProto` 引用访问字节码（`funcProto.bytecode`）、内联缓存表（`funcProto.icTable`）和异常处理器表（`funcProto.exceptionTable`）。这些数据属于函数元数据，多个帧执行同一函数时共享同一份。异常处理器表为 `List<ExceptionHandler>`，按 PC 范围匹配（详见 Ch2），DarticFrame 不单独持有副本。
-
-**异步与生成器控制字段**
-
-| 字段名 | 类型 | 用途 |
-|--------|------|------|
-| resultCompleter | Completer\<Object?\>? | async 函数的结果 Completer |
-| thenCallback | Function? | 惰性创建的 then 回调，避免每次 await 分配 |
-| errorCallback | Function? | 惰性创建的 error 回调 |
-| streamController | StreamController\<Object?\>? | async* 的输出 Stream |
-| streamPaused | bool | Stream 是否被暂停 |
-| isSuspendedAtYield | bool | 是否因 Stream 暂停而在 yield 点挂起 |
-| cancelled | bool | 订阅是否已取消 |
-
-**挂起恢复字段**
-
-| 字段名 | 类型 | 用途 |
-|--------|------|------|
-| awaitDestReg | int | AWAIT 指令的目标寄存器 A（恢复时写入结果） |
-| resumeValue | Object? | Future 正常完成的恢复值 |
-| resumeException | Object? | Future 异常完成的异常对象 |
-| resumeStackTrace | StackTrace? | 异常对应的栈追踪 |
-| capturedZone | Zone | 帧创建时捕获的 Zone.current |
-| awaiterFrame | DarticFrame? | 等待此帧结果的帧（异步栈追踪用） |
+> 注意：savedVSP / savedRSP 等字段是 DarticFrame 堆对象上的字段（深保存），与 Ch2 CallStack 中同名的 savedVSP / savedRSP 不同——后者用于同步调用链的帧切换，详见 Ch2。
 
 ### 浅保存与深保存
 
