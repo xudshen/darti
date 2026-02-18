@@ -84,15 +84,17 @@ feat(bytecode): add ISA encoding, opcodes, and constant pool
 
 ## 核心发现
 
-> _(执行时填写：编解码 edge case、WIDE 实现陷阱、常量池设计调整等)_
+- Dart enum 有内置 `index` 属性（声明顺序），不能用于自定义 opcode 值。改用 `code` 字段 + `byCode()` 静态查找表
+- 常量池 doubles 分区的去重需要按 bit pattern 比较（`NaN != NaN`），通过 `ByteData.setFloat64/getInt64` 转换
+- WIDE AsBx 的 excess-K 编码用 `K = 0x7FFFFFFF`（32 位），而标准 AsBx 用 `K = 0x7FFF`（16 位）——K 值随操作数宽度变化
 
 ## Batch 完成检查
 
-- [ ] 1.1.1 Opcode 枚举与编解码
-- [ ] 1.1.2 常量池四分区
-- [ ] 1.1.3 WIDE 前缀编解码
-- [ ] 1.1.4 字节码模块容器
-- [ ] `fvm dart analyze` 零警告
-- [ ] `fvm dart test test/bytecode/` 全部通过
+- [x] 1.1.1 Opcode 枚举与编解码
+- [x] 1.1.2 常量池四分区
+- [x] 1.1.3 WIDE 前缀编解码
+- [x] 1.1.4 字节码模块容器
+- [x] `fvm dart analyze` 零警告
+- [x] `fvm dart test test/bytecode/` 全部通过（111 tests）
 - [ ] commit 已提交
 - [ ] overview.md 已更新

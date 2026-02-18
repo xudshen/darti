@@ -14,7 +14,7 @@
 
 | Batch | 描述 | Task 数 | 状态 |
 |-------|------|---------|------|
-| [1.1](phase1/batch-1.1-bytecode-infra.md) | 字节码基础设施 (Ch1) | 4 | 🔲 |
+| [1.1](phase1/batch-1.1-bytecode-infra.md) | 字节码基础设施 (Ch1) | 4 | ✅ |
 | [1.2](phase1/batch-1.2-stack-object-model.md) | 三栈与对象模型 (Ch2) | 4 | 🔲 |
 | [1.3](phase1/batch-1.3-dispatch-loop.md) | 分发循环 (Ch3) | 6 | 🔲 |
 | [1.4](phase1/batch-1.4-minimal-compiler.md) | 最小编译器 (Ch5) | 6 | 🔲 |
