@@ -19,16 +19,16 @@ void main() {
     test('lookup finds variable in current scope', () {
       final scope = Scope(valueAlloc: valAlloc, refAlloc: refAlloc);
       final decl = makeDummyVarDecl('x');
-      scope.declare(decl, StackKind.value);
+      scope.declare(decl, StackKind.intVal);
       final binding = scope.lookup(decl);
       expect(binding, isNotNull);
-      expect(binding!.kind, StackKind.value);
+      expect(binding!.kind, StackKind.intVal);
     });
 
     test('lookup finds variable in parent scope', () {
       final parent = Scope(valueAlloc: valAlloc, refAlloc: refAlloc);
       final decl = makeDummyVarDecl('x');
-      parent.declare(decl, StackKind.value);
+      parent.declare(decl, StackKind.intVal);
 
       final child = Scope(
         valueAlloc: valAlloc,
@@ -49,8 +49,8 @@ void main() {
       final scope = Scope(valueAlloc: valAlloc, refAlloc: refAlloc);
       final decl1 = makeDummyVarDecl('x');
       final decl2 = makeDummyVarDecl('y');
-      final b1 = scope.declare(decl1, StackKind.value);
-      final b2 = scope.declare(decl2, StackKind.value);
+      final b1 = scope.declare(decl1, StackKind.intVal);
+      final b2 = scope.declare(decl2, StackKind.intVal);
       scope.release();
 
       // After release, the next alloc should reuse a freed register.
@@ -70,7 +70,7 @@ void main() {
     test('declareWithReg does not track register for release', () {
       final scope = Scope(valueAlloc: valAlloc, refAlloc: refAlloc);
       final decl = makeDummyVarDecl('param');
-      scope.declareWithReg(decl, StackKind.value, 42);
+      scope.declareWithReg(decl, StackKind.intVal, 42);
       scope.release();
       // Since declareWithReg doesn't track, releasing shouldn't affect
       // the allocator — next alloc should be 0 (nothing freed).

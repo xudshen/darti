@@ -135,7 +135,7 @@ class DarticCompiler {
     // for release — they live for the entire function).
     for (final param in fn.positionalParameters) {
       final kind = _classifyStackKind(param.type);
-      final reg = kind == StackKind.value
+      final reg = kind.isValue
           ? _valueAlloc.alloc()
           : _refAlloc.alloc();
       _scope.declareWithReg(param, kind, reg);
@@ -267,7 +267,7 @@ class DarticCompiler {
       // Bind the variable to the initializer's result register.
       // In Phase 1, the declared type and initializer type must agree.
       assert(
-        (kind == StackKind.value) == (initLoc == ResultLoc.value),
+        kind.isValue == (initLoc == ResultLoc.value),
         'Type mismatch: declared $kind but initializer is $initLoc '
         'for ${decl.name}',
       );
@@ -356,7 +356,7 @@ class DarticCompiler {
     }
     return (
       binding.reg,
-      binding.kind == StackKind.value ? ResultLoc.value : ResultLoc.ref,
+      binding.kind.isValue ? ResultLoc.value : ResultLoc.ref,
     );
   }
 
@@ -368,14 +368,14 @@ class DarticCompiler {
       );
     }
     final (srcReg, _) = _compileExpression(expr.value);
-    if (binding.kind == StackKind.value) {
+    if (binding.kind.isValue) {
       _emitter.emit(encodeABC(Op.moveVal, binding.reg, srcReg, 0));
     } else {
       _emitter.emit(encodeABC(Op.moveRef, binding.reg, srcReg, 0));
     }
     return (
       binding.reg,
-      binding.kind == StackKind.value ? ResultLoc.value : ResultLoc.ref,
+      binding.kind.isValue ? ResultLoc.value : ResultLoc.ref,
     );
   }
 
@@ -511,20 +511,19 @@ class DarticCompiler {
   /// Derived from [_classifyStackKind] to avoid duplicating the type→stack
   /// classification logic.
   ResultLoc _classifyType(ir.DartType type) =>
-      _classifyStackKind(type) == StackKind.value
-          ? ResultLoc.value
-          : ResultLoc.ref;
+      _classifyStackKind(type).isValue ? ResultLoc.value : ResultLoc.ref;
 
   /// Classifies a DartType for scope-level register allocation.
   ///
-  /// Canonical type classification: int/double/bool → value stack,
-  /// everything else → ref stack.
+  /// Canonical type classification: int/bool → intVal (value stack intView),
+  /// double → doubleVal (value stack doubleView),
+  /// everything else → ref (ref stack).
   StackKind _classifyStackKind(ir.DartType type) {
     if (type is ir.InterfaceType) {
       final cls = type.classNode;
-      if (cls == _coreTypes.intClass) return StackKind.value;
-      if (cls == _coreTypes.doubleClass) return StackKind.value;
-      if (cls == _coreTypes.boolClass) return StackKind.value;
+      if (cls == _coreTypes.intClass) return StackKind.intVal;
+      if (cls == _coreTypes.boolClass) return StackKind.intVal;
+      if (cls == _coreTypes.doubleClass) return StackKind.doubleVal;
     }
     return StackKind.ref;
   }

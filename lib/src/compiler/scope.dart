@@ -6,7 +6,19 @@ import 'register_allocator.dart';
 /// circular dependency by being defined alongside Scope.
 ///
 /// This is re-exported from compiler.dart as [ResultLoc].
-enum StackKind { value, ref }
+enum StackKind {
+  /// int, bool (encoded as 0/1) — ValueStack intView.
+  intVal,
+
+  /// double — ValueStack doubleView.
+  doubleVal,
+
+  /// String, object instances, closures, null, dynamic, num — RefStack.
+  ref;
+
+  /// Whether this kind uses the value stack (intVal or doubleVal).
+  bool get isValue => this != ref;
+}
 
 /// A variable binding within a [Scope].
 class VarBinding {
@@ -50,12 +62,12 @@ class Scope {
 
   /// Declares a variable in this scope and allocates a register for it.
   VarBinding declare(ir.VariableDeclaration decl, StackKind kind) {
-    final reg = kind == StackKind.value
+    final reg = kind.isValue
         ? valueAlloc.alloc()
         : refAlloc.alloc();
     final binding = VarBinding(reg: reg, kind: kind);
     _bindings[decl] = binding;
-    if (kind == StackKind.value) {
+    if (kind.isValue) {
       _valueRegs.add(reg);
     } else {
       _refRegs.add(reg);

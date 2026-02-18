@@ -132,18 +132,23 @@ feat: add module format, exception tables, StackKind, and IC initialization
 
 ## 核心发现
 
-> _(执行时填写：.darticb 格式的版本兼容策略、异常处理表对 finally 的特殊处理、StackKind 推断的 edge case 等)_
+- **Magic 值选定 0xDAB71B00** — 设计文档中的 0xDART1B00 包含非十六进制字符，实际采用 0xDAB71B00 (DAr7ic Binary 00)
+- **ExceptionHandler 已前置定义在 module.dart** — 8 字段结构在 Batch 1.2 定义时即包含，不需要创建单独的 exception_handler.dart 文件
+- **StackKind 三分类** — 从 `{value, ref}` 细化为 `{intVal, doubleVal, ref}`，`isValue` getter 统一判断值栈归属，使 double-view 和 int-view 的选择有了编译期依据
+- **IC 表仅序列化 methodNameIndex** — cachedClassId/cachedMethodOffset 是运行时缓存状态，反序列化时重置为 -1/0 (uncached)
+- **CRC32 采用 IEEE 802.3 标准** — 反射多项式 0xEDB88320，table-driven 实现，校验和覆盖 payload（不含 header）
+- **ConstantPool.from() 构造** — 反序列化需要从已有数据重建常量池，新增命名构造函数 + read accessors (refs/ints/doubles/names)
 
 ## Batch 完成检查
 
-- [ ] 1.5.1 `.darticb` 二进制模块格式
-- [ ] 1.5.2 模块序列化/反序列化
-- [ ] 1.5.3 异常处理表结构
-- [ ] 1.5.4 StackKind 分类
-- [ ] 1.5.5 IC 表元数据初始化
-- [ ] 1.5.6 端到端 roundtrip 测试
-- [ ] `fvm dart analyze` 零警告
-- [ ] `fvm dart test` 全部通过
-- [ ] commit 已提交
-- [ ] overview.md 已更新
-- [ ] **Phase 1 里程碑通过**
+- [x] 1.5.1 `.darticb` 二进制模块格式
+- [x] 1.5.2 模块序列化/反序列化
+- [x] 1.5.3 异常处理表结构
+- [x] 1.5.4 StackKind 分类
+- [x] 1.5.5 IC 表元数据初始化
+- [x] 1.5.6 端到端 roundtrip 测试
+- [x] `fvm dart analyze` 零警告
+- [x] `fvm dart test` 全部通过
+- [x] commit 已提交
+- [x] overview.md 已更新
+- [x] **Phase 1 里程碑通过**

@@ -13,6 +13,30 @@ import 'dart:typed_data';
 ///
 /// See: docs/design/01-bytecode-isa.md "四分区常量池"
 class ConstantPool {
+  /// Creates an empty ConstantPool.
+  ConstantPool();
+
+  /// Creates a ConstantPool pre-populated with data (for deserialization).
+  ConstantPool.from({
+    required List<Object?> refs,
+    required Int64List ints,
+    required Float64List doubles,
+    required List<String> names,
+  }) {
+    for (final r in refs) {
+      addRef(r);
+    }
+    for (var i = 0; i < ints.length; i++) {
+      addInt(ints[i]);
+    }
+    for (var i = 0; i < doubles.length; i++) {
+      addDouble(doubles[i]);
+    }
+    for (final n in names) {
+      addName(n);
+    }
+  }
+
   // ── refs partition ──
 
   final List<Object?> _refs = [];
@@ -82,6 +106,20 @@ class ConstantPool {
 
   String getName(int index) => _names[index];
   int get nameCount => _names.length;
+
+  // ── read-only accessors (for serialization) ──
+
+  /// Returns an unmodifiable view of the refs partition.
+  List<Object?> get refs => List.unmodifiable(_refs);
+
+  /// Returns a copy of the ints partition (only the used portion).
+  Int64List get ints => Int64List.fromList(_ints.sublist(0, _intLen));
+
+  /// Returns a copy of the doubles partition (only the used portion).
+  Float64List get doubles => Float64List.fromList(_doubles.sublist(0, _dblLen));
+
+  /// Returns an unmodifiable view of the names partition.
+  List<String> get names => List.unmodifiable(_names);
 
   // ── helpers ──
 
