@@ -62,6 +62,8 @@
 
 **不变式**：`savedVSP`/`savedRSP` 用于同步调用链的帧切换。异步挂起时栈指针额外保存到 InterpreterFrame 对象（详见 Ch6），因为挂起帧脱离了 CallStack 的线性调用链。
 
+**HOST_BOUNDARY 哨兵帧**：当 VM 通过 CallbackProxy 或 BridgeMixin 回调解释器时（详见 Ch3），`invokeClosure` 在 CallStack 上压入一个哨兵帧（`funcId = SENTINEL_HOST_BOUNDARY`），标记回调的入口边界。RETURN 指令检测到哨兵帧时不再弹栈回退到调用者，而是退出当前 `drive()` 调用，将控制权交还给触发回调的 VM 代码。这保证了：(1) 回调的 RETURN 不会意外弹到外层解释器帧；(2) 回调结束后三栈的栈指针恢复到回调入口前的状态；(3) 外层帧的栈数据不受回调影响。
+
 ### 栈帧布局
 
 每个函数调用占用三部分空间：
@@ -182,8 +184,9 @@ GlobalTable 存储静态字段和顶层变量。每个槽位初始为 `_uninitia
 │  │  │  执行: switch(op)                                     │ │ │
 │  │  │    ├─ 算术/逻辑指令 → 值栈操作，继续内循环            │ │ │
 │  │  │    ├─ CALL → 保存 PC，push 新帧，break 内循环         │ │ │
-│  │  │    ├─ RETURN → pop 帧，恢复调用者，break 内循环       │ │ │
+│  │  │    ├─ RETURN → pop 帧（或遇哨兵帧退出drive），break  │ │ │
 │  │  │    ├─ AWAIT → 保存帧，移出队列，break 内循环(详见Ch6) │ │ │
+│  │  │    ├─ ASYNC_RETURN → 完成Completer，移出队列(详见Ch6) │ │ │
 │  │  │    └─ HALT → pop 帧，break 内循环                     │ │ │
 │  │  │                                                       │ │ │
 │  │  └───────────────────────────────────────────────────────┘ │ │
@@ -196,7 +199,7 @@ GlobalTable 存储静态字段和顶层变量。每个槽位初始为 `_uninitia
 └────────────────────────────────────────────────────────────────┘
 ```
 
-**帧切换**：`CALL` 保存当前 PC 后 `break` 内循环，外层循环从 `_runQueue.first` 取新帧继续。`RETURN` 弹出当前帧，恢复调用者的栈指针和返回值寄存器后 `break` 内循环。
+**帧切换**：`CALL` 保存当前 PC 后 `break` 内循环，外层循环从 `_runQueue.first` 取新帧继续。`RETURN` 弹出当前帧，恢复调用者的栈指针和返回值寄存器后 `break` 内循环。若 `RETURN` 检测到 CallStack 栈顶为 HOST_BOUNDARY 哨兵帧，则不恢复调用者——而是退出 `drive()`，将控制权和返回值交还给 `invokeClosure` 的调用方（详见 Ch3）。
 
 ### 分发循环优化要点
 

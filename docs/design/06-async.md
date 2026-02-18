@@ -31,6 +31,20 @@
 
 字节码解释器的核心异步优势：InterpreterFrame 是堆对象，挂起/恢复的全部状态封装在帧中。不同于原生编译器需要 CPS 变换或状态机脱糖，解释器天然具备暂停和恢复的能力——只需保存帧的 PC 和栈快照。
 
+### 浅保存与深保存
+
+InterpreterFrame 的挂起存在两种深度，按场景选择以平衡正确性与性能：
+
+| | 浅保存（fuel 让出） | 深保存（AWAIT / YIELD 挂起） |
+|---|---|---|
+| 触发 | fuel 耗尽，`Timer.run` 调度下一回合 | AWAIT 遇到 Future / YIELD 遇到 Stream paused |
+| 保存内容 | pc、savedVBase、savedRBase（几个 int） | pc + 栈数据完整快照（savedValueSlots / savedRefSlots） |
+| 栈空间 | 保留占用——帧仍在 `_runQueue` 中，栈区间不释放 | 释放——帧从 `_runQueue` 移除，原栈位置可被其他帧复用 |
+| 恢复位置 | 原位继续（下回合 `_driveInterpreter` 取同一帧） | 栈顶重新分配（恢复不变式） |
+| 代价 | ≈0（几次 int 赋值） | <1μs（memcpy 80-400 字节 + 引用栈置 null） |
+
+**深保存必须快照的原因**：帧从 `_runQueue` 移除后栈空间被释放，后续帧可能分配到同一区间。若不快照，恢复时原位数据已被覆盖。浅保存无此问题——帧留在 `_runQueue` 中，栈空间持续占用，无人会覆盖。
+
 ### 异步帧状态机
 
 ```
@@ -124,6 +138,30 @@ InterpreterFrame 的异步相关字段按功能分组（基础字段详见 Ch2�
 2. **无重叠保证**：恢复后的帧区间 `[newBase, newBase+size)` 不与任何活跃帧的栈区间重叠
 3. **基址更新**：恢复后帧的 `savedVBase` / `savedRBase` 更新为新位置，后续字节码使用新基址
 
+**栈安全性：async 完成不走栈回退**
+
+恢复不变式保证恢复帧在栈顶，但还需说明帧完成后不会向下覆盖其他活跃帧。以下时序说明两个并发 async 帧的栈安全性：
+
+```
+时刻1: bar 运行中
+  栈: [...bar...]
+
+时刻2: foo 恢复，在栈顶分配空间
+  栈: [...bar...][foo]
+
+时刻3: foo 执行 ASYNC_RETURN → completer.complete(result)
+  foo 的栈空间释放，sp 回退到 bar 之上
+  栈: [...bar...]
+  （注意：不是 sync RETURN——不弹 CallStack，不跳回 bar 或其他帧的代码）
+
+时刻4: foo 的等待者（如帧 C）通过 scheduleMicrotask 恢复
+  C 在栈顶分配新空间
+  栈: [...bar...][C]
+  C 继续执行，其子调用同样在 C 之上，不会触及 bar 的栈区间
+```
+
+关键区别在于：sync RETURN 是控制流转移（弹栈、跳回调用者代码），async RETURN 是消息传递（complete Completer、等待者自行恢复）。因此恢复帧完成后只释放自身空间，不会修改其下方任何活跃帧的栈区间。
+
 ## 工作流程
 
 ### 挂起流程（Suspend）
@@ -166,6 +204,17 @@ case OpCode.AWAIT:
 ```
 
 大多数 async 函数在无 await 时同步完成——INIT_ASYNC 仅创建一个 Completer，ASYNC_RETURN 同步完成它，全程不挂起。
+
+ASYNC_RETURN 的分发循环处理与 AWAIT 对称，但语义完全不同于同步 RETURN：
+
+```
+case OpCode.ASYNC_RETURN:
+  frame.resultCompleter!.complete(refStack[decodeA(instr)]);
+  _runQueue.removeFirst();
+  break innerLoop;  // 帧生命周期结束，不走 CallStack 回退
+```
+
+同步 RETURN 弹出 CallStack、恢复调用者的 pc/vBase/rBase、在调用者帧内继续执行。ASYNC_RETURN 不触碰 CallStack——它通过 `completer.complete()` 将结果投递给等待者，等待者自行在栈顶恢复。
 
 ### try/catch 与 await 的交互
 

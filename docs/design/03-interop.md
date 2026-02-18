@@ -146,7 +146,13 @@ Bridge 类是预生成的宿主类子类，用于解释器类 `extends` 或 `imp
 1. HostClassWrapper 在转发方法参数时检测到 InterpreterObject（闭包）
 2. 创建 CallbackProxy，根据宿主方法签名的参数数量选择 `proxyN()` 生成 Dart 闭包
 3. 将生成的 Dart 闭包传给宿主 API（如 `list.map(proxy.proxy1())`）
-4. 宿主 API 调用闭包时，CallbackProxy 内部通过 `_runtime.invokeClosure` 回调解释器
+4. 宿主 API 调用闭包时，CallbackProxy 内部通过 `_runtime.invokeClosure` 回调解释器：
+   a. 在 CallStack 上压入 HOST_BOUNDARY 哨兵帧（详见 Ch2）
+   b. 在值栈/引用栈栈顶为回调分配新帧空间
+   c. 将参数写入新帧的寄存器
+   d. 调用 `drive()` 执行回调（嵌套 drive，共享 fuel 预算，详见 Ch7）
+   e. 回调的 RETURN 遇到 HOST_BOUNDARY → 退出 `drive()`，控制权交还 VM
+   f. 从值栈/引用栈读取返回值，恢复栈指针到回调入口前的状态
 
 ### Bridge 实例创建流程
 
