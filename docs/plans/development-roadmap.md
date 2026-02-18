@@ -612,10 +612,11 @@ int main() => add(1, 2); // => 3
 
 - 每个 Batch 约 3-6 个 Task，每个 Task 遵循 TDD：读设计文档 → 写测试 → 最小实现 → analyze → test → 重构
 - 每完成一个 Batch 必须：
-  1. 提交 commit
+  1. 启动code-reviewer进行review
   2. 勾选本文件中对应 checkbox
   3. 填写该 Batch 的"核心发现"
   4. 更新 `docs/tasks/overview.md` 汇总表
+  5. 提交 commit
 - Phase 之间有明确的里程碑验证点，不达标不进入下一 Phase
 - 发现设计问题时及时更新 `docs/design/` 对应章节
 

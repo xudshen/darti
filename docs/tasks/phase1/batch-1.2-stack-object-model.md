@@ -100,5 +100,5 @@ feat(runtime): add three-stack model and object representation
 - [x] 1.2.4 DarticObject / DarticClassInfo
 - [x] `fvm dart analyze` 零警告
 - [x] `fvm dart test test/runtime/` 全部通过（73 tests）
-- [ ] commit 已提交
-- [ ] overview.md 已更新
+- [x] commit 已提交 (`757b160`)
+- [x] overview.md 已更新

@@ -145,17 +145,20 @@ feat(runtime): add dispatch loop with arithmetic, control flow, and call/return
 
 ## 核心发现
 
-> _(执行时填写：switch 分发性能、帧切换逻辑、excess-K 跳转偏移计算等)_
+- **HALT 不应清除 ref 栈**：设计文档中"引用栈弹出置 null"的 GC 安全机制适用于 RETURN（清除被调用者帧的引用槽位），而非 HALT。HALT 结束整个执行，清除会导致测试无法读取结果。
+- **参数预布局约定**：编译器分配调用者的 `valueRegCount` 包含传出参数空间。调用者用超出本地寄存器的索引（如 `valueRegCount` + 偏移）写入参数位置，这些位置在 CALL_STATIC 推进 `vBase` 后恰好成为被调用者的 v0、v1 等。
+- **RETURN 读取顺序**：必须在 `popFrame()` 之前读取当前帧的 savedVSP、savedRSP、returnPC、resultReg，因为 pop 后访问器指向调用者帧。pop 之后再用 `callStack.funcId` 获取调用者的 funcId 以查找字节码。
+- **跳转偏移基准**：PC 在取指时已后增（`code[pc++]`），跳转偏移相对于已增后的 PC 值。`JUMP +2` 从索引 0 实际跳到索引 3（0→取指→PC=1→+2→3）。
 
 ## Batch 完成检查
 
-- [ ] 1.3.1 核心分发循环骨架
-- [ ] 1.3.2 加载/存储指令组
-- [ ] 1.3.3 整数算术 + 比较指令组
-- [ ] 1.3.4 控制流指令组
-- [ ] 1.3.5 CALL/RETURN 指令
-- [ ] 1.3.6 端到端测试
-- [ ] `fvm dart analyze` 零警告
-- [ ] `fvm dart test` 全部通过
-- [ ] commit 已提交
-- [ ] overview.md 已更新
+- [x] 1.3.1 核心分发循环骨架
+- [x] 1.3.2 加载/存储指令组
+- [x] 1.3.3 整数算术 + 比较指令组
+- [x] 1.3.4 控制流指令组
+- [x] 1.3.5 CALL/RETURN 指令
+- [x] 1.3.6 端到端测试
+- [x] `fvm dart analyze` 零警告
+- [x] `fvm dart test` 全部通过（273 tests）
+- [x] commit 已提交
+- [x] overview.md 已更新

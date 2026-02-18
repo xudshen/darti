@@ -45,4 +45,4 @@ int main() => add(1, 2); // => 3
 ## 执行节奏
 
 - 每个 Task 遵循 TDD：读设计文档 → 写测试 → 最小实现 → `fvm dart analyze` → `fvm dart test` → 重构
-- 每完成一个 Batch：提交 commit → 勾选 checkbox → 填写"核心发现" → 更新 `docs/tasks/overview.md`
+- 每完成一个 Batch 勾选 checkbox → 填写"核心发现" → 更新 `docs/tasks/overview.md` -> 提交 commit
