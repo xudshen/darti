@@ -13,6 +13,8 @@ class DarticModule {
     required this.functions,
     required this.constantPool,
     required this.entryFuncId,
+    this.globalCount = 0,
+    this.globalInitializerIds = const [],
   });
 
   /// Function table — indexed by funcId.
@@ -23,6 +25,13 @@ class DarticModule {
 
   /// The funcId of the entry point (typically `main`).
   final int entryFuncId;
+
+  /// Number of global variable slots.
+  final int globalCount;
+
+  /// For each global: funcId of its initializer function, or -1 if none.
+  /// Length must equal [globalCount].
+  final List<int> globalInitializerIds;
 }
 
 /// Compiled function prototype — the compiler's core output.

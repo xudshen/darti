@@ -13,7 +13,7 @@ void main() {
 
     setUp(() {
       valAlloc = RegisterAllocator();
-      refAlloc = RegisterAllocator(initialOffset: 3);
+      refAlloc = RegisterAllocator();
     });
 
     test('lookup finds variable in current scope', () {
@@ -62,8 +62,7 @@ void main() {
       final scope = Scope(valueAlloc: valAlloc, refAlloc: refAlloc);
       final decl = makeDummyVarDecl('s');
       final binding = scope.declare(decl, StackKind.ref);
-      // Ref allocator starts at 3 (ITA/FTA/this reservation).
-      expect(binding.reg, 3);
+      expect(binding.reg, 0);
       expect(binding.kind, StackKind.ref);
     });
 
@@ -85,7 +84,7 @@ int f() => 42;
 void main() {}
 ''');
       final f = findFunc(module, 'f');
-      expect(f.refRegCount, 3, reason: 'ITA+FTA+this reserved');
+      expect(f.refRegCount, 0);
     });
 
     test('int params go to value stack', () async {
@@ -105,8 +104,7 @@ String f(String s) => s;
 void main() {}
 ''');
       final f = findFunc(module, 'f');
-      // ITA + FTA + this + s = at least 4 ref regs.
-      expect(f.refRegCount, greaterThanOrEqualTo(4));
+      expect(f.refRegCount, greaterThanOrEqualTo(1));
       expect(f.paramCount, 1);
     });
 
@@ -118,8 +116,8 @@ void main() {}
       final f = findFunc(module, 'f');
       // int a, int b → value stack (at least 2 params + 1 ADD_INT result = 3)
       expect(f.valueRegCount, greaterThanOrEqualTo(3));
-      // String s → ref stack (3 reserved + 1 param = at least 4)
-      expect(f.refRegCount, greaterThanOrEqualTo(4));
+      // String s → ref stack (at least 1)
+      expect(f.refRegCount, greaterThanOrEqualTo(1));
       expect(f.paramCount, 3);
     });
 

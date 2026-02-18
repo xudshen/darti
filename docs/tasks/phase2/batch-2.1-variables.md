@@ -101,15 +101,20 @@ feat: support const evaluation, global variables, and null safety basics
 
 ## 核心发现
 
-_(执行时填写：ConstantExpression 在 CFE .dill 中的出现频率、全局变量惰性初始化的实际触发场景、Kernel 中 EqualsNull 与 EqualsCall 的区别等)_
+- **ConstantExpression 高频出现**：CFE 在 linked `.dill` 中广泛使用 `ConstantExpression` 包装 const 值，即使是简单的 `const x = 42` 也会被包装为 `ConstantExpression(IntConstant(42))`。必须支持此节点才能正确编译大多数 Dart 代码。
+- **EqualsNull 无 isNot 标志**：SDK 3.10.7 中 `EqualsNull` 只表示 `x == null`，`x != null` 由 CFE 表示为 `Not(EqualsNull(x))`。无需处理 `isNot` 字段。
+- **全局变量惰性初始化策略**：初始化器编译为独立 entry 函数（compute → BOX → STORE_GLOBAL → HALT），在 main() 前 eagerly 执行。避免了复杂的 re-entrant dispatch 机制。
+- **可空值类型必须走 ref stack**：`int?`、`bool?`、`double?` 不能放 value stack（无法表示 null）。`_classifyStackKind` 必须检查 nullability。
+- **ITA/FTA/this 偏移量 bug**：ref stack 的 `initialOffset: 3` 导致 ref 参数传递错位（caller 放 r0 但 callee 读 r3）。Phase 2 移除偏移量修复了调用约定。Phase 3 添加 `this` 时需重新设计参数布局。
+- **NullCheck 后需条件 unbox**：`int? x` 经 `x!` 后语义类型为 `int`（value stack），但操作数在 ref stack。编译器需在 NULL_CHECK 后插入 UNBOX_INT/UNBOX_DOUBLE。
 
 ## Batch 完成检查
 
-- [ ] 2.1.1 ConstantExpression 编译与表达式节点扩展
-- [ ] 2.1.2 全局变量系统
-- [ ] 2.1.3 空安全基础
-- [ ] `fvm dart analyze` 零警告
-- [ ] `fvm dart test` 全部通过
-- [ ] commit 已提交
-- [ ] overview.md 已更新
-- [ ] code review 已完成
+- [x] 2.1.1 ConstantExpression 编译与表达式节点扩展
+- [x] 2.1.2 全局变量系统
+- [x] 2.1.3 空安全基础
+- [x] `fvm dart analyze` 零新警告（仅 pubspec path 依赖警告）
+- [x] `fvm dart test` 全部通过（472 tests）
+- [x] commit 已提交
+- [x] overview.md 已更新
+- [x] code review 已完成（0 critical, 3 important → all addressed）

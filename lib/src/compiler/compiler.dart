@@ -42,6 +42,15 @@ class DarticCompiler {
   /// The funcId of the entry point (main).
   int _entryFuncId = -1;
 
+  /// Maps Kernel Field references (getter + setter) to global slot indices.
+  final Map<ir.Reference, int> _fieldToGlobalIndex = {};
+
+  /// For each global: funcId of its initializer function, or -1 if none.
+  final List<int> _globalInitializerIds = [];
+
+  /// Total number of global variable slots.
+  int _globalCount = 0;
+
   // ── Per-function compilation state ──
   // Reset in _compileProcedure for each function.
 
@@ -69,7 +78,7 @@ class DarticCompiler {
   /// 1. Collect all user procedures → assign funcIds
   /// 2. Compile each procedure's body → emit bytecode
   DarticModule compile() {
-    // Pass 1: assign funcIds to all user-defined procedures.
+    // Pass 1a: assign funcIds to all user-defined procedures.
     // TODO: Traverse class members (methods, getters, setters,
     // constructors) once class compilation is supported. Currently only
     // top-level procedures are collected.
@@ -89,6 +98,21 @@ class DarticCompiler {
       }
     }
 
+    // Pass 1b: assign global indices to top-level fields.
+    for (final lib in _component.libraries) {
+      if (_isPlatformLibrary(lib)) continue;
+      for (final field in lib.fields) {
+        final globalIndex = _globalCount++;
+        _fieldToGlobalIndex[field.getterReference] = globalIndex;
+        final setterRef = field.setterReference;
+        if (setterRef != null) {
+          _fieldToGlobalIndex[setterRef] = globalIndex;
+        }
+        // Placeholder for initializer funcId — will be set in Pass 2b.
+        _globalInitializerIds.add(-1);
+      }
+    }
+
     // Determine entry point.
     final mainProc = _component.mainMethod;
     if (mainProc != null) {
@@ -99,7 +123,7 @@ class DarticCompiler {
       _entryFuncId = 0; // fallback
     }
 
-    // Pass 2: compile each procedure.
+    // Pass 2a: compile each procedure.
     for (final lib in _component.libraries) {
       if (_isPlatformLibrary(lib)) continue;
       for (final proc in lib.procedures) {
@@ -107,10 +131,24 @@ class DarticCompiler {
       }
     }
 
+    // Pass 2b: compile global initializers.
+    for (final lib in _component.libraries) {
+      if (_isPlatformLibrary(lib)) continue;
+      for (final field in lib.fields) {
+        if (field.initializer != null) {
+          final globalIndex = _fieldToGlobalIndex[field.getterReference]!;
+          final initFuncId = _compileGlobalInitializer(field, globalIndex);
+          _globalInitializerIds[globalIndex] = initFuncId;
+        }
+      }
+    }
+
     return DarticModule(
       functions: _functions,
       constantPool: _constantPool,
       entryFuncId: _entryFuncId,
+      globalCount: _globalCount,
+      globalInitializerIds: _globalInitializerIds,
     );
   }
 
@@ -123,7 +161,7 @@ class DarticCompiler {
     // Reset per-function state.
     _emitter = BytecodeEmitter();
     _valueAlloc = RegisterAllocator();
-    _refAlloc = RegisterAllocator(initialOffset: 3); // Reserve ITA/FTA/this
+    _refAlloc = RegisterAllocator();
     _isEntryFunction = funcId == _entryFuncId;
     _pendingArgMoves.clear();
 
@@ -154,11 +192,91 @@ class DarticCompiler {
       _emitter.emit(encodeABC(Op.returnNull, 0, 0, 0));
     }
 
-    // Patch outgoing arg MOVE placeholders now that register counts are known.
-    // Value args go to `valueRegCount + argIdx`, ref args to
-    // `refRegCount + argIdx`. The VM's CALL_STATIC sets
-    // callee.vBase = caller.vBase + valueRegCount (and similarly for refs),
-    // so outgoing[argIdx] becomes callee.v[argIdx] or callee.r[argIdx].
+    _patchPendingArgMoves();
+
+    final valRegCount = _valueAlloc.maxUsed;
+    final refRegCount = _refAlloc.maxUsed;
+    _functions[funcId] = DarticFuncProto(
+      funcId: funcId,
+      name: proc.name.text,
+      bytecode: _emitter.toUint32List(),
+      valueRegCount: valRegCount,
+      refRegCount: refRegCount,
+      paramCount: fn.positionalParameters.length,
+      // TODO(Phase 2+): Handle namedParameters.
+    );
+  }
+
+  // ── Global initializer compilation ──
+
+  /// Compiles a standalone initializer function for a global [field].
+  ///
+  /// The generated function computes the initializer expression, boxes the
+  /// result if needed, emits STORE_GLOBAL to the given [globalIndex], and
+  /// ends with HALT.
+  int _compileGlobalInitializer(ir.Field field, int globalIndex) {
+    final funcId = _functions.length;
+
+    // Reset per-function state.
+    _emitter = BytecodeEmitter();
+    _valueAlloc = RegisterAllocator();
+    _refAlloc = RegisterAllocator();
+    _scope = Scope(valueAlloc: _valueAlloc, refAlloc: _refAlloc);
+    _isEntryFunction = true; // Use HALT, not RETURN
+    _pendingArgMoves.clear();
+
+    // Compile initializer expression.
+    final (reg, loc) = _compileExpression(field.initializer!);
+
+    // Box value types to ref stack for STORE_GLOBAL.
+    int refReg;
+    if (loc == ResultLoc.value) {
+      refReg = _allocRefReg();
+      final kind = _classifyStackKind(field.type);
+      if (kind == StackKind.doubleVal) {
+        _emitter.emit(encodeABC(Op.boxDouble, refReg, reg, 0));
+      } else {
+        _emitter.emit(encodeABC(Op.boxInt, refReg, reg, 0));
+      }
+    } else {
+      refReg = reg;
+    }
+
+    // Store to global slot.
+    _emitter.emit(encodeABx(Op.storeGlobal, refReg, globalIndex));
+
+    // HALT (end of initializer).
+    _emitter.emit(encodeAx(Op.halt, 0));
+
+    _patchPendingArgMoves();
+
+    final valRegCount = _valueAlloc.maxUsed;
+    final refRegCount = _refAlloc.maxUsed;
+    _functions.add(DarticFuncProto(
+      funcId: funcId,
+      name: '__init_${field.name.text}',
+      bytecode: _emitter.toUint32List(),
+      valueRegCount: valRegCount,
+      refRegCount: refRegCount,
+      paramCount: 0,
+    ));
+
+    return funcId;
+  }
+
+  // ── Register allocation helpers ──
+
+  int _allocValueReg() => _valueAlloc.alloc();
+
+  int _allocRefReg() => _refAlloc.alloc();
+
+  /// Patches pending outgoing arg MOVE placeholders.
+  ///
+  /// Value args go to `valueRegCount + argIdx`, ref args to
+  /// `refRegCount + argIdx`. The VM's CALL_STATIC sets
+  /// callee.vBase = caller.vBase + valueRegCount (and similarly for refs),
+  /// so outgoing[argIdx] becomes callee.v[argIdx] or callee.r[argIdx].
+  void _patchPendingArgMoves() {
     final valRegCount = _valueAlloc.maxUsed;
     final refRegCount = _refAlloc.maxUsed;
     for (final move in _pendingArgMoves) {
@@ -177,23 +295,7 @@ class DarticCompiler {
       }
     }
     _pendingArgMoves.clear();
-
-    _functions[funcId] = DarticFuncProto(
-      funcId: funcId,
-      name: proc.name.text,
-      bytecode: _emitter.toUint32List(),
-      valueRegCount: valRegCount,
-      refRegCount: refRegCount,
-      paramCount: fn.positionalParameters.length,
-      // TODO(Phase 2+): Handle namedParameters.
-    );
   }
-
-  // ── Register allocation helpers ──
-
-  int _allocValueReg() => _valueAlloc.alloc();
-
-  int _allocRefReg() => _refAlloc.alloc();
 
   // ── Statement compilation ──
 
@@ -295,6 +397,15 @@ class DarticCompiler {
     if (expr is ir.NullLiteral) return _compileNullLiteral();
     if (expr is ir.VariableGet) return _compileVariableGet(expr);
     if (expr is ir.VariableSet) return _compileVariableSet(expr);
+    if (expr is ir.ConstantExpression) return _compileConstantExpression(expr);
+    if (expr is ir.Not) return _compileNot(expr);
+    if (expr is ir.EqualsNull) return _compileEqualsNull(expr);
+    if (expr is ir.EqualsCall) return _compileEqualsCall(expr);
+    if (expr is ir.Let) return _compileLet(expr);
+    if (expr is ir.BlockExpression) return _compileBlockExpression(expr);
+    if (expr is ir.NullCheck) return _compileNullCheck(expr);
+    if (expr is ir.StaticGet) return _compileStaticGet(expr);
+    if (expr is ir.StaticSet) return _compileStaticSet(expr);
     if (expr is ir.StaticInvocation) return _compileStaticInvocation(expr);
     if (expr is ir.InstanceInvocation) return _compileInstanceInvocation(expr);
     throw UnsupportedError(
@@ -345,6 +456,156 @@ class DarticCompiler {
     return (reg, ResultLoc.ref);
   }
 
+  // ── ConstantExpression ──
+
+  (int, ResultLoc) _compileConstantExpression(ir.ConstantExpression expr) {
+    final constant = expr.constant;
+    if (constant is ir.IntConstant) {
+      final reg = _allocValueReg();
+      if (constant.value >= -32767 && constant.value <= 32768) {
+        _emitter.emit(encodeAsBx(Op.loadInt, reg, constant.value));
+      } else {
+        final idx = _constantPool.addInt(constant.value);
+        _emitter.emit(encodeABx(Op.loadConstInt, reg, idx));
+      }
+      return (reg, ResultLoc.value);
+    }
+    if (constant is ir.DoubleConstant) {
+      final reg = _allocValueReg();
+      final idx = _constantPool.addDouble(constant.value);
+      _emitter.emit(encodeABx(Op.loadConstDbl, reg, idx));
+      return (reg, ResultLoc.value);
+    }
+    if (constant is ir.BoolConstant) {
+      final reg = _allocValueReg();
+      _emitter.emit(encodeABC(
+        constant.value ? Op.loadTrue : Op.loadFalse,
+        reg, 0, 0,
+      ));
+      return (reg, ResultLoc.value);
+    }
+    if (constant is ir.StringConstant) {
+      final reg = _allocRefReg();
+      final idx = _constantPool.addRef(constant.value);
+      _emitter.emit(encodeABx(Op.loadConst, reg, idx));
+      return (reg, ResultLoc.ref);
+    }
+    if (constant is ir.NullConstant) {
+      final reg = _allocRefReg();
+      _emitter.emit(encodeABC(Op.loadNull, reg, 0, 0));
+      return (reg, ResultLoc.ref);
+    }
+    throw UnsupportedError(
+      'Unsupported constant type: ${constant.runtimeType}',
+    );
+  }
+
+  // ── Not ──
+
+  (int, ResultLoc) _compileNot(ir.Not expr) {
+    final (operandReg, _) = _compileExpression(expr.operand);
+    final resultReg = _allocValueReg();
+    // Load 1 into result, then XOR with operand: result = operand ^ 1
+    _emitter.emit(encodeAsBx(Op.loadInt, resultReg, 1));
+    _emitter.emit(encodeABC(Op.bitXor, resultReg, operandReg, resultReg));
+    return (resultReg, ResultLoc.value);
+  }
+
+  // ── EqualsNull ──
+
+  (int, ResultLoc) _compileEqualsNull(ir.EqualsNull expr) {
+    final (refReg, _) = _compileExpression(expr.expression);
+    final resultReg = _allocValueReg();
+    // EqualsNull always represents `x == null` (no isNot flag).
+    // CFE expresses `x != null` as `Not(EqualsNull(x))`.
+    // Pattern: LOAD_FALSE → JUMP_IF_NNULL +1 → LOAD_TRUE
+    _emitter.emit(encodeABC(Op.loadFalse, resultReg, 0, 0));
+    _emitter.emit(encodeAsBx(Op.jumpIfNnull, refReg, 1));
+    _emitter.emit(encodeABC(Op.loadTrue, resultReg, 0, 0));
+    return (resultReg, ResultLoc.value);
+  }
+
+  // ── EqualsCall ──
+
+  (int, ResultLoc) _compileEqualsCall(ir.EqualsCall expr) {
+    final leftType = _inferExprType(expr.left);
+    final isInt = leftType != null && _isIntType(leftType);
+
+    final (lhsReg, _) = _compileExpression(expr.left);
+    final (rhsReg, _) = _compileExpression(expr.right);
+    final resultReg = _allocValueReg();
+
+    if (isInt) {
+      _emitter.emit(encodeABC(Op.eqInt, resultReg, lhsReg, rhsReg));
+    } else {
+      // TODO(Phase 3): Replace EQ_REF (identical) with EQ_GENERIC or
+      // CALL_VIRTUAL on operator== once user-defined classes are supported.
+      _emitter.emit(encodeABC(Op.eqRef, resultReg, lhsReg, rhsReg));
+    }
+    return (resultReg, ResultLoc.value);
+  }
+
+  // ── NullCheck ──
+
+  (int, ResultLoc) _compileNullCheck(ir.NullCheck expr) {
+    final (reg, loc) = _compileExpression(expr.operand);
+    // Value-stack values (int, bool, double) can never be null at runtime,
+    // so only emit NULL_CHECK for ref-stack operands.
+    if (loc == ResultLoc.ref) {
+      _emitter.emit(encodeABC(Op.nullCheck, reg, 0, 0));
+      // If the underlying type (ignoring nullability) is a value type,
+      // unbox after the null check so the result is on the value stack.
+      final type = _inferExprType(expr.operand);
+      if (type is ir.InterfaceType) {
+        final cls = type.classNode;
+        if (cls == _coreTypes.intClass || cls == _coreTypes.boolClass) {
+          final valReg = _allocValueReg();
+          _emitter.emit(encodeABC(Op.unboxInt, valReg, reg, 0));
+          return (valReg, ResultLoc.value);
+        }
+        if (cls == _coreTypes.doubleClass) {
+          final valReg = _allocValueReg();
+          _emitter.emit(encodeABC(Op.unboxDouble, valReg, reg, 0));
+          return (valReg, ResultLoc.value);
+        }
+      }
+    }
+    return (reg, loc);
+  }
+
+  // ── Let ──
+
+  (int, ResultLoc) _compileLet(ir.Let expr) {
+    _compileVariableDeclaration(expr.variable);
+    return _compileExpression(expr.body);
+  }
+
+  // ── BlockExpression ──
+
+  (int, ResultLoc) _compileBlockExpression(ir.BlockExpression expr) {
+    // Push a child scope for the block.
+    final outerScope = _scope;
+    _scope = Scope(
+      valueAlloc: _valueAlloc,
+      refAlloc: _refAlloc,
+      parent: outerScope,
+    );
+
+    for (final s in expr.body.statements) {
+      _compileStatement(s);
+    }
+
+    // Compile value expression inside the scope (can reference block vars).
+    final result = _compileExpression(expr.value);
+
+    // Release scope — the result register is NOT scope-tracked (allocated
+    // by _allocValueReg/_allocRefReg), so it survives.
+    _scope.release();
+    _scope = outerScope;
+
+    return result;
+  }
+
   // ── Variable access ──
 
   (int, ResultLoc) _compileVariableGet(ir.VariableGet expr) {
@@ -376,6 +637,68 @@ class DarticCompiler {
     return (
       binding.reg,
       binding.kind.isValue ? ResultLoc.value : ResultLoc.ref,
+    );
+  }
+
+  // ── Static field access ──
+
+  (int, ResultLoc) _compileStaticGet(ir.StaticGet expr) {
+    final target = expr.targetReference.asMember;
+    if (target is ir.Field) {
+      final globalIndex = _fieldToGlobalIndex[expr.targetReference];
+      if (globalIndex == null) {
+        throw UnsupportedError('Unknown static field: ${target.name.text}');
+      }
+      final refReg = _allocRefReg();
+      _emitter.emit(encodeABx(Op.loadGlobal, refReg, globalIndex));
+
+      // Unbox if the field type is a value type.
+      final kind = _classifyStackKind(target.type);
+      if (kind == StackKind.intVal) {
+        final valReg = _allocValueReg();
+        _emitter.emit(encodeABC(Op.unboxInt, valReg, refReg, 0));
+        return (valReg, ResultLoc.value);
+      }
+      if (kind == StackKind.doubleVal) {
+        final valReg = _allocValueReg();
+        _emitter.emit(encodeABC(Op.unboxDouble, valReg, refReg, 0));
+        return (valReg, ResultLoc.value);
+      }
+      return (refReg, ResultLoc.ref);
+    }
+    throw UnsupportedError(
+      'Static getter not yet supported: ${target.name.text}',
+    );
+  }
+
+  (int, ResultLoc) _compileStaticSet(ir.StaticSet expr) {
+    final target = expr.targetReference.asMember;
+    if (target is ir.Field) {
+      final globalIndex = _fieldToGlobalIndex[expr.targetReference];
+      if (globalIndex == null) {
+        throw UnsupportedError('Unknown static field: ${target.name.text}');
+      }
+      final (srcReg, srcLoc) = _compileExpression(expr.value);
+
+      // Box value types to ref stack for STORE_GLOBAL.
+      int refReg;
+      if (srcLoc == ResultLoc.value) {
+        refReg = _allocRefReg();
+        final kind = _classifyStackKind(target.type);
+        if (kind == StackKind.doubleVal) {
+          _emitter.emit(encodeABC(Op.boxDouble, refReg, srcReg, 0));
+        } else {
+          _emitter.emit(encodeABC(Op.boxInt, refReg, srcReg, 0));
+        }
+      } else {
+        refReg = srcReg;
+      }
+
+      _emitter.emit(encodeABx(Op.storeGlobal, refReg, globalIndex));
+      return (srcReg, srcLoc); // Assignment evaluates to the assigned value
+    }
+    throw UnsupportedError(
+      'Static setter not yet supported: ${target.name.text}',
     );
   }
 
@@ -486,6 +809,26 @@ class DarticCompiler {
     if (expr is ir.BoolLiteral) return _coreTypes.boolNonNullableRawType;
     if (expr is ir.StringLiteral) return _coreTypes.stringNonNullableRawType;
     if (expr is ir.NullLiteral) return const ir.NullType();
+    if (expr is ir.ConstantExpression) return _inferConstantType(expr.constant);
+    if (expr is ir.Not) return _coreTypes.boolNonNullableRawType;
+    if (expr is ir.EqualsNull) return _coreTypes.boolNonNullableRawType;
+    if (expr is ir.EqualsCall) return _coreTypes.boolNonNullableRawType;
+    if (expr is ir.Let) return _inferExprType(expr.body);
+    if (expr is ir.BlockExpression) return _inferExprType(expr.value);
+    if (expr is ir.NullCheck) {
+      final operandType = _inferExprType(expr.operand);
+      // NullCheck produces the non-nullable version of the operand type.
+      if (operandType is ir.InterfaceType &&
+          operandType.nullability == ir.Nullability.nullable) {
+        return operandType.withDeclaredNullability(ir.Nullability.nonNullable);
+      }
+      return operandType;
+    }
+    if (expr is ir.StaticGet) {
+      final target = expr.targetReference.asMember;
+      if (target is ir.Field) return target.type;
+      if (target is ir.Procedure) return target.function.returnType;
+    }
     if (expr is ir.StaticInvocation) return expr.target.function.returnType;
     if (expr is ir.InstanceInvocation) {
       // For chained int operations like (a + b) - c:
@@ -506,6 +849,19 @@ class DarticCompiler {
   bool _isIntType(ir.DartType type) =>
       type is ir.InterfaceType && type.classNode == _coreTypes.intClass;
 
+  ir.DartType? _inferConstantType(ir.Constant constant) {
+    if (constant is ir.IntConstant) return _coreTypes.intNonNullableRawType;
+    if (constant is ir.DoubleConstant) {
+      return _coreTypes.doubleNonNullableRawType;
+    }
+    if (constant is ir.BoolConstant) return _coreTypes.boolNonNullableRawType;
+    if (constant is ir.StringConstant) {
+      return _coreTypes.stringNonNullableRawType;
+    }
+    if (constant is ir.NullConstant) return const ir.NullType();
+    return null;
+  }
+
   /// Classifies a DartType for expression result location (value or ref).
   ///
   /// Derived from [_classifyStackKind] to avoid duplicating the type→stack
@@ -520,6 +876,9 @@ class DarticCompiler {
   /// everything else → ref (ref stack).
   StackKind _classifyStackKind(ir.DartType type) {
     if (type is ir.InterfaceType) {
+      // Nullable value types (int?, bool?, double?) must go on the ref stack
+      // because only ref registers can represent null.
+      if (type.nullability == ir.Nullability.nullable) return StackKind.ref;
       final cls = type.classNode;
       if (cls == _coreTypes.intClass) return StackKind.intVal;
       if (cls == _coreTypes.boolClass) return StackKind.intVal;

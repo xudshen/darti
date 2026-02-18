@@ -2,6 +2,7 @@ import '../bytecode/module.dart';
 import '../bytecode/opcodes.dart';
 import 'call_stack.dart';
 import 'error.dart';
+import 'global_table.dart';
 import 'ref_stack.dart';
 import 'value_stack.dart';
 
@@ -28,11 +29,39 @@ class DarticInterpreter {
   final CallStack callStack;
   final int fuelBudget;
 
+  /// Global variable table — initialized per-module in [execute].
+  DarticGlobalTable? _globalTable;
+
+  /// Remaining fuel — shared across initializer and main execution.
+  int _fuel = 0;
+
   /// Executes [module] starting from its entry function.
   ///
   /// Runs the dispatch loop until HALT is reached or fuel is exhausted.
   void execute(DarticModule module) {
-    final entryFunc = module.functions[module.entryFuncId];
+    _fuel = fuelBudget;
+
+    // Set up global table and run initializers.
+    if (module.globalCount > 0) {
+      _globalTable = DarticGlobalTable(module.globalCount);
+      // Run initializers (each ends with STORE_GLOBAL + HALT).
+      for (var i = 0; i < module.globalCount; i++) {
+        final initFuncId = module.globalInitializerIds[i];
+        if (initFuncId >= 0) {
+          _executeEntry(module, initFuncId);
+        }
+      }
+    }
+
+    // Run main.
+    _executeEntry(module, module.entryFuncId);
+  }
+
+  /// Runs the dispatch loop for a single entry function within [module].
+  ///
+  /// Used for both global initializer functions and the main entry point.
+  void _executeEntry(DarticModule module, int entryFuncId) {
+    final entryFunc = module.functions[entryFuncId];
     final cp = module.constantPool;
     final vs = valueStack;
     final rs = refStack;
@@ -56,9 +85,8 @@ class DarticInterpreter {
     // Dispatch loop — hot-path locals.
     var code = entryFunc.bytecode;
     var pc = 0;
-    var fuel = fuelBudget;
 
-    while (fuel-- > 0) {
+    while (_fuel-- > 0) {
       final instr = code[pc++];
       final op = instr & 0xFF;
 
@@ -407,6 +435,26 @@ class DarticInterpreter {
 
           // Write null to caller's ref register.
           rs.write(rnCallerRSP + rnResReg, null);
+
+        // ── Global Variables (0xA0-0xA1) ──
+
+        case Op.loadGlobal: // LOAD_GLOBAL A, Bx — refStack[A] = globals[Bx]
+          final a = (instr >> 8) & 0xFF;
+          final bx = (instr >> 16) & 0xFFFF;
+          rs.write(rBase + a, _globalTable!.load(bx));
+
+        case Op.storeGlobal: // STORE_GLOBAL A, Bx — globals[Bx] = refStack[A]
+          final a = (instr >> 8) & 0xFF;
+          final bx = (instr >> 16) & 0xFFFF;
+          _globalTable!.store(bx, rs.read(rBase + a));
+
+        // ── Null Safety (0xA7) ──
+
+        case Op.nullCheck: // NULL_CHECK A — if refStack[A] == null → throw
+          if (rs.read(rBase + ((instr >> 8) & 0xFF)) == null) {
+            throw DarticError(
+                'Null check operator used on a null value');
+          }
 
         // ── System ──
 
