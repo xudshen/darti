@@ -94,15 +94,15 @@ class StringBox extends Box<String> {
 
 ```
 // 解释器运行时类型描述符
-class RuntimeType {
+class DarticType {
   final int classId;                    // 类标识
-  final List<RuntimeType> typeArgs;     // 类型实参
+  final List<DarticType> typeArgs;     // 类型实参
   final Nullability nullability;        // 可空性
   
   // 缓存：已计算的子类型关系
-  final Map<RuntimeType, bool> _subtypeCache = {};
+  final Map<DarticType, bool> _subtypeCache = {};
   
-  bool isSubtypeOf(RuntimeType other) {
+  bool isSubtypeOf(DarticType other) {
     return _subtypeCache.putIfAbsent(other, () => _computeSubtype(other));
   }
 }
@@ -173,15 +173,15 @@ InvokeConstructor #List.filled 2  // 调用构造函数
 
 ```
 ┌──────────────────────┐
-│  ClassInfo*          │  → 指向类元数据（含 vtable）
-│  RuntimeType*        │  → 运行时类型描述符 [List, [int]]
+│  DarticClassInfo*          │  → 指向类元数据（含 vtable）
+│  DarticType*        │  → 运行时类型描述符 [List, [int]]
 │  field_0             │  → 实例字段
 │  field_1             │
 │  ...                 │
 └──────────────────────┘
 ```
 
-**关键设计决策：泛型类共享同一个 vtable**。不同于 .NET CLR 为值类型泛型生成独立 vtable，Dart 解释器中所有 `List<T>` 共享同一份方法表。类型参数的差异通过实例上的 `RuntimeType*` 字段和栈帧中的 ITA 传递来处理。这避免了代码膨胀，同时正确支持 reified semantics。
+**关键设计决策：泛型类共享同一个 vtable**。不同于 .NET CLR 为值类型泛型生成独立 vtable，Dart 解释器中所有 `List<T>` 共享同一份方法表。类型参数的差异通过实例上的 `DarticType*` 字段和栈帧中的 ITA 传递来处理。这避免了代码膨胀，同时正确支持 reified semantics。
 
 方法调用时从接收者对象加载 ITA 的过程：
 
@@ -201,7 +201,7 @@ InvokeVirtual    #List.add  1     // 调用虚方法
 
 ```dart
 /// 解释器中 is 检查的伪代码实现
-bool instanceOf(InterpreterObject obj, RuntimeType targetType) {
+bool instanceOf(DarticObject obj, DarticType targetType) {
   final objType = obj.runtimeType;
   
   // 快速路径 1：精确类型匹配（含类型参数）
@@ -220,7 +220,7 @@ bool instanceOf(InterpreterObject obj, RuntimeType targetType) {
   return result;
 }
 
-bool _fullSubtypeCheck(RuntimeType sub, RuntimeType sup) {
+bool _fullSubtypeCheck(DarticType sub, DarticType sup) {
   // 1. 查找 sub 的类在 sup 的类层级中的对应超类型
   final superTypeArgs = _findSuperTypeArgs(sub.classId, sup.classId);
   if (superTypeArgs == null) return false;  // 无继承关系
@@ -263,8 +263,8 @@ print(checker('hello'));  // false — T 被捕获为 int
 ```
 ClosureObject {
   FunctionInfo*       function;        // 函数元数据
-  RuntimeType*        instantiator_ta; // 创建时的 ITA（来自 this）
-  RuntimeType*        function_ta;     // 创建时的 FTA（来自外层方法）
+  DarticType*        instantiator_ta; // 创建时的 ITA（来自 this）
+  DarticType*        function_ta;     // 创建时的 FTA（来自外层方法）
   CapturedVariable[]  captures;        // 捕获的变量
 }
 ```
@@ -275,7 +275,7 @@ ClosureObject {
 
 ### dart_eval 提供了最成熟的参考架构
 
-**dart_eval** 是当前最完善的 Dart 解释器项目，采用自定义 EVC 字节码方案。其泛型类型系统经历了三个阶段演进：v0.6.0 前仅有 `RuntimeTypes` 枚举（基本无泛型），v0.6.0 引入 `CoreTypes`/`AsyncTypes` 允许指定泛型参数，v0.7.0 完全移除旧类型系统并支持函数类型参数推断。
+**dart_eval** 是当前最完善的 Dart 解释器项目，采用自定义 EVC 字节码方案。其泛型类型系统经历了三个阶段演进：v0.6.0 前仅有 `DarticTypes` 枚举（基本无泛型），v0.6.0 引入 `CoreTypes`/`AsyncTypes` 允许指定泛型参数，v0.7.0 完全移除旧类型系统并支持函数类型参数推断。
 
 dart_eval 的 **BridgeTypeAnnotation** 体系值得借鉴——它将类型规范（`BridgeTypeSpec`：库 URI + 类名）、类型引用（`BridgeTypeRef`：可携带泛型参数）和可空性注解分层设计，允许 bridge 类在声明时精确指定泛型参数。但 dart_eval 的官方文档明确承认其核心限制：**"dart_eval is unable to specify generic parameters to the Dart type system"**，即解释器内部的泛型信息无法完全映射回宿主 VM 的 reified generics。
 
@@ -291,13 +291,13 @@ dart_eval 的 **BridgeTypeAnnotation** 体系值得借鉴——它将类型规�
 
 ### 问题的本质：两个独立类型系统的互操作
 
-解释器与宿主 Dart VM 各有独立的类型系统。解释器使用自定义的 `RuntimeType` 描述符，VM 使用内部的 `TypeArguments` 向量（扁平化数组，每个泛型实例关联一个）。当值跨越边界时，必须在两种表示之间转换。
+解释器与宿主 Dart VM 各有独立的类型系统。解释器使用自定义的 `DarticType` 描述符，VM 使用内部的 `TypeArguments` 向量（扁平化数组，每个泛型实例关联一个）。当值跨越边界时，必须在两种表示之间转换。
 
 方向一：**VM → 解释器**。VM 传入 `Map<String, List<int>>` 给解释器时，解释器需要提取类型参数。在宿主 Dart 代码中，可通过以下方式获取运行时类型信息：
 
 ```dart
 /// 宿主端：从 VM 对象提取类型信息
-RuntimeType extractType(dynamic obj) {
+DarticType extractType(dynamic obj) {
   if (obj is List) {
     // 利用 Dart reified generics，通过 is 检查逐步确定元素类型
     // 但这种方式极其低效且不完整
@@ -314,21 +314,21 @@ RuntimeType extractType(dynamic obj) {
 /// 推荐方案：类型注册表 + 编译时类型映射
 class TypeRegistry {
   /// 预注册已知的泛型组合
-  static final Map<Type, RuntimeType> _typeMap = {};
+  static final Map<Type, DarticType> _typeMap = {};
   
   /// 编译时生成的类型提取器
-  static RuntimeType extractListType<E>(List<E> list) {
-    return RuntimeType(classId: ClassIds.list, typeArgs: [
+  static DarticType extractListType<E>(List<E> list) {
+    return DarticType(classId: ClassIds.list, typeArgs: [
       _resolveTypeArg<E>()
     ]);
   }
   
-  static RuntimeType _resolveTypeArg<T>() {
+  static DarticType _resolveTypeArg<T>() {
     // 利用 Dart 的 reified generics：T 在运行时是具体类型
-    if (T == int) return RuntimeType.intType;
-    if (T == String) return RuntimeType.stringType;
+    if (T == int) return DarticType.intType;
+    if (T == String) return DarticType.stringType;
     // ... 更多已知类型
-    return RuntimeType.dynamicType;  // 回退
+    return DarticType.dynamicType;  // 回退
   }
 }
 ```
@@ -337,7 +337,7 @@ class TypeRegistry {
 
 ```dart
 /// 解释器端：创建带正确类型参数的 VM 原生对象
-Object createTypedList(RuntimeType elementType, List<dynamic> elements) {
+Object createTypedList(DarticType elementType, List<dynamic> elements) {
   // 通过 switch 分发到正确的泛型实例化
   switch (elementType.classId) {
     case ClassIds.int:
@@ -362,7 +362,7 @@ Bridge 类是连接两个世界的关键。以 `$List$bridge<E>` 为例，它需
 /// 泛型代理类的核心设计
 class $ListBridge<E> implements List<E> {
   final InterpreterInstance _interpreterList;  // 解释器内部的列表对象
-  final RuntimeType _elementType;              // E 的解释器类型表示
+  final DarticType _elementType;              // E 的解释器类型表示
   final Interpreter _interpreter;              // 解释器引用
   
   $ListBridge(this._interpreterList, this._elementType, this._interpreter);
@@ -402,15 +402,15 @@ $ListBridge<E> createListBridge<E>(
   // E 在运行时是具体类型！这是 Dart 相比 Java 的根本优势
   return $ListBridge<E>(
     list,
-    RuntimeType.fromDartType<E>(),  // 利用 reified E 构建 RuntimeType
+    DarticType.fromDartType<E>(),  // 利用 reified E 构建 DarticType
     interp,
   );
 }
 
 /// 通过 noSuchMethod 实现通用代理（备选方案）
-class GenericProxy implements dynamic {
+class DarticProxy implements dynamic {
   final InterpreterInstance _target;
-  final RuntimeType _type;
+  final DarticType _type;
   
   @override
   dynamic noSuchMethod(Invocation invocation) {
@@ -421,7 +421,7 @@ class GenericProxy implements dynamic {
 }
 ```
 
-`noSuchMethod` 代理的致命问题是 **`is` 检查失败**——`proxy is List<int>` 返回 `false`，因为代理对象的运行时类型是 `GenericProxy` 而非 `List<int>`。因此对于需要通过 `is` 检查的场景，必须使用显式实现目标接口的 bridge 类。
+`noSuchMethod` 代理的致命问题是 **`is` 检查失败**——`proxy is List<int>` 返回 `false`，因为代理对象的运行时类型是 `DarticProxy` 而非 `List<int>`。因此对于需要通过 `is` 检查的场景，必须使用显式实现目标接口的 bridge 类。
 
 ### 回调代理的类型退化问题
 
@@ -435,7 +435,7 @@ void processItems<T>(List<T> items, void Function(T) callback) {
 
 // 解释器需要为 callback 创建代理
 // 但解释器只能创建 void Function(dynamic) 类型的代理
-class CallbackProxy {
+class DarticCallbackProxy {
   final Interpreter interpreter;
   final InterpreterClosure closure;
   
@@ -475,9 +475,9 @@ class TypedCallbackAdapters {
 
 ```dart
 /// 递归类型构建
-RuntimeType buildNestedType(DartType kernelType) {
+DarticType buildNestedType(DartType kernelType) {
   if (kernelType is InterfaceType) {
-    return RuntimeType(
+    return DarticType(
       classId: resolveClassId(kernelType.classReference),
       typeArgs: kernelType.typeArguments
           .map((t) => buildNestedType(t))  // 递归处理
@@ -498,7 +498,7 @@ RuntimeType buildNestedType(DartType kernelType) {
     );
   }
   // DynamicType, VoidType, NeverType 等特殊处理
-  return RuntimeType.fromSpecialType(kernelType);
+  return DarticType.fromSpecialType(kernelType);
 }
 ```
 
@@ -559,9 +559,9 @@ V8 的 Hidden Class 和 Inline Cache 机制虽然服务于 JavaScript 的动态�
 
 ### 类型参数传递的开销可以被有效控制
 
-每次泛型方法调用额外传递 1-2 个 TypeArgs 指针（ITA 和 FTA），约 **8-16 字节**的栈空间开销。相比 Dart VM 的原生实现，这一开销可忽略。真正的性能瓶颈在于类型参数的实例化操作——当 Kernel 类型模板中包含 `TypeParameterType` 引用时，需要从 ITA/FTA 中查找实际类型并构建新的 `RuntimeType`。
+每次泛型方法调用额外传递 1-2 个 TypeArgs 指针（ITA 和 FTA），约 **8-16 字节**的栈空间开销。相比 Dart VM 的原生实现，这一开销可忽略。真正的性能瓶颈在于类型参数的实例化操作——当 Kernel 类型模板中包含 `TypeParameterType` 引用时，需要从 ITA/FTA 中查找实际类型并构建新的 `DarticType`。
 
-**Dart VM 的优化方案是实例化缓存**：`TypeArguments` 对象维护一个 `instantiations_` 字段，缓存 `[instantiator_tav, function_tav, result_tav]` 三元组。解释器应采用类似策略——在 `RuntimeType` 对象上缓存常见的实例化结果。
+**Dart VM 的优化方案是实例化缓存**：`TypeArguments` 对象维护一个 `instantiations_` 字段，缓存 `[instantiator_tav, function_tav, result_tav]` 三元组。解释器应采用类似策略——在 `DarticType` 对象上缓存常见的实例化结果。
 
 ### 运行时类型检查缓存应分三级
 
@@ -607,13 +607,13 @@ Level 3: 完整子类型计算
 │  │ TypeRegistry     │  │ $ListBridge<E>               │ │
 │  │ (双向类型映射)    │  │ $MapBridge<K,V>              │ │
 │  │                  │  │ $FutureBridge<T>             │ │
-│  │ RuntimeType ←→   │  │ CallbackAdapter<R,A>        │ │
+│  │ DarticType ←→   │  │ CallbackAdapter<R,A>        │ │
 │  │ Dart Type        │  │ GenericInterfaceProxy        │ │
 │  └─────────────────┘  └──────────────────────────────┘ │
 ├─────────────────────────────────────────────────────────┤
 │  解释器核心                                              │
 │  ┌─────────────────┐  ┌──────────────────────────────┐ │
-│  │ RuntimeType      │  │ SubtypeTestCache (3-level)   │ │
+│  │ DarticType      │  │ SubtypeTestCache (3-level)   │ │
 │  │ (classId +       │  │                              │ │
 │  │  typeArgs[] +    │  │ Level1: CallSite IC          │ │
 │  │  nullability)    │  │ Level2: Global STC HashMap   │ │
@@ -627,14 +627,14 @@ Level 3: 完整子类型计算
 │  └──────────────────────────────────────────────────┘   │
 ├─────────────────────────────────────────────────────────┤
 │  Kernel 读取层                                           │
-│  DartType → RuntimeType 编译时转换                        │
+│  DartType → DarticType 编译时转换                        │
 │  TypeParameter 索引 → 运行时 ITA/FTA 偏移映射              │
 └─────────────────────────────────────────────────────────┘
 ```
 
 ### 控制复杂度的关键决策
 
-第一，**不实现扁平化 TypeArguments 向量**。Dart VM 的扁平化（将父类和子类的类型参数合并为一个数组并支持重叠压缩）带来了极高的实现复杂度。解释器可以使用更简单的树形 RuntimeType 结构，在需要访问父类类型参数时动态计算。这牺牲了约 10-20% 的类型检查性能，但大幅降低了实现和调试难度。
+第一，**不实现扁平化 TypeArguments 向量**。Dart VM 的扁平化（将父类和子类的类型参数合并为一个数组并支持重叠压缩）带来了极高的实现复杂度。解释器可以使用更简单的树形 DarticType 结构，在需要访问父类类型参数时动态计算。这牺牲了约 10-20% 的类型检查性能，但大幅降低了实现和调试难度。
 
 第二，**Bridge 类使用代码生成而非运行时反射**。对于每个需要跨边界的泛型类，通过 `build_runner` 自动生成类型化的 Bridge 类代码。生成的代码在编译时确定泛型参数的传递方式，避免运行时的类型推断开销。这类似于 .NET 7 的 Source Generator P/Invoke 策略。
 

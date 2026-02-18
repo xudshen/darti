@@ -66,7 +66,7 @@
 | 纯算术/控制流 | 原生 1/3~1/5 | switch 分发（无 computed goto） |
 | 混合业务逻辑 | 原生 1/10~1/20 | 方法分发 + 对象操作 |
 | Flutter Widget build | 原生 1/10~1/30 | Bridge 调用 + 对象创建 |
-| 框架交互密集 | 原生 1/20~1/50 | `Function.apply` + Proxy 包装 |
+| 框架交互密集 | 原生 1/20~1/50 | Bridge 调用 + Proxy 包装 |
 
 ### 性能天花板
 
@@ -74,7 +74,7 @@
 |------|------|---------|
 | 无 computed goto | Dart 语言不支持 | 不可突破，约损失 20-30% |
 | typed_data bounds check | Dart AOT 可能无法消除 | 部分缓解 |
-| `Function.apply` 慢路径 | Dart AOT 反射式调用 | 可突破（特化 HostClassWrapper） |
+| Proxy 包装/解包开销 | 每次跨边界传递需 Expando 查找 + 对象分配 | 部分缓解（热对象缓存命中率高） |
 
 ## Dart 语言特性支持范围
 
@@ -91,8 +91,9 @@
 - `dart:isolate`（多 isolate 并发）
 - `dart:ffi`（原生内存访问）
 - `dart:mirrors`（运行时反射）
+- `deferred as` 延迟加载
 
-**设计决策依据**：isolate/ffi/mirrors 三者均需要 VM 层面的特殊支持，无法在纯 Dart 解释器中实现。排除后不影响绝大多数业务逻辑和 UI 代码的执行。Extension type 作为编译期零成本抽象在运行时不存在，由编译器在 Kernel→字节码阶段透明处理。
+**设计决策依据**：isolate/ffi/mirrors 三者均需要 VM 层面的特殊支持，无法在纯 Dart 解释器中实现。deferred loading 需要运行时按需加载编译单元和维护库级别的加载状态机，复杂度高且业务场景中较少使用。排除后不影响绝大多数业务逻辑和 UI 代码的执行。Extension type 作为编译期零成本抽象在运行时不存在，由编译器在 Kernel→字节码阶段透明处理。
 
 ## 编译与执行模型
 
@@ -120,8 +121,8 @@ Dart 源码 ──CFE──► .dill (Kernel AST) ──dartic 编译器──�
 
 1. **值栈/引用栈分离**：int/double/bool 走值栈（零装箱），其他类型走引用栈（参与 GC 追踪）。同一值栈槽位在活跃区间内只通过一种视图访问（Ch1、Ch2）
 2. **ISA 定宽编码**：所有指令固定 32 位，`Uint32List` 存储。超出操作数范围时使用 WIDE 前缀扩展（Ch1）
-3. **RuntimeType 驻留**：相同结构的类型共享唯一实例，`==` 退化为 `identical()`（Ch5）
-4. **帧即续体**：InterpreterFrame 是 Dart 堆对象，异步挂起时快照栈数据到帧对象，恢复时在栈顶重新分配空间（Ch6）
+3. **DarticType 驻留**：相同结构的类型共享唯一实例，`==` 退化为 `identical()`（Ch5）
+4. **帧即续体**：DarticFrame 是 Dart 堆对象，异步挂起时快照栈数据到帧对象，恢复时在栈顶重新分配空间（Ch6）
 5. **加载时验证，运行时零检查**：字节码在加载时完成全部静态验证，分发循环不执行边界检查（Ch7）
 6. **GC 委托宿主**：解释器不实现自己的 GC，所有堆对象由宿主 Dart VM GC 管理（Ch2）
 

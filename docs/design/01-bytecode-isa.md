@@ -24,6 +24,46 @@
 | 引用栈 | 独立 `List<Object?>` | 混入值栈：无法参与 GC 追踪 | 参与宿主 GC 追踪 |
 | 常量池 | 四分区（refs/ints/doubles/names） | 统一 `List<Object?>`：不同类型混存导致装箱开销 | `LOAD_CONST_INT` 直接从 Int64List 读取，零装箱 |
 
+## 核心概念
+
+### 双栈模型
+
+ISA 操作两个独立的栈：
+
+| 栈 | 底层结构 | 存储内容 | 寻址方式 |
+|----|---------|---------|---------|
+| 值栈（ValueStack） | 共享 `ByteBuffer`，叠加 `Int64List` (intView) 和 `Float64List` (doubleView) 两个视图 | int、double、bool（bool 编码为 0/1） | `valueStack[slot]` / `doubleView[slot]` |
+| 引用栈（RefStack） | `List<Object?>` | String、对象实例、闭包、null 等引用类型 | `refStack[slot]` |
+
+**双视图安全约束**：intView 和 doubleView 共享底层 ByteBuffer，编译器必须保证——**同一值栈槽位在其活跃区间内只通过一种视图访问**。违反此不变式会导致位模式误读。编译器通过 `StackKind` 分类确保正确性：`int`/`bool` 变量只生成 intView 访问指令，`double` 变量只生成 doubleView 访问指令，同一槽位不会在不同类型间复用。
+
+分栈设计使数值运算零装箱——`ADD_INT` 直接操作 `Int64List` 元素，无需 Object 装拆箱。引用类型独立存放于 `List<Object?>`，参与宿主 GC 追踪。
+
+### 四分区常量池
+
+每个编译单元关联一个常量池，由四个独立分区组成：
+
+| 分区 | 存储类型 | 对应指令 | 底层容器 |
+|------|---------|---------|---------|
+| refs | String, Type, FunctionProto 等引用常量 | `LOAD_CONST` | `List<Object?>` |
+| ints | int 常量 | `LOAD_CONST_INT` | `Int64List` |
+| doubles | double 常量 | `LOAD_CONST_DBL` | `Float64List` |
+| names | 属性名/方法名（动态访问用） | `GET_FIELD_DYN` 等 | `List<String>` |
+
+**分区设计理由**：`LOAD_CONST_INT` 直接从 `Int64List` 读取，避免了通用常量池中 `List<Object?>` 的装箱开销。`LOAD_CONST_DBL` 同理通过 `Float64List` 零装箱加载。
+
+### 内联缓存
+
+每个 `CALL_VIRTUAL` 指令关联一个内联缓存（IC）条目，存储在函数元数据的 IC 表中：
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| methodNameIndex | int | 方法名在常量池 names 中的索引 |
+| cachedClassId | int | 单态缓存的类 ID（-1 = 未缓存） |
+| cachedMethodOffset | int | 缓存的方法入口偏移 |
+
+`CALL_VIRTUAL` 的操作数 C 编码 IC 表索引。IC 分发流程详见 Ch2 运行时。
+
 ## 指令编码格式
 
 所有指令固定 32 位，`Uint32List` 存储。8 位操作码 + 24 位操作数空间，支持四种编码格式：
@@ -36,12 +76,6 @@ Ax     [op:8][Ax:24]              24 位无符号立即数（大范围跳转/常
 ```
 
 **编解码方式**：操作码通过 `instr & 0xFF` 提取；操作数通过位移和掩码提取（如 `A = (instr >> 8) & 0xFF`）。有符号偏移 sBx 使用 excess-K 编码（实际值 = 编码值 - 0x7FFF）。
-
-### 双视图安全约束
-
-值栈的 `intView` 和 `doubleView` 共享底层 `ByteBuffer`。编译器必须保证：**同一值栈槽位在其活跃区间内只通过一种视图访问**。违反此不变式会导致位模式误读。
-
-编译器通过 `StackKind` 分类确保正确性——`int`/`bool` 变量只生成 `intView` 访问指令，`double` 变量只生成 `doubleView` 访问指令。同一槽位不会在不同类型间复用。
 
 ### WIDE 前缀
 
@@ -71,9 +105,55 @@ WIDE    [0xFE][padding:24]            ← 前缀
 
 WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不影响主路径性能。
 
-## 操作码分类
+## 工作流程
 
-操作码从 0x00 开始连续编号，按功能分段。未使用的编号填充 `ILLEGAL` 指向错误处理。
+### 指令解码与分发
+
+分发循环对每条指令的处理流程：
+
+1. 从 `code[pc]` 读取一个 32 位字
+2. 提取操作码：`op = instr & 0xFF`
+3. 按操作码分发（O(1) 跳转表 switch）
+4. 在对应处理分支中，按指令格式提取操作数（位移 + 掩码）
+5. 执行语义操作（操作值栈 / 引用栈 / 常量池）
+6. `pc++`，回到步骤 1
+
+### WIDE 前缀解码
+
+遇到 `WIDE`（0xFE）时的扩展解码流程：
+
+1. 识别 `op == 0xFE`，读取 `code[pc+1]`（扩展字）和 `code[pc+2]`（原指令）
+2. 从原指令提取操作码，确定编码格式（ABC / ABx / AsBx / Ax）
+3. 从扩展字和原指令中分别提取高位和低位操作数
+4. 组合为完整操作数（高位左移 + 低位拼接）
+5. 执行语义操作
+6. `pc += 3`（跳过前缀 + 扩展字 + 原指令）
+
+## 操作码总览
+
+操作码从 0x00 开始连续编号，按功能分段。每段预留若干编号供扩展，未使用的编号填充 `ILLEGAL` 指向错误处理。
+
+| 范围 | 分组 | 已用 | 预留 |
+|------|------|------|------|
+| 0x00-0x0F | 加载/存储 | 16 | 0 |
+| 0x10-0x1F | 整数算术 | 14 | 2 |
+| 0x20-0x2F | 浮点算术 | 7 | 9 |
+| 0x30-0x3F | 比较 | 12 | 4 |
+| 0x40-0x4F | 控制流 | 6 | 10 |
+| 0x50-0x5F | 调用与返回 | 8 | 8 |
+| 0x60-0x6F | 对象操作 | 9 | 7 |
+| 0x70-0x77 | 闭包 | 2 | 6 |
+| 0x78-0x7F | 泛型与类型 | 7 | 1 |
+| 0x80-0x8F | 异步与生成器 | 9 | 7 |
+| 0x90-0x97 | 集合操作 | 4 | 4 |
+| 0x98-0x9F | 字符串与动态 | 3 | 5 |
+| 0xA0-0xA3 | 全局变量 | 2 | 2 |
+| 0xA4-0xA7 | 异常处理与断言 | 4 | 0 |
+| 0xA8-0xFD | 预留（Superinstruction 等） | 0 | 86 |
+| 0xFE-0xFF | 系统 | 2 | 0 |
+| **合计** | | **105** | **151** |
+
+## 操作码分类
 
 ### 加载/存储 (0x00-0x0F)
 
@@ -113,6 +193,7 @@ WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不
 0x1B  SHR           A, B, C       valueStack[A] = valueStack[B] >> valueStack[C]
 0x1C  USHR          A, B, C       valueStack[A] = valueStack[B] >>> valueStack[C]
 0x1D  ADD_INT_IMM   A, B, C       valueStack[A] = valueStack[B] + C (C 为无符号 8 位立即数 [0, 255])
+0x1E-0x1F 预留
 ```
 
 ### 浮点算术 (0x20-0x2F)
@@ -125,6 +206,7 @@ WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不
 0x24  NEG_DBL       A, B          doubleView[A] = -doubleView[B]
 0x25  INT_TO_DBL    A, B          doubleView[A] = valueStack[B].toDouble()
 0x26  DBL_TO_INT    A, B          valueStack[A] = doubleView[B].toInt()
+0x27-0x2F 预留
 ```
 
 ### 比较 (0x30-0x3F)
@@ -142,6 +224,7 @@ WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不
 0x39  EQ_DBL        A, B, C
 0x3A  EQ_REF        A, B, C       valueStack[A] = identical(refStack[B], refStack[C]) ? 1 : 0
 0x3B  EQ_GENERIC    A, B, C       valueStack[A] = refStack[B] == refStack[C] ? 1 : 0
+0x3C-0x3F 预留
 ```
 
 ### 控制流 (0x40-0x4F)
@@ -153,6 +236,7 @@ WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不
 0x43  JUMP_IF_NULL  A, sBx        if refStack[A] == null then PC += sBx
 0x44  JUMP_IF_NNULL A, sBx        if refStack[A] != null then PC += sBx
 0x45  JUMP_AX       Ax            PC += Ax (大范围跳转，Ax 格式)
+0x46-0x4F 预留
 ```
 
 ### 调用与返回 (0x50-0x5F)
@@ -166,6 +250,7 @@ WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不
 0x55  RETURN_REF    A             return refStack[A]
 0x56  RETURN_VAL    A             return valueStack[A] (需装箱)
 0x57  RETURN_NULL                 return null
+0x58-0x5F 预留
 ```
 
 ### 对象操作 (0x60-0x6F)
@@ -180,6 +265,7 @@ WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不
 0x66  CAST          A, B, Cx      refStack[A] = refStack[B] as type[Cx]; throw if fail
 0x67  GET_FIELD_DYN A, B, Cx      refStack[A] = refStack[B].getProperty(names[Cx])
 0x68  SET_FIELD_DYN A, B, Cx      refStack[A].setProperty(names[Cx], refStack[B])
+0x69-0x6F 预留
 ```
 
 ### 闭包 (0x70-0x77)
@@ -187,32 +273,35 @@ WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不
 ```
 0x70  CLOSURE       A, Bx         refStack[A] = Closure(funcProto[Bx], captured upvalues)
 0x71  CLOSE_UPVALUE A             关闭所有指向 >= A 槽位的开放上值
+0x72-0x77 预留
 ```
 
-### 异步与生成器 (0x78-0x7F, 0x87)
+### 泛型与类型 (0x78-0x7F)
 
 ```
-0x78  INIT_ASYNC    A, Bx         创建 Completer<T>，refStack[A] = completer.future
-0x79  AWAIT         A, Bx         await refStack[A]，恢复点 IP = Bx
-0x7A  ASYNC_RETURN  A             completer.complete(refStack[A])
-0x7B  ASYNC_THROW   A, B          completer.completeError(refStack[A], refStack[B])
-0x7C  INIT_ASYNC_STAR A, Bx       创建 StreamController<T>，refStack[A] = stream
-0x7D  YIELD         A, Bx         yield refStack[A]，恢复点 IP = Bx
-0x7E  YIELD_STAR    A, Bx         yield* refStack[A]
-0x7F  INIT_SYNC_STAR A, Bx        创建惰性 Iterable<T>
-0x87  AWAIT_STREAM_NEXT A, Bx     await for 挂起等待 stream 事件
+0x78  PUSH_ITA      A             refStack[A] = 当前帧的 instantiator type args
+0x79  PUSH_FTA      A             refStack[A] = 当前帧的 function type args
+0x7A  LOAD_TYPE_ARG A, B, C       refStack[A] = refStack[B].typeArgs[C]
+0x7B  INSTANTIATE_TYPE A, Bx      refStack[A] = instantiate typeTemplate[Bx] with ITA/FTA
+0x7C  CREATE_TYPE_ARGS A, B       refStack[A] = TypeArgs(refStack[A..A+B-1])
+0x7D  ALLOC_GENERIC A, B          refStack[A] = new class with TypeArgs from refStack[B]
+0x7E  CHECK_COVARIANT A, Bx       检查 refStack[A] 匹配协变参数类型 type[Bx]
+0x7F  预留
 ```
 
-### 泛型与类型 (0x80-0x86)
+### 异步与生成器 (0x80-0x8F)
 
 ```
-0x80  PUSH_ITA      A             refStack[A] = 当前帧的 instantiator type args
-0x81  PUSH_FTA      A             refStack[A] = 当前帧的 function type args
-0x82  LOAD_TYPE_ARG A, B, C       refStack[A] = refStack[B].typeArgs[C]
-0x83  INSTANTIATE_TYPE A, Bx      refStack[A] = instantiate typeTemplate[Bx] with ITA/FTA
-0x84  CREATE_TYPE_ARGS A, B       refStack[A] = TypeArgs(refStack[A..A+B-1])
-0x85  ALLOC_GENERIC A, B          refStack[A] = new class with TypeArgs from refStack[B]
-0x86  CHECK_COVARIANT A, Bx       检查 refStack[A] 匹配协变参数类型 type[Bx]
+0x80  INIT_ASYNC    A, Bx         创建 Completer<T>，refStack[A] = completer.future
+0x81  AWAIT         A, Bx         await refStack[A]，恢复点 IP = Bx
+0x82  ASYNC_RETURN  A             completer.complete(refStack[A])
+0x83  ASYNC_THROW   A, B          completer.completeError(refStack[A], refStack[B])
+0x84  INIT_ASYNC_STAR A, Bx       创建 StreamController<T>，refStack[A] = stream
+0x85  YIELD         A, Bx         yield refStack[A]，恢复点 IP = Bx
+0x86  YIELD_STAR    A, Bx         yield* refStack[A]
+0x87  INIT_SYNC_STAR A, Bx        创建惰性 Iterable<T>
+0x88  AWAIT_STREAM_NEXT A, Bx     await for 挂起等待 stream 事件
+0x89-0x8F 预留
 ```
 
 ### 集合操作 (0x90-0x97)
@@ -222,23 +311,30 @@ WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不
 0x91  CREATE_MAP    A, B, C       refStack[A] = Map(key-value pairs), typeArgs from refStack[B]
 0x92  CREATE_SET    A, B, C       refStack[A] = Set(refStack[A+1..A+C]), typeArgs from refStack[B]
 0x93  CREATE_RECORD A, Bx         refStack[A] = Record(fields...), shape from constPool.refs[Bx]
+0x94-0x97 预留
 ```
 
 `CREATE_RECORD` 的 Bx 索引常量池 `refs` 分区，对应条目为 `RecordShape` 描述符（包含命名字段名列表和位置字段数量）。
+
+**Record 字段访问**：Record 在运行时采用与类实例相同的对象布局（位置字段在前，命名字段按名称排序在后）。编译器根据 `RecordShape` 在编译期将 `RecordIndexGet` / `RecordNameGet` 映射为确定的字段索引，生成 `GET_FIELD_REF` / `GET_FIELD_VAL` 指令，无需专用操作码。
 
 ### 字符串与动态 (0x98-0x9F)
 
 ```
 0x98  STRING_INTERP A, B          refStack[A] = string interpolation of B parts from refStack
 0x99  ADD_GENERIC   A, B, C       refStack[A] = refStack[B] + refStack[C] (dynamic +)
-0x9A  INVOKE_DYN    A, B, C       refStack[A] = refStack[B].noSuchMethod(invocation)
+0x9A  INVOKE_DYN    A, B, C       refStack[A] = dynamicDispatch(refStack[B], names[C], args)
+0x9B-0x9F 预留
 ```
+
+`INVOKE_DYN` 用于 `dynamic` 类型接收者的方法调用（对应 Kernel 的 `DynamicInvocation`）。运行时语义：按 `names[C]` 查找接收者实际类型的方法，找到则调用，找不到则转发 `noSuchMethod`。`ADD_GENERIC` 是 `dynamic` 上 `+` 运算的特化快路径，其他动态运算符（`-`、`*` 等）通过 `INVOKE_DYN` 分发。
 
 ### 全局变量 (0xA0-0xA3)
 
 ```
 0xA0  LOAD_GLOBAL   A, Bx         refStack[A] = globals[Bx]（若未初始化则触发惰性初始化）
 0xA1  STORE_GLOBAL  A, Bx         globals[Bx] = refStack[A]
+0xA2-0xA3 预留
 ```
 
 ### 异常处理与断言 (0xA4-0xA7)
@@ -247,55 +343,31 @@ WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不
 0xA4  THROW         A             throw refStack[A]
 0xA5  RETHROW       A, B          rethrow refStack[A] with stackTrace refStack[B]
 0xA6  ASSERT        A, Bx         if valueStack[A] == 0 → throw AssertionError(constPool[Bx])
+0xA7  NULL_CHECK    A             if refStack[A] == null → throw TypeError; else fall-through
 ```
 
-### 系统 (0xF0-0xFF)
+### 系统 (0xFE-0xFF)
 
 ```
 0xFE  WIDE                        下一条指令使用扩展操作数
 0xFF  HALT                        停机
 ```
 
-**0xA8-0xFD 预留**：用于 Superinstruction（高频指令序列合并）等后续优化。当前已使用到 ~0xA7，预留约 85 个槽位。
+**0xA8-0xFD 预留**：用于 Superinstruction（高频指令序列合并）等后续优化。当前已定义 105 个操作码（含 WIDE 和 HALT），预留 86 个槽位。
 
 > **Phase 2**：具体特化 opcode 留待 profiling 数据确定。触发条件：基准测试显示指令分发成为瓶颈。
-
-## 常量池设计
-
-每个编译单元关联一个常量池，由四个独立分区组成：
-
-| 分区 | 存储类型 | 对应指令 | 底层容器 |
-|------|---------|---------|---------|
-| refs | String, Type, FunctionProto 等引用常量 | `LOAD_CONST` | `List<Object?>` |
-| ints | int 常量 | `LOAD_CONST_INT` | `Int64List` |
-| doubles | double 常量 | `LOAD_CONST_DBL` | `Float64List` |
-| names | 属性名/方法名（动态访问用） | `GET_FIELD_DYN` 等 | `List<String>` |
-
-**分区设计理由**：`LOAD_CONST_INT` 直接从 `Int64List` 读取，避免了通用常量池中 `List<Object?>` 的装箱开销。`LOAD_CONST_DBL` 同理通过 `Float64List` 零装箱加载。
-
-## 内联缓存槽
-
-每个 `CALL_VIRTUAL` 指令关联一个内联缓存条目，存储在函数元数据的 IC 表中：
-
-| 属性 | 类型 | 说明 |
-|------|------|------|
-| methodNameIndex | int | 方法名在常量池 names 中的索引 |
-| cachedClassId | int | 单态缓存的类 ID（-1 = 未缓存） |
-| cachedMethodOffset | int | 缓存的方法入口偏移 |
-
-`CALL_VIRTUAL` 的操作数 C 编码 IC 表索引。分发循环中先查 IC 单态缓存（一次 int 比较），命中则直接跳转；未命中走慢路径（虚方法表查找）并更新缓存。
 
 ## 关键约束与边界条件
 
 | 约束 | 值 | 来源 |
 |------|-----|------|
 | Opcode 空间 | 0-255（8 位） | 32 位指令编码，低 8 位为 opcode |
-| 当前已用 opcode | ~0xA7（约 168 个） | ISA 定义 |
-| 预留 opcode 槽位 | ~85 个（0xA8-0xFD） | 供 Superinstruction 使用 |
+| 当前已定义 opcode | 105 个 | ISA 定义（含 WIDE 和 HALT） |
+| 预留 opcode 槽位 | 86 个（0xA8-0xFD） | 供 Superinstruction 使用 |
 | 标准寄存器上限 | 256（8 位 A/B/C） | ABC 编码格式 |
 | WIDE 扩展后寄存器上限 | 65536（16 位） | WIDE 前缀组合 |
 | 标准 Bx 范围 | 0-65535（16 位无符号） | ABx 编码格式 |
-| 标准 sBx 范围 | -32767 ~ +32767 | AsBx excess-K 编码 |
+| 标准 sBx 范围 | -32767 ~ +32768 | AsBx excess-K 编码（0 − 0x7FFF = −32767, 0xFFFF − 0x7FFF = +32768） |
 | WIDE 指令宽度 | 3 个字（前缀 + 扩展字 + 原指令） | WIDE 规范 |
 
 ## 已知局限与演进路径

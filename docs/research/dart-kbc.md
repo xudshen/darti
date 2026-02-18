@@ -163,7 +163,7 @@ abstract class OpCode {
   static const int newInstance = 0x52;  // ABx: R(A) = new Class(Bx)
 
   // 闭包与异步
-  static const int closure     = 0x60;  // ABx: R(A) = Closure(FuncProto(Bx))
+  static const int closure     = 0x60;  // ABx: R(A) = Closure(DarticFuncProto(Bx))
   static const int awaitFuture = 0x61;  // A:   suspend, await R(A)
 
   // 系统
@@ -538,11 +538,11 @@ class BindingGenerator extends RecursiveVisitor {
 
 ```dart
 /// 将解释器中的函数包装为宿主 Dart 可调用的闭包
-class CallbackProxy {
+class DarticCallbackProxy {
   final Interpreter _interpreter;
   final ClosureObject _closure;
 
-  CallbackProxy(this._interpreter, this._closure);
+  DarticCallbackProxy(this._interpreter, this._closure);
 
   /// 生成不同签名的代理闭包
   Object? Function() proxy0() {
@@ -573,13 +573,13 @@ class CallbackProxy {
 }
 ```
 
-当解释器编译后的代码将闭包传递给宿主 API 时（如 `list.where(callback)`），`CALL_HOST` 指令的绑定实现需要识别参数中的闭包对象，自动创建 `CallbackProxy` 并传递给宿主方法：
+当解释器编译后的代码将闭包传递给宿主 API 时（如 `list.where(callback)`），`CALL_HOST` 指令的绑定实现需要识别参数中的闭包对象，自动创建 `DarticCallbackProxy` 并传递给宿主方法：
 
 ```dart
 // ListWrapper.invokeMethod 中的 'where' 处理
 case 'where':
   final closure = args[0] as ClosureObject;
-  final proxy = CallbackProxy(interpreter, closure);
+  final proxy = DarticCallbackProxy(interpreter, closure);
   return hostObject.where(proxy.typedProxy<bool Function(dynamic)>());
 ```
 
@@ -645,7 +645,7 @@ interpreter.hostBindings
 // 4. CALL_METHOD 'split'           → StringWrapper.invokeMethod('split', [","])
 //    → 返回 List<String> → 新句柄推入
 // 5. CALL_METHOD 'where'           → 参数是解释器闭包
-//    → ListWrapper 创建 CallbackProxy
+//    → ListWrapper 创建 DarticCallbackProxy
 //    → 宿主 List.where 每次迭代回调 proxy → proxy 调用 interpreter.invokeClosure
 //    → 解释器执行闭包体 → 返回 bool 给宿主
 ```
@@ -868,7 +868,7 @@ class SandboxCapabilities {
 执行前进行静态验证，参考 JVM 字节码验证器的设计：
 
 ```dart
-class BytecodeVerifier {
+class DarticVerifier {
   bool verify(Uint32List code, FunctionMetadata meta) {
     int stackDepth = 0;
     final stackAtPC = <int, int>{}; // PC → 预期栈深度

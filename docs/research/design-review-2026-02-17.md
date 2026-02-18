@@ -33,7 +33,7 @@
 | Ch2 运行时 | 分发循环/栈 | 9/10 | 双视图值栈（double 达原生 96%） | switch 分发无 computed goto |
 | Ch3 互调 | Bridge/Proxy | 8/10 | 同 VM 零序列化，比 RN Bridge 快数量级 | 生成规模和版本维护 |
 | Ch4 编译器 | Kernel→字节码 | 8.5/10 | Phase 分层务实，LSRA 正确推迟 | Kernel 版本耦合 |
-| Ch5 泛型 | 实化泛型 | 7.5/10 | RuntimeType 驻留 + 延迟实例化 | TypeParameterType bound 解析缺失 |
+| Ch5 泛型 | 实化泛型 | 7.5/10 | DarticType 驻留 + 延迟实例化 | TypeParameterType bound 解析缺失 |
 | Ch6 异步 | async/await | 7.5/10 | 帧快照续体，业界标准做法 | 全局栈恢复冲突（P0） |
 | Ch7 沙箱 | 安全模型 | 7/10 | 最小安全目标清晰，扩展点合理 | 热更新场景缺字节码签名 |
 
@@ -80,7 +80,7 @@
 |---|------|------|------|------|
 | 4 | **热更新缺字节码签名** | Ch7 | 无签名 = 远程代码执行漏洞 | Phase 1 即实现 Ed25519 签名验证 |
 | 5 | **跨边界 `List<dynamic>` 兜底** | Ch5 | VM 侧 `is List<int>` 检查失败 | 至少为高频泛型组合提供类型化创建路径 |
-| 6 | **CallbackProxy 泛型签名丢失** | Ch5 | 回调传递可能触发运行时类型错误 | Bridge 预生成库提供类型化回调包装 |
+| 6 | **DarticCallbackProxy 泛型签名丢失** | Ch5 | 回调传递可能触发运行时类型错误 | Bridge 预生成库提供类型化回调包装 |
 | 7 | **频繁 await-resume 绕过 fuel 机制** | Ch6 | 大量 `await Future.value()` 可能饿死事件循环 | `_resumeFrame` 中也计入 fuel 消耗 |
 | 8 | **WIDE 前缀规格不完整** | Ch1 | 实现时可能出现歧义 | 明确定义扩展字格式 |
 | 9 | **回调重入时 fuel 机制行为未定义** | Ch7 | 回调中无限循环的处理不清晰 | 文档明确回调中的 fuel 语义 |
@@ -140,13 +140,13 @@
 
 **固有限制**：
 - 无 computed goto：每条指令必须回到 switch 入口再分发，约 20-30% 性能损失
-- InterpreterObject 字段访问需三层间接（RefStack 索引 → 类型转换 → refFields 索引），vs 原生一层
+- DarticObject 字段访问需三层间接（RefStack 索引 → 类型转换 → refFields 索引），vs 原生一层
 
 ### Ch3 — 互调/Bridge
 
 **Bridge + Proxy 方案可行**：核心机制在 JNI、Lua C API、RN Bridge 中均有先例。dartic 的独特优势在于同 VM——零序列化、共享 GC、共享类型系统，比所有跨语言方案低 1-2 个数量级的互调开销。
 
-**Expando 缓存精巧**：利用 Dart `Expando` 的 ephemeron 语义自动管理跨边界对象生命周期，完全消除了 JNI 式的引用泄漏风险。同一 `InterpreterObject` 多次跨边界传递，VM 侧始终得到同一个 proxy，保证 `identical()` 语义正确。
+**Expando 缓存精巧**：利用 Dart `Expando` 的 ephemeron 语义自动管理跨边界对象生命周期，完全消除了 JNI 式的引用泄漏风险。同一 `DarticObject` 多次跨边界传递，VM 侧始终得到同一个 proxy，保证 `identical()` 语义正确。
 
 **CALL_HOST 开销分析**：总开销约 60-220ns，主要瓶颈是 `Function.apply` 的动态分发（50-200ns）。对于热点调用（如循环中的 `list.add`），特化 `HostClassWrapper` 绕过 `Function.apply` 是必要的优化。
 
@@ -154,7 +154,7 @@
 
 **已知限制**：
 - Dart 3.0 的 `sealed class` / `final class` 修饰符限制 Bridge 覆盖范围
-- GenericProxy 无法通过 VM 侧 `is` 类型检查，需要 Bridge 覆盖所有需要 `is` 检查的类型
+- DarticProxy 无法通过 VM 侧 `is` 类型检查，需要 Bridge 覆盖所有需要 `is` 检查的类型
 - Mixin 组合的 Bridge 支持未设计
 
 ### Ch4 — 编译器
@@ -176,7 +176,7 @@
 
 ### Ch5 — 泛型
 
-**延迟按需实化方案正确**：RuntimeType 驻留 + ITA/FTA 栈帧传递与 .NET CLR 的 reified generics 同源。驻留保证等价性判定退化为 `identical()`，O(1) 比较。
+**延迟按需实化方案正确**：DarticType 驻留 + ITA/FTA 栈帧传递与 .NET CLR 的 reified generics 同源。驻留保证等价性判定退化为 `identical()`，O(1) 比较。
 
 **内存开销可控**：中等 Flutter 应用的泛型实例化组合通常在 200-2000 个，TypeRegistry 总内存约 20-200 KB。
 
@@ -188,7 +188,7 @@
 **跨边界泛型是最大挑战**：
 - 解释器 → VM：`List<dynamic>.from()` 兜底破坏类型安全
 - Bridge 泛型实例化：Dart 无法在运行时动态决定泛型参数，需编译器静态分析所有组合
-- CallbackProxy 使用 `Object? Function(Object?)` 通用签名，可能触发类型不匹配
+- DarticCallbackProxy 使用 `Object? Function(Object?)` 通用签名，可能触发类型不匹配
 
 ### Ch6 — 异步
 

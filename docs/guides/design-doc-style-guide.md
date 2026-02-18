@@ -198,7 +198,7 @@ Object? load(int index, DarticRuntime runtime) {
 ### 不合格：IC 用完整实现代码
 
 ```dart
-Object? _executeCallVirtual(InterpreterFrame frame, int instr) {
+Object? _executeCallVirtual(DarticFrame frame, int instr) {
   final receiver = _rs.slots[(instr >> 16) & 0xFF];
   // ... 15 行实现
 }

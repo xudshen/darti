@@ -10,8 +10,12 @@ dartic 是一个运行于 Dart VM 内部的自定义字节码解释器。以 Dar
 |------|------|
 | 宿主 VM / VM | 运行 dartic 的 Dart VM 进程 |
 | 解释器 | dartic 字节码解释器 |
+| DarticObject | 解释器定义的类实例的统一内部表示（原名 InterpreterObject） |
+| DarticFrame | 解释器执行帧，堆对象，封装挂起/恢复全部状态（原名 InterpreterFrame） |
+| DarticType | 运行时驻留类型实例，== 退化为 identical()（原名 RuntimeType） |
 | Bridge | 预生成的宿主类子类，用于 extends/implements 宿主类型 |
-| 代理（Proxy） | 运行时按需创建的包装对象（GenericProxy / CallbackProxy） |
+| DarticProxy | 解释器对象在 VM 侧的通用代理（原名 GenericProxy） |
+| DarticCallbackProxy | 解释器闭包包装为 VM 可调用的 Dart Function（原名 CallbackProxy） |
 
 ## 编译与执行流程
 
@@ -36,7 +40,7 @@ Dart 源码 ──CFE──► .dill (Kernel AST) ──dartic 编译器──�
 ├─────────────────────────────────────────────────┤
 │  异步子系统       帧快照续体 · Completer 桥接      │  Ch6
 ├─────────────────────────────────────────────────┤
-│  泛型系统         延迟按需实化 · RuntimeType 驻留   │  Ch5
+│  泛型系统         延迟按需实化 · DarticType 驻留   │  Ch5
 ├─────────────────────────────────────────────────┤
 │  编译器（离线）    Kernel 加载 · 寄存器分配 · 优化遍  │  Ch4
 ├─────────────────────────────────────────────────┤
@@ -57,7 +61,7 @@ Dart 源码 ──CFE──► .dill (Kernel AST) ──dartic 编译器──�
 | Ch2 | `docs/design/02-runtime.md` | 双视图值栈、分发循环、IC、对象模型 | Ch1 指令集 | 运行时 API |
 | Ch3 | `docs/design/03-interop.md` | Bridge、代理缓存、回调代理、跨边界泛型 | Ch2 运行时 API | 宿主互调能力 |
 | Ch4 | `docs/design/04-compiler.md` | Kernel 遍历、寄存器分配、闭包编译、.darticb 格式 | .dill, Ch1 ISA | .darticb 字节码 |
-| Ch5 | `docs/design/05-generics.md` | RuntimeType 驻留、ITA/FTA、子类型检查 | Ch2 栈帧, Ch4 类型传递 | 类型检查能力 |
+| Ch5 | `docs/design/05-generics.md` | DarticType 驻留、ITA/FTA、子类型检查 | Ch2 栈帧, Ch4 类型传递 | 类型检查能力 |
 | Ch6 | `docs/design/06-async.md` | async/await 帧快照、生成器、协作调度 | Ch2 分发循环 | 异步执行能力 |
 | Ch7 | `docs/design/07-sandbox.md` | 字节码验证、fuel 计数、调用深度限制 | Ch2 fuel 机制 | 安全保障 |
 

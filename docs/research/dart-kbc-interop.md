@@ -177,9 +177,9 @@ class $List$bridge<E> with $Bridge<List<E>> implements List<E> {
 ```dart
 class ExpandoProxyCache {
   final Expando<VMProxy> _forward = Expando('interpToProxy');
-  final Expando<InterpreterObject> _reverse = Expando('proxyToInterp');
+  final Expando<DarticObject> _reverse = Expando('proxyToInterp');
 
-  VMProxy getOrCreateProxy(InterpreterObject interpObj) {
+  VMProxy getOrCreateProxy(DarticObject interpObj) {
     var proxy = _forward[interpObj];
     if (proxy != null) return proxy; // 缓存命中，保证 identical
 
@@ -190,7 +190,7 @@ class ExpandoProxyCache {
   }
 
   /// 解包：传回解释器时还原为原始对象，防止二次包装
-  InterpreterObject? unwrap(VMProxy proxy) => _reverse[proxy];
+  DarticObject? unwrap(VMProxy proxy) => _reverse[proxy];
 }
 ```
 
@@ -207,7 +207,7 @@ class PrimitiveProxyCache {
     _cache.remove(interpId);
   });
 
-  VMProxy getOrCreate(InterpreterObject interpObj) {
+  VMProxy getOrCreate(DarticObject interpObj) {
     final id = interpObj.interpId;
     final existing = _cache[id]?.target;
     if (existing != null) return existing;
@@ -267,17 +267,17 @@ class HandleTable<T> {
 
 ### 双向映射与代理解包防止二次包装
 
-双向映射（interpObj ↔ proxy）是保证语义正确的关键。当代理对象传回解释器时，必须识别并解包为原始解释器对象，否则会产生 `VMProxy(VMProxy(interpObj))` 的二次包装。完整的 ProxyManager 应在每个传递点进行类型检查：
+双向映射（interpObj ↔ proxy）是保证语义正确的关键。当代理对象传回解释器时，必须识别并解包为原始解释器对象，否则会产生 `VMProxy(VMProxy(interpObj))` 的二次包装。完整的 DarticProxyManager 应在每个传递点进行类型检查：
 
 ```dart
-class ProxyManager {
+class DarticProxyManager {
   final Expando<VMProxy> _forward = Expando('forward');
-  final Expando<InterpreterObject> _reverse = Expando('reverse');
+  final Expando<DarticObject> _reverse = Expando('reverse');
 
   /// 解释器 → VM：包装
   Object passToVM(Object obj) {
     if (obj is VMProxy) return obj;              // 已经是代理，直接返回
-    if (obj is InterpreterObject) return wrap(obj);
+    if (obj is DarticObject) return wrap(obj);
     return obj;                                   // VM 原生对象直接传递
   }
 
@@ -286,11 +286,11 @@ class ProxyManager {
     if (obj is VMProxy) {
       return _reverse[obj] ?? obj.target;         // 解包为原始对象
     }
-    if (obj is InterpreterObject) return obj;     // 已经是解释器对象
+    if (obj is DarticObject) return obj;     // 已经是解释器对象
     return VMNativeWrapper(obj);                   // VM 对象的反向包装
   }
 
-  VMProxy wrap(InterpreterObject interpObj) {
+  VMProxy wrap(DarticObject interpObj) {
     var proxy = _forward[interpObj];
     if (proxy != null) return proxy;
     proxy = VMProxy(interpObj);
@@ -309,14 +309,14 @@ class ProxyManager {
 
 ```dart
 class VMProxy {
-  final InterpreterObject _target;
+  final DarticObject _target;
   VMProxy(this._target);
 
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) return true;
     if (other is VMProxy) return identical(_target, other._target);
-    if (other is InterpreterObject) return identical(_target, other);
+    if (other is DarticObject) return identical(_target, other);
     return false;
   }
 
@@ -335,10 +335,10 @@ Expando 缓存查找的开销约为 O(1) 哈希表查找，远低于创建新代
 
 ```dart
 class CallSiteCache {
-  InterpreterObject? _lastObj;
+  DarticObject? _lastObj;
   VMProxy? _lastProxy;
 
-  VMProxy wrap(InterpreterObject obj, ProxyManager manager) {
+  VMProxy wrap(DarticObject obj, DarticProxyManager manager) {
     if (identical(obj, _lastObj) && _lastProxy != null) return _lastProxy!;
     final proxy = manager.wrap(obj);
     _lastObj = obj;
@@ -360,7 +360,7 @@ WeakReference 对 GC 的影响主要体现在：GC 需要额外遍历弱引用�
 
 **代理类生成**采用 `build_runner` + `package:analyzer` 在编译期自动生成，支持两种代理模式——`implements` 接口 + `noSuchMethod` 转发（适合大接口，代码量小）和逐方法覆盖 + `$_invoke` 委托（性能更优，适合热路径接口）。抽象类使用 `implements` + 桥接模式，具体类使用 `extends` + `$Bridge` mixin 模式（参照 dart_eval）。
 
-**对象缓存**采用 Expando 为主 + WeakReference+Finalizer 处理原始类型 + LRU 热缓存的三层架构。所有跨边界传递统一经过 `ProxyManager` 入口，在每个传递点自动执行包装/解包，保证 identical 一致性和防止二次包装。
+**对象缓存**采用 Expando 为主 + WeakReference+Finalizer 处理原始类型 + LRU 热缓存的三层架构。所有跨边界传递统一经过 `DarticProxyManager` 入口，在每个传递点自动执行包装/解包，保证 identical 一致性和防止二次包装。
 
 **引用生命周期管理**借鉴 V8 `HandleScope` 的分层模式——每次解释器到 VM 的调用创建一个逻辑 scope，scope 内创建的临时代理在 scope 结束时允许被 GC（不持有强引用），需要跨 scope 存活的代理通过 Expando 缓存自动管理。Dart 的单 Isolate 模型简化了线程安全需求，无需像 JNI 句柄表那样加锁。
 

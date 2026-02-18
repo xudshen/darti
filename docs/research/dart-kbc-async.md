@@ -109,10 +109,10 @@ Kernel 二进制格式通过 **`FunctionNode`** 的两个字段表达异步标�
 
 此方案融合了状态机（编译期标注 await 点、局部变量提升）和续体（运行时保存/恢复帧状态）的优势，同时避免了纯 CPS 的闭包链开销和 Stackful 协程的高内存消耗。
 
-**InterpreterFrame 的结构设计**：
+**DarticFrame 的结构设计**：
 
 ```dart
-class InterpreterFrame {
+class DarticFrame {
   final Uint8List bytecode;        // 函数字节码
   int ip;                          // 指令指针（挂起点 PC）
   final List<dynamic> locals;      // 局部变量表（含提升的跨 await 变量）
@@ -128,7 +128,7 @@ class InterpreterFrame {
   List<ExceptionHandler> handlerTable;  // 异常处理器表
   
   // 调用链
-  InterpreterFrame? callerFrame;        // 调用者帧（同步调用链）
+  DarticFrame? callerFrame;        // 调用者帧（同步调用链）
   Zone capturedZone;                    // 注册回调时的 Zone
   
   // 挂起/恢复
@@ -208,7 +208,7 @@ Future<int> complexAsync() async {
 关键规则：**帧恢复后，根据当前 IP 查找有效的异常处理器**。如果恢复时携带了异常（`resumeException != null`），解释器在恢复帧后立即跳转到对应的 catch/finally 处理器，而非继续正常执行。这与 Dart VM 的 `AsyncExceptionHandler` 存根行为一致。
 
 ```dart
-void _resumeFrame(InterpreterFrame frame) {
+void _resumeFrame(DarticFrame frame) {
   if (frame.resumeException != null) {
     // 查找覆盖当前 IP 的异常处理器
     var handler = _findHandler(frame, frame.ip);
@@ -247,7 +247,7 @@ void _resumeFrame(InterpreterFrame frame) {
     │                              │                           │
     │  callInterpreterAsync()      │                           │
     ├─────────────────────────────►│                           │
-    │                              │ 创建 InterpreterFrame     │
+    │                              │ 创建 DarticFrame     │
     │                              │ 创建 Completer<T>         │
     │                              │ frame.resultCompleter = c │
     │                              │──────────────────────────►│
@@ -276,7 +276,7 @@ Future<T> callInterpreterAsync<T>(
   List<dynamic> args,
 ) {
   final completer = Completer<T>();
-  final frame = InterpreterFrame(
+  final frame = DarticFrame(
     bytecode: function.bytecode,
     locals: _initLocals(function, args),
     resultCompleter: completer,
@@ -296,7 +296,7 @@ Future<T> callInterpreterAsync<T>(
 
 ```dart
 /// AWAIT 指令的运行时处理
-_SuspendSignal _executeAwait(InterpreterFrame frame) {
+_SuspendSignal _executeAwait(DarticFrame frame) {
   final value = frame.pop();
   
   // 快速路径：非 Future 值直接返回
@@ -405,7 +405,7 @@ Stream<T> callInterpreterAsyncStar<T>(
   List<dynamic> args,
 ) {
   final controller = StreamController<T>();
-  final frame = InterpreterFrame(
+  final frame = DarticFrame(
     bytecode: function.bytecode,
     locals: _initLocals(function, args),
   );
@@ -440,7 +440,7 @@ Stream<T> callInterpreterAsyncStar<T>(
 **YIELD 指令的运行时实现**：
 
 ```dart
-_Signal _executeYield(InterpreterFrame frame) {
+_Signal _executeYield(DarticFrame frame) {
   final value = frame.pop();
   final controller = frame.streamController!;
   
@@ -508,7 +508,7 @@ class AsyncBridge {
 
 ```dart
 class InterpreterRuntime {
-  final Queue<InterpreterFrame> _runQueue = Queue();
+  final Queue<DarticFrame> _runQueue = Queue();
   bool _driving = false;
   
   void _scheduleDrive() {
@@ -576,7 +576,7 @@ class InterpreterRuntime {
 参考 V8 的优化和 C# 的 `awaiter.IsCompleted` 模式，当 await 的 Future **已经完成** 时应避免挂起：
 
 ```dart
-_Signal _executeAwait(InterpreterFrame frame) {
+_Signal _executeAwait(DarticFrame frame) {
   final value = frame.pop();
   
   // 快速路径 1：非 Future 值
@@ -650,7 +650,7 @@ sync* 更为特殊——它是 **同步但可挂起** 的，每次 `moveNext()` 
 
 ```dart
 class SyncStarIterator<T> implements Iterator<T> {
-  InterpreterFrame _frame;
+  DarticFrame _frame;
   T? _current;
   
   @override
@@ -705,10 +705,10 @@ Kotlin 的关键设计：suspend 函数返回 `Any?` 类型，可能是实际结
 const _suspended = Object();
 
 /// CALL 指令执行同步或异步函数
-dynamic _executeCall(InterpreterFrame callerFrame, BytecodeFunction target) {
+dynamic _executeCall(DarticFrame callerFrame, BytecodeFunction target) {
   if (target.isAsync) {
     // 创建子帧并执行
-    final childFrame = InterpreterFrame(...);
+    final childFrame = DarticFrame(...);
     var result = _executeFrame(childFrame);
     if (identical(result, _suspended)) {
       // 子帧挂起 → 返回其 completer.future 给调用者
@@ -758,9 +758,9 @@ Cobalt 项目的关键发现：**为非挂起路径优化**比为挂起路径优
 Dart VM 通过 `@pragma('vm:awaiter-link')` 维护 await 链的因果关系。自定义解释器需要类似机制：
 
 ```dart
-class InterpreterFrame {
+class DarticFrame {
   // ...
-  InterpreterFrame? awaiterFrame;  // 指向等待此帧结果的帧
+  DarticFrame? awaiterFrame;  // 指向等待此帧结果的帧
   
   StackTrace buildAsyncStackTrace() {
     final frames = <String>[];
@@ -782,7 +782,7 @@ class InterpreterFrame {
 当异常从 VM Future 传播到解释器帧时，需要拼接两侧的栈追踪：
 
 ```dart
-void _onFutureError(InterpreterFrame frame, Object error, StackTrace vmTrace) {
+void _onFutureError(DarticFrame frame, Object error, StackTrace vmTrace) {
   // 拼接 VM 栈追踪和解释器栈追踪
   final interpreterTrace = frame.buildAsyncStackTrace();
   final combinedTrace = CombinedStackTrace(interpreterTrace, vmTrace);
