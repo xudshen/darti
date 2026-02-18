@@ -111,75 +111,89 @@ Phase 6  异步与高级特性     ← co19: LibTest/async + Ch7 Async + Languag
 
 **里程碑：** 手工构造的字节码能在执行引擎中运行，编译器能将简单 Kernel AST 编译为字节码
 
-### Batch 1.1: 字节码基础设施 (Ch1)
+### Batch 1.1: 字节码基础设施 (Ch1) ✅
 
-- [ ] 1.1.1 Opcode 常量与编解码工具函数 → `lib/src/bytecode/opcodes.dart`, `lib/src/bytecode/encoding.dart`
-- [ ] 1.1.2 常量池四分区数据结构 → `lib/src/bytecode/constant_pool.dart`
-- [ ] 1.1.3 WIDE 前缀编解码 → 扩展 `encoding.dart`
-- [ ] 1.1.4 字节码模块容器（函数表 + 常量池 + IC 表） → `lib/src/bytecode/module.dart`
+- [x] 1.1.1 Opcode 常量与编解码工具函数 → `lib/src/bytecode/opcodes.dart`, `lib/src/bytecode/encoding.dart`
+- [x] 1.1.2 常量池四分区数据结构 → `lib/src/bytecode/constant_pool.dart`
+- [x] 1.1.3 WIDE 前缀编解码 → 扩展 `encoding.dart`
+- [x] 1.1.4 字节码模块容器（函数表 + 常量池 + IC 表） → `lib/src/bytecode/module.dart`
 
 **commit:** `feat(bytecode): add ISA encoding, opcodes, and constant pool`
 
 > **核心发现：**
-> _(执行时填写：编解码 edge case、WIDE 实现陷阱、常量池设计调整等)_
+> - Opcode 改用 `abstract final class Op` 的 `static const int` 而非 enum，避免 switch 中的额外间接寻址
+> - ExceptionHandler 需要完整 8 字段（含 valStackDP/refStackDP），不能省略栈深度恢复信息
+> - 常量池四分区设计（refs/ints/doubles/names）各自独立索引，简化了编解码逻辑
 
-### Batch 1.2: 三栈与对象模型 (Ch2)
+### Batch 1.2: 三栈与对象模型 (Ch2) ✅
 
-- [ ] 1.2.1 ValueStack（共享 ByteBuffer 双视图：Int64List + Float64List） → `lib/src/runtime/value_stack.dart`
-- [ ] 1.2.2 RefStack（`List<Object?>` 引用栈） → `lib/src/runtime/ref_stack.dart`
-- [ ] 1.2.3 DarticFrame（栈帧：PC、FP、寄存器计数、返回地址） → `lib/src/runtime/frame.dart`
-- [ ] 1.2.4 DarticObject / DarticClassInfo 基础结构 → `lib/src/runtime/object.dart`
+- [x] 1.2.1 ValueStack（共享 ByteBuffer 双视图：Int64List + Float64List） → `lib/src/runtime/value_stack.dart`
+- [x] 1.2.2 RefStack（`List<Object?>` 引用栈） → `lib/src/runtime/ref_stack.dart`
+- [x] 1.2.3 DarticFrame（栈帧：PC、FP、寄存器计数、返回地址） → `lib/src/runtime/frame.dart`
+- [x] 1.2.4 DarticObject / DarticClassInfo 基础结构 → `lib/src/runtime/object.dart`
 
 **commit:** `feat(runtime): add three-stack model and object representation`
 
 > **核心发现：**
-> _(执行时填写：双视图对齐问题、栈增长策略、Frame 字段取舍等)_
+> - ValueStack 双视图（Int64List + Float64List）共享同一 ByteBuffer，slot 对齐自动保证
+> - CallStack 采用扁平数组而非 Frame 对象链表，pushFrame/popFrame 通过固定偏移读写
+> - DarticObject 字段存储分为 valFields（Int64List）和 refFields（List<Object?>），与栈模型一致
 
-### Batch 1.3: 分发循环 (Ch3)
+### Batch 1.3: 分发循环 (Ch3) ✅
 
-- [ ] 1.3.1 核心分发循环骨架（switch on opcode） → `lib/src/runtime/interpreter.dart`
-- [ ] 1.3.2 实现加载/存储指令组 (0x00-0x0F) → 扩展 `interpreter.dart`
-- [ ] 1.3.3 实现整数算术 + 比较指令组 (0x10-0x1F, 0x30-0x3F) → 扩展 `interpreter.dart`
-- [ ] 1.3.4 实现控制流指令组 (0x40-0x4F) → 扩展 `interpreter.dart`
-- [ ] 1.3.5 实现 CALL/RETURN 指令（含帧推入/弹出） → 扩展 `interpreter.dart`
-- [ ] 1.3.6 端到端测试：手工构造字节码执行加法函数 → `test/runtime/interpreter_test.dart`
+- [x] 1.3.1 核心分发循环骨架（switch on opcode） → `lib/src/runtime/interpreter.dart`
+- [x] 1.3.2 实现加载/存储指令组 (0x00-0x0F) → 扩展 `interpreter.dart`
+- [x] 1.3.3 实现整数算术 + 比较指令组 (0x10-0x1F, 0x30-0x3F) → 扩展 `interpreter.dart`
+- [x] 1.3.4 实现控制流指令组 (0x40-0x4F) → 扩展 `interpreter.dart`
+- [x] 1.3.5 实现 CALL/RETURN 指令（含帧推入/弹出） → 扩展 `interpreter.dart`
+- [x] 1.3.6 端到端测试：手工构造字节码执行加法函数 → `test/runtime/interpreter_test.dart`
 
 **commit:** `feat(runtime): add dispatch loop with arithmetic, control flow, and call/return`
 
 > **核心发现：**
-> _(执行时填写：switch 分发性能、帧切换逻辑、excess-K 跳转偏移计算等)_
+> - Excess-K 编码：sBx = raw - 0x7FFF，sAx = raw - 0x7FFFFF，JUMP 偏移为相对 PC（已自增后）
+> - CALL_STATIC 设置 callee.vBase = caller.vs.sp，参数在 caller 帧尾部（vBase + valueRegCount + argIdx）
+> - RETURN_VAL/RETURN_REF/RETURN_NULL 三种返回指令，HALT 专用于入口函数终止
+> - Fuel 计数防止无限循环，Phase 1 默认 50000
 
-### Batch 1.4: 最小编译器 (Ch5)
+### Batch 1.4: 最小编译器 (Ch5) ✅
 
-- [ ] 1.4.1 Kernel AST 遍历骨架（`TreeVisitor` 实现） → `lib/src/compiler/compiler.dart`
-- [ ] 1.4.2 编译表达式：IntLiteral, DoubleLiteral, BoolLiteral, StringLiteral → 扩展 `compiler.dart`
-- [ ] 1.4.3 编译表达式：算术 MethodInvocation (+, -, *, ~/, %) → 扩展 `compiler.dart`
-- [ ] 1.4.4 编译语句：ReturnStatement, ExpressionStatement → 扩展 `compiler.dart`
-- [ ] 1.4.5 编译函数：FunctionNode (参数 + 局部变量 + 寄存器分配) → 扩展 `compiler.dart`
-- [ ] 1.4.6 端到端测试：Dart 源码 → Kernel → 字节码 → 执行 → 结果 → `test/e2e/basic_test.dart`
+- [x] 1.4.1 Kernel AST 遍历骨架（`TreeVisitor` 实现） → `lib/src/compiler/compiler.dart`
+- [x] 1.4.2 编译表达式：IntLiteral, DoubleLiteral, BoolLiteral, StringLiteral → 扩展 `compiler.dart`
+- [x] 1.4.3 编译表达式：算术 MethodInvocation (+, -, *, ~/, %) → 扩展 `compiler.dart`
+- [x] 1.4.4 编译语句：ReturnStatement, ExpressionStatement → 扩展 `compiler.dart`
+- [x] 1.4.5 编译函数：FunctionNode (参数 + 局部变量 + 寄存器分配) → 扩展 `compiler.dart`
+- [x] 1.4.6 端到端测试：Dart 源码 → Kernel → 字节码 → 执行 → 结果 → `test/e2e/compile_and_run_test.dart`
 
 **commit:** `feat(compiler): add minimal Kernel-to-bytecode compiler`
 
 > **核心发现：**
-> _(执行时填写：Kernel AST 中算术运算的实际节点类型、寄存器分配策略选择、CFE 输出的意外结构等)_
+> - Kernel AST 中 `int` 算术操作符（+, -, * 等）的 interfaceTarget 指向 `num` 类而非 `int` 类，需要 `_inferExprType` 递归推断实际类型
+> - 编译期不知道 valueRegCount（寄存器总数），CALL_STATIC 的出参 MOVE 指令采用 post-patching：先 emit 占位指令，函数编译完成后回填目标寄存器
+> - 两遍编译：Pass 1 收集 funcId（支持前向引用），Pass 2 编译函数体
+> - Ref 寄存器 0-2 固定保留给 ITA/FTA/this（initialOffset: 3）
 
-### Batch 1.5: 模块格式与运行时补全
+### Batch 1.5: 模块格式与运行时补全 ✅
 
 审查发现 Phase 1 遗漏了设计文档中明确要求的关键组件，补充如下：
 
-- [ ] 1.5.1 `.darb` 二进制模块格式（header + magic + 版本 + 校验和） → `lib/src/bytecode/format.dart`
-- [ ] 1.5.2 模块序列化/反序列化管线 → `lib/src/bytecode/serializer.dart`
-- [ ] 1.5.3 异常处理表结构（try 范围 → handler PC 映射） → 扩展 `module.dart` + `interpreter.dart`
-- [ ] 1.5.4 StackKind 分类（编译器为每个变量/临时值标注 intVal/doubleVal/ref，保证双视图不变式） → 扩展 `compiler.dart`
-- [ ] 1.5.5 IC 表元数据初始化（函数加载时 IC 表零填充） → 扩展 `module.dart`
-- [ ] 1.5.6 端到端测试：编译→序列化→反序列化→执行 → `test/e2e/module_roundtrip_test.dart`
+- [x] 1.5.1 `.darb` 二进制模块格式（header + magic + 版本 + 校验和） → `lib/src/bytecode/format.dart`
+- [x] 1.5.2 模块序列化/反序列化管线 → `lib/src/bytecode/serializer.dart`
+- [x] 1.5.3 异常处理表结构（try 范围 → handler PC 映射） → 扩展 `module.dart` + `interpreter.dart`
+- [x] 1.5.4 StackKind 分类（编译器为每个变量/临时值标注 intVal/doubleVal/ref，保证双视图不变式） → 扩展 `compiler.dart`
+- [x] 1.5.5 IC 表元数据初始化（函数加载时 IC 表零填充） → 扩展 `module.dart`
+- [x] 1.5.6 端到端测试：编译→序列化→反序列化→执行 → `test/e2e/module_roundtrip_test.dart`
 
 **commit:** `feat: add module format, exception tables, StackKind, and IC initialization`
 
 > **核心发现：**
-> _(执行时填写：.darb 格式的版本兼容策略、异常处理表对 finally 的特殊处理、StackKind 推断的 edge case 等)_
+> - Magic 值选定 0x44415242（ASCII "DARB"），hexdump 可直接识别
+> - StackKind 三分类 `{intVal, doubleVal, ref}`，`isValue` getter 统一判断值栈归属
+> - IC 表仅序列化 methodNameIndex，cachedClassId/cachedMethodOffset 是运行时状态，反序列化时重置为 -1/0
+> - CRC32 采用 IEEE 802.3 标准（反射多项式 0xEDB88320），校验和覆盖 payload（不含 header）
+> - ConstantPool.from() + read accessors (refs/ints/doubles/names) 支持反序列化重建
 
-### Phase 1 里程碑验证
+### Phase 1 里程碑验证 ✅
 
 ```dart
 // 能编译并执行这段代码，返回正确结果
@@ -187,8 +201,8 @@ int add(int a, int b) => a + b;
 int main() => add(1, 2); // => 3
 ```
 
-- [ ] 里程碑通过
-- [ ] 编译→序列化→反序列化→执行 roundtrip 通过
+- [x] 里程碑通过（412 tests, all passing）
+- [x] 编译→序列化→反序列化→执行 roundtrip 通过
 
 ---
 
@@ -632,5 +646,5 @@ review 发现的问题直接修复，修复后重新 review 直到通过。
 ## 下一步
 
 - [x] ~~为 Phase 1 编写详细的 Task 文件~~ → 已完成，见 [`docs/tasks/phase1/`](../tasks/phase1/README.md)
-- [ ] 执行 Phase 1（Batch 1.1 → 1.5，共 26 个 Task）
-- [ ] Phase 1 里程碑验证通过后，为 Phase 2 编写 Task 文件
+- [x] 执行 Phase 1（Batch 1.1 → 1.5，共 26 个 Task）— 412 tests, all passing
+- [ ] 为 Phase 2 编写 Task 文件
