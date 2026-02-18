@@ -10,7 +10,7 @@
 |------|------|------|
 | 依赖 | Ch2 对象模型 | 使用 DarticObject、引用栈等核心数据结构 |
 | 依赖 | Ch3 执行引擎 | 使用分发循环暴露的运行时 API（字段读写、方法调用、对象创建），供 Bridge/Proxy 回调解释器 |
-| 被依赖 | Ch5 编译器 | 编译器生成 .darticb 绑定名称表，运行时加载时通过 HostBindings 做符号解析 |
+| 被依赖 | Ch5 编译器 | 编译器生成 .darb 绑定名称表，运行时加载时通过 HostBindings 做符号解析 |
 | 被依赖 | Ch6 泛型 | 跨边界泛型类型检查依赖 Bridge 的类型信息（详见 Ch6） |
 | 被依赖 | Ch7 异步 | async 帧的 `Completer` 桥接依赖异常传播契约（详见 Ch7） |
 | 契约 | Ch8 沙箱 | `CALL_HOST` 调用计入沙箱的调用深度限制；Bridge 注册表天然形成 API 边界（详见 Ch8） |
@@ -62,7 +62,7 @@
 
 ### HostBindings（宿主函数注册表）
 
-HostBindings 将宿主 VM 的函数和方法映射为符号名到整数 ID 的注册表。Bridge 预生成库在初始化时批量注册绑定，运行时通过整数 ID 进行 O(1) 调用分发。编译器将宿主方法调用编译为 `CALL_HOST A, Bx`（Ch1 ABx 编码格式），其中 Bx 指向 .darticb 绑定名称表条目（含符号名和 argCount，编译期生成详见 Ch5），加载时通过符号解析映射为运行时 ID（加载流程详见 Ch3 模块加载）。
+HostBindings 将宿主 VM 的函数和方法映射为符号名到整数 ID 的注册表。Bridge 预生成库在初始化时批量注册绑定，运行时通过整数 ID 进行 O(1) 调用分发。编译器将宿主方法调用编译为 `CALL_HOST A, Bx`（Ch1 ABx 编码格式），其中 Bx 指向 .darb 绑定名称表条目（含符号名和 argCount，编译期生成详见 Ch5），加载时通过符号解析映射为运行时 ID（加载流程详见 Ch3 模块加载）。
 
 | 属性 | 类型 | 说明 |
 |------|------|------|
@@ -215,8 +215,8 @@ package:dartic_bridges_flutter/
 
 ### 解释器 -> VM 调用流程（外调）
 
-1. 编译器将宿主方法调用编译为 `CALL_HOST A, Bx` 指令，Bx 为 .darticb 绑定名称表中的本地索引
-2. 运行时加载 .darticb 时，通过 `HostBindings.lookupByName` 将符号名解析为运行时 ID（绑定名称表由编译器生成，详见 Ch5；加载时解析流程详见 Ch3 模块加载）
+1. 编译器将宿主方法调用编译为 `CALL_HOST A, Bx` 指令，Bx 为 .darb 绑定名称表中的本地索引
+2. 运行时加载 .darb 时，通过 `HostBindings.lookupByName` 将符号名解析为运行时 ID（绑定名称表由编译器生成，详见 Ch5；加载时解析流程详见 Ch3 模块加载）
 3. 分发循环执行 `CALL_HOST` 时，从引用栈取参数，调用 `HostBindings.invoke(runtimeId, args)`
 4. 返回值按类型分流：基本类型（int/double/bool）存入值栈，引用类型（VM 原生对象）存入引用栈。后续对 VM 对象的属性/方法访问通过 HostClassWrapper 路由
 

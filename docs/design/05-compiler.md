@@ -2,7 +2,7 @@
 
 ## 模块定位
 
-dartic 编译器是一个**离线 CLI 工具**，运行在开发机或 CI 环境，不在目标设备上运行。输入为 CFE 生成的 linked-platform `.dill` 文件（Kernel AST），输出为 `.darticb` 字节码文件。编译器依赖 `package:kernel`（SDK 级别），作为独立 package 发布，与运行时 package 解耦。
+dartic 编译器是一个**离线 CLI 工具**，运行在开发机或 CI 环境，不在目标设备上运行。输入为 CFE 生成的 linked-platform `.dill` 文件（Kernel AST），输出为 `.darb` 字节码文件。编译器依赖 `package:kernel`（SDK 级别），作为独立 package 发布，与运行时 package 解耦。
 
 ## 与其他模块的关系
 
@@ -11,11 +11,11 @@ dartic 编译器是一个**离线 CLI 工具**，运行在开发机或 CI 环境
 | 输入 | CFE（Dart SDK 工具链） | linked-platform `.dill`：所有 `Reference` 已解析，类型信息完整 |
 | 输入 | Ch4 Bridge 预生成库 | Bridge 注册表元数据：已知绑定符号名集合 |
 | 输出目标 | Ch1 ISA | 生成符合 Ch1 编码格式的 `Uint32List` 字节码 |
-| 输出产物 | Ch2 对象模型 | `.darticb` 中的类表和栈帧布局信息以 Ch2 数据结构为目标 |
-| 输出产物 | Ch3 执行引擎 | `.darticb` 文件由执行引擎加载，包含字节码、常量池、绑定名称表 |
-| 类型系统 | Ch6 泛型 | 编译器生成 TypeTemplate 和 SuperTypeMap 写入 .darticb 常量池，传递 ITA/FTA 描述符，运行时按需实化 |
+| 输出产物 | Ch2 对象模型 | `.darb` 中的类表和栈帧布局信息以 Ch2 数据结构为目标 |
+| 输出产物 | Ch3 执行引擎 | `.darb` 文件由执行引擎加载，包含字节码、常量池、绑定名称表 |
+| 类型系统 | Ch6 泛型 | 编译器生成 TypeTemplate 和 SuperTypeMap 写入 .darb 常量池，传递 ITA/FTA 描述符，运行时按需实化 |
 | 异步编译 | Ch7 异步 | 编译器标记 async 函数，生成帧快照所需的寄存器元数据 |
-| 安全验证 | Ch8 沙箱 | `.darticb` 结构需通过加载时验证（操作码合法性、操作数范围） |
+| 安全验证 | Ch8 沙箱 | `.darb` 结构需通过加载时验证（操作码合法性、操作数范围） |
 
 ## 设计决策
 
@@ -26,7 +26,7 @@ dartic 编译器是一个**离线 CLI 工具**，运行在开发机或 CI 环境
 | 寄存器分配 | 作用域级回收（Phase 1） | LSRA：需先构建 CFG + 活跃区间，Phase 1 复杂度不值得 | 以极低复杂度覆盖主要场景；Dart 函数通常局部变量 <50，8 位寄存器上限 256 |
 | Bridge 生成 | 预生成库（独立 package） | 运行时反射生成：Dart 无法运行时创建类 | 常用框架类通过 build_runner 预生成，作为 package 发布 |
 | 优化遍 | Phase 2 实施 | Phase 1 全量开启：无 profiling 数据指导 | 各优化遍根据 profiling 数据确定优先级 |
-| .darticb 符号解析 | 加载时按名称解析 | 编译时绑定固定 ID：编译产物与 Bridge 库版本耦合 | 只要符号名存在，ID 如何分配无关紧要 |
+| .darb 符号解析 | 加载时按名称解析 | 编译时绑定固定 ID：编译产物与 Bridge 库版本耦合 | 只要符号名存在，ID 如何分配无关紧要 |
 
 ## 核心概念
 
@@ -53,7 +53,7 @@ dartic_compiler CLI
   │   ├── 窥孔优化
   │   └── 死代码消除
   │
-  └── 序列化输出 → .darticb 文件
+  └── 序列化输出 → .darb 文件
 ```
 
 编译管线数据流：
@@ -75,7 +75,7 @@ dartic_compiler CLI
                     │         │          │
                     └─────────┼──────────┘
                               ▼
-                       .darticb 序列化
+                       .darb 序列化
 ```
 
 ### Kernel 加载
@@ -133,7 +133,7 @@ CFE 已在 Kernel AST 中填入完整类型信息。编译器根据变量的静�
 
 #### 3. 依赖分析
 
-编译器遍历 Kernel AST 中所有对宿主类型的引用，通过 `interfaceTarget.enclosingClass` 识别宿主类，查找 Bridge 注册表确认绑定存在。对每个引用分配**本地绑定索引**（包含符号名和参数数量），最终输出绑定名称表写入 `.darticb`。如果引用的类未在 Bridge 注册表中，编译器报错。
+编译器遍历 Kernel AST 中所有对宿主类型的引用，通过 `interfaceTarget.enclosingClass` 识别宿主类，查找 Bridge 注册表确认绑定存在。对每个引用分配**本地绑定索引**（包含符号名和参数数量），最终输出绑定名称表写入 `.darb`。如果引用的类未在 Bridge 注册表中，编译器报错。
 
 **Bridge 注册表**从预生成库元数据加载已知绑定符号名集合。编译器遇到对 `dart:core::List.add` 等的引用时，以 `"库URI::类名::方法名#参数数量"` 为键分配本地索引。同一方法不同参数数量生成不同条目。编译器生成 `CALL_HOST A, Bx`（A=baseReg, Bx=本地绑定索引）。详见 Ch4 宿主函数注册表。
 
@@ -443,12 +443,12 @@ Dart 3 的 extension type 是编译期零成本抽象，在 Kernel AST 中已被
 
 **Pattern 脱糖验证**：CFE 生成 linked-platform `.dill` 时，Dart 3 的 `PatternSwitchStatement`、`IfCaseStatement`、`PatternVariableDeclaration`、`PatternAssignment`、`SwitchExpression` 等节点应已被脱糖为基础控制流。实施前需实际验证——编译含 pattern matching 的 `.dill` 并检查 AST 中是否仍保留 Pattern 节点。若未脱糖，需补充 pattern 编译策略。
 
-## 编译产物格式 (.darticb)
+## 编译产物格式 (.darb)
 
 ```
 DarticB 文件格式
 ┌─────────────────────────────────┐
-│ Magic: 0xDART1B00 (4 bytes)     │
+│ Magic: 0x44415242 (4 bytes)     │
 │ Version: UInt32                  │
 │ Checksum: UInt32 (CRC32)        │
 ├─────────────────────────────────┤
@@ -509,9 +509,9 @@ DarticB 文件格式
 - 各 Section 按上述顺序紧密排列，Section 间无填充字节
 - 校验和（CRC32）覆盖文件头之后的全部数据，加载时由 Ch8 验证器校验
 
-**序列化与运行时命名映射**：`.darticb` 的序列化字段名与 Ch2 对象模型类的字段名存在对应关系：`methodTable` → `DarticClassInfo.methods`，`refFieldCount`/`valueFieldCount` → `DarticClassInfo.refFieldCount`/`DarticClassInfo.valueFieldCount`，`typeParamCount` → `DarticClassInfo.typeParamCount`。序列化存储紧凑形式（计数值、偏移量），运行时反序列化为结构化对象。
+**序列化与运行时命名映射**：`.darb` 的序列化字段名与 Ch2 对象模型类的字段名存在对应关系：`methodTable` → `DarticClassInfo.methods`，`refFieldCount`/`valueFieldCount` → `DarticClassInfo.refFieldCount`/`DarticClassInfo.valueFieldCount`，`typeParamCount` → `DarticClassInfo.typeParamCount`。序列化存储紧凑形式（计数值、偏移量），运行时反序列化为结构化对象。
 
-**编译期与运行时的解耦**：编译器不需要知道运行时 `HostBindings` 的注册顺序。`.darticb` 存储完整的绑定名称表，运行时按名称解析。这使得编译产物与 Bridge 库版本解耦——只要符号名存在，ID 如何分配无关紧要。加载时符号解析流程（校验 → 绑定名称解析 → 数据加载）和 `CALL_HOST` 运行时分发详见 Ch3 运行时加载、Ch4 宿主函数注册表。
+**编译期与运行时的解耦**：编译器不需要知道运行时 `HostBindings` 的注册顺序。`.darb` 存储完整的绑定名称表，运行时按名称解析。这使得编译产物与 Bridge 库版本解耦——只要符号名存在，ID 如何分配无关紧要。加载时符号解析流程（校验 → 绑定名称解析 → 数据加载）和 `CALL_HOST` 运行时分发详见 Ch3 运行时加载、Ch4 宿主函数注册表。
 
 ## 关键约束与边界条件
 

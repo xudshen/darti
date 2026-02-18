@@ -20,7 +20,7 @@ dartic 是一个运行于 Dart VM 内部的自定义字节码解释器。以 Dar
 ## 编译与执行流程
 
 ```
-Dart 源码 ──CFE──► .dill (Kernel AST) ──dartic 编译器──► .darticb (字节码)
+Dart 源码 ──CFE──► .dill (Kernel AST) ──dartic 编译器──► .darb (字节码)
                                               │
                                         Bridge 代码（自动生成）
                                               │
@@ -63,7 +63,7 @@ Dart 源码 ──CFE──► .dill (Kernel AST) ──dartic 编译器──�
 | Ch2 | `docs/design/02-object-model.md` | 三栈模型、DarticObject、DarticFrame、栈帧布局 | Ch1 指令集 | 内存模型与对象表示 |
 | Ch3 | `docs/design/03-execution-engine.md` | 分发循环、IC、模块加载、异常分发、GC | Ch2 数据结构 | 运行时 API |
 | Ch4 | `docs/design/04-interop.md` | Bridge、代理缓存、回调代理、跨边界泛型 | Ch3 运行时 API | 宿主互调能力 |
-| Ch5 | `docs/design/05-compiler.md` | Kernel 遍历、寄存器分配、闭包编译、.darticb 格式 | .dill, Ch1 ISA | .darticb 字节码 |
+| Ch5 | `docs/design/05-compiler.md` | Kernel 遍历、寄存器分配、闭包编译、.darb 格式 | .dill, Ch1 ISA | .darb 字节码 |
 | Ch6 | `docs/design/06-generics.md` | DarticType 驻留、ITA/FTA、子类型检查 | Ch2 栈帧, Ch5 类型传递 | 类型检查能力 |
 | Ch7 | `docs/design/07-async.md` | async/await 帧快照、生成器、协作调度 | Ch3 分发循环 | 异步执行能力 |
 | Ch8 | `docs/design/08-sandbox.md` | 字节码验证、fuel 计数、调用深度限制 | Ch3 fuel 机制 | 安全保障 |

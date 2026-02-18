@@ -5,7 +5,7 @@ import 'constant_pool.dart';
 /// A compiled bytecode module containing functions and constants.
 ///
 /// This is the in-memory representation of a compilation unit.
-/// Serialization to/from `.darticb` format is deferred to Batch 1.5.
+/// Serialization to/from `.darb` format is deferred to Batch 1.5.
 ///
 /// See: docs/design/01-bytecode-isa.md, docs/design/02-object-model.md
 class DarticModule {

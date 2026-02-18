@@ -67,7 +67,7 @@
 
 **TDD 步骤：**
 
-1. **读设计文档** — Ch1 IC 结构、Ch2 DarticFuncProto 字段列表（bytecode/valueRegCount/refRegCount/paramCount/icTable/exceptionTable/upvalueDescriptors）、Ch5 ".darticb 文件格式"节
+1. **读设计文档** — Ch1 IC 结构、Ch2 DarticFuncProto 字段列表（bytecode/valueRegCount/refRegCount/paramCount/icTable/exceptionTable/upvalueDescriptors）、Ch5 ".darb 文件格式"节
 2. **写测试** — 验证：DarticModule 能持有函数表（`List<DarticFuncProto>`）+ 常量池（ConstantPool）+ 入口点 funcId；DarticFuncProto 能持有 bytecode/valueRegCount/refRegCount/paramCount；ICEntry 结构能持有 methodNameIndex/cachedClassId/cachedMethodOffset（cachedClassId 初始为 -1）；能通过 funcId 索引检索 DarticFuncProto
 3. **实现** — DarticModule、DarticFuncProto、ICEntry 数据类。暂不实现序列化（Batch 1.5），此处只做内存中的容器结构
 4. **运行** — `fvm dart analyze && fvm dart test test/bytecode/module_test.dart`

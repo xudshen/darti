@@ -1,4 +1,4 @@
-/// Binary format constants and checksum for `.darticb` files.
+/// Binary format constants and checksum for `.darb` files.
 ///
 /// Defines the file magic, version, and CRC32 checksum
 /// used by the dartic bytecode serializer/deserializer.
@@ -8,13 +8,10 @@ library;
 
 import 'dart:typed_data';
 
-/// Binary format constants for `.darticb` files.
-abstract final class DarticBFormat {
-  /// File magic: 0xDAB71B00.
-  ///
-  /// Chosen as a memorable mnemonic (loosely "DART1B00") that is unlikely
-  /// to collide with other binary formats.
-  static const int magic = 0xDAB71B00;
+/// Binary format constants for `.darb` files.
+abstract final class DarbFormat {
+  /// File magic: ASCII "DARB" (0x44415242).
+  static const int magic = 0x44415242;
 
   /// Current format version.
   static const int version = 1;
@@ -51,7 +48,7 @@ Uint32List _buildTable() {
 /// Uses the standard reflected polynomial 0xEDB88320 with a 256-entry
 /// lookup table for efficient computation.
 ///
-/// Used to verify `.darticb` file integrity.
+/// Used to verify `.darb` file integrity.
 int crc32(List<int> bytes) {
   var crc = 0xFFFFFFFF;
   for (final byte in bytes) {

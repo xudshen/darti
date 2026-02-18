@@ -93,7 +93,7 @@ int main() => 42;
 
       // Tamper with a byte in the payload (after the 12-byte header).
       final tampered = Uint8List.fromList(bytes);
-      tampered[DarticBFormat.headerSize + 1] ^= 0xFF;
+      tampered[DarbFormat.headerSize + 1] ^= 0xFF;
 
       expect(
         () => DarticDeserializer().deserialize(tampered),

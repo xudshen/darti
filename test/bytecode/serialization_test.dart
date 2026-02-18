@@ -402,11 +402,11 @@ void main() {
 
       final bd = ByteData.sublistView(bytes);
 
-      expect(bd.getUint32(0, Endian.little), DarticBFormat.magic);
-      expect(bd.getUint32(4, Endian.little), DarticBFormat.version);
+      expect(bd.getUint32(0, Endian.little), DarbFormat.magic);
+      expect(bd.getUint32(4, Endian.little), DarbFormat.version);
 
       // Checksum over payload.
-      final payload = bytes.sublist(DarticBFormat.headerSize);
+      final payload = bytes.sublist(DarbFormat.headerSize);
       final expectedChecksum = crc32(payload);
       expect(bd.getUint32(8, Endian.little), expectedChecksum);
     });

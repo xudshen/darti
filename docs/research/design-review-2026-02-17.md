@@ -170,7 +170,7 @@
 
 **LSRA 优先级正确**：作用域级回收对典型 Dart 函数（<50 局部变量）已足够，LSRA 的主要收益场景（减少 async 帧快照大小）尚未成为瓶颈，推迟到 Phase 2+ 是务实的。
 
-**.darticb 格式亮点**：分区常量池（refs/ints/doubles/names）让 `LOAD_CONST_INT` 直接从 `Int64List` 读取，零装箱开销。绑定名称表的加载时解析实现了编译产物与 Bridge 库版本的解耦。
+**.darb 格式亮点**：分区常量池（refs/ints/doubles/names）让 `LOAD_CONST_INT` 直接从 `Int64List` 读取，零装箱开销。绑定名称表的加载时解析实现了编译产物与 Bridge 库版本的解耦。
 
 **关键风险**：`package:kernel` 是 Dart SDK 内部包，API 和二进制格式不受稳定性承诺保护。每次 SDK 大版本升级可能需要适配。
 

@@ -5,7 +5,7 @@ import 'constant_pool.dart';
 import 'format.dart';
 import 'module.dart';
 
-/// Deserializes a `.darticb` binary into a [DarticModule].
+/// Deserializes a `.darb` binary into a [DarticModule].
 ///
 /// Validates the file header (magic, version) and verifies the CRC32
 /// checksum before parsing section data.
@@ -19,10 +19,10 @@ class DarticDeserializer {
   ///
   /// Throws [FormatException] if the data is invalid.
   DarticModule deserialize(Uint8List bytes) {
-    if (bytes.length < DarticBFormat.headerSize) {
+    if (bytes.length < DarbFormat.headerSize) {
       throw FormatException(
-        'Invalid darticb file: too short '
-        '(${bytes.length} bytes, need at least ${DarticBFormat.headerSize})',
+        'Invalid darb file: too short '
+        '(${bytes.length} bytes, need at least ${DarbFormat.headerSize})',
       );
     }
 
@@ -30,29 +30,29 @@ class DarticDeserializer {
 
     // Read and validate header.
     final magic = reader.readUint32();
-    if (magic != DarticBFormat.magic) {
+    if (magic != DarbFormat.magic) {
       throw FormatException(
-        'Invalid darticb file: wrong magic '
+        'Invalid darb file: wrong magic '
         '(0x${magic.toRadixString(16).padLeft(8, '0')}, '
-        'expected 0x${DarticBFormat.magic.toRadixString(16).padLeft(8, '0')})',
+        'expected 0x${DarbFormat.magic.toRadixString(16).padLeft(8, '0')})',
       );
     }
 
     final version = reader.readUint32();
-    if (version != DarticBFormat.version) {
+    if (version != DarbFormat.version) {
       throw FormatException(
-        'Unsupported darticb version ($version, expected ${DarticBFormat.version})',
+        'Unsupported darb version ($version, expected ${DarbFormat.version})',
       );
     }
 
     final storedChecksum = reader.readUint32();
 
     // Verify checksum over payload (everything after header).
-    final payload = bytes.sublist(DarticBFormat.headerSize);
+    final payload = bytes.sublist(DarbFormat.headerSize);
     final computedChecksum = crc32(payload);
     if (storedChecksum != computedChecksum) {
       throw FormatException(
-        'darticb checksum mismatch '
+        'darb checksum mismatch '
         '(stored: 0x${storedChecksum.toRadixString(16).padLeft(8, '0')}, '
         'computed: 0x${computedChecksum.toRadixString(16).padLeft(8, '0')})',
       );
@@ -241,7 +241,7 @@ class _ByteReader {
   void _checkBounds(int needed) {
     if (_offset + needed > _bytes.length) {
       throw FormatException(
-        'Truncated darticb file at offset $_offset '
+        'Truncated darb file at offset $_offset '
         '(need $needed bytes, only ${_bytes.length - _offset} remaining)',
       );
     }

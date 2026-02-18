@@ -9,7 +9,7 @@
 | 方向 | 模块 | 接口 |
 |------|------|------|
 | 输入 | Ch2 内存模型 | 使用三栈模型、DarticObject、DarticFrame 等核心数据结构 |
-| 输入 | Ch5 编译器 | 加载编译器产出的 `.darticb` 字节码模块，含字节码、常量池、符号表 |
+| 输入 | Ch5 编译器 | 加载编译器产出的 `.darb` 字节码模块，含字节码、常量池、符号表 |
 | 输入 | Ch1 ISA | 分发循环解码并执行 Ch1 定义的 32 位定宽指令 |
 | 输出 | Ch4 互调 | 暴露运行时 API（`invokeClosure`、字段读写、方法调用、对象创建）供 Bridge/Proxy 回调解释器 |
 | 输出 | Ch6 泛型 | INSTANCEOF/CAST 指令调用 Ch6 的 `resolveType` 和 `isSubtypeOf` 完成参数化类型检查；栈帧中的 ITA/FTA 槽位为泛型系统提供类型参数传递通道 |
@@ -51,7 +51,7 @@ DarticFuncProto 是编译器为每个函数生成的元数据对象，包含执�
 
 | API | 签名 | 说明 | 主要消费者 |
 |-----|------|------|-----------|
-| loadModule | (Uint8List bytes) -> void | 加载并注册 .darticb 字节码模块（详见"模块加载"节） | 宿主应用 |
+| loadModule | (Uint8List bytes) -> void | 加载并注册 .darb 字节码模块（详见"模块加载"节） | 宿主应用 |
 | execute | (int entryFuncId) -> Future\<Object?\> | 创建 DarticFrame 入队 `_runQueue`，启动分发循环 | 宿主应用 |
 | invokeClosure | (DarticClosure, List\<Object?\> args) -> Object? | VM 回调解释器闭包的入口（详见"invokeClosure 机制"节） | Ch4 DarticCallbackProxy、BridgeMixin |
 | invokeMethod | (DarticObject, String name, List\<Object?\> args) -> Object? | 按名称调用解释器对象的方法（查方法表 + invokeClosure） | Ch4 DarticProxy.toString()、BridgeMixin.$_invoke |
@@ -275,7 +275,7 @@ for each frame in call stack (current -> bottom):
 
 ### 模块加载
 
-`loadModule` 将编译器产出的 `.darticb` 字节码模块注册到运行时，是执行前的必要步骤。
+`loadModule` 将编译器产出的 `.darb` 字节码模块注册到运行时，是执行前的必要步骤。
 
 **加载流程**：
 
@@ -283,7 +283,7 @@ for each frame in call stack (current -> bottom):
 2. **DarticClassInfo 注册**：遍历模块中的类定义，为每个类创建 DarticClassInfo（构建方法表、字段布局、supertypeIds 传递闭包）并注册到全局类表（DarticClassInfo 结构定义详见 Ch2）
 3. **DarticFuncProto 注册**：将模块中的函数原型注册到全局 DarticFuncProto 表
 4. **常量池挂载**：将模块的四分区常量池（refs/ints/doubles/names，详见 Ch1）关联到运行时
-5. **HostBindings 符号解析**：将 .darticb 绑定名称表中的符号名通过 `HostBindings.lookupByName` 解析为运行时 ID（详见 Ch4）
+5. **HostBindings 符号解析**：将 .darb 绑定名称表中的符号名通过 `HostBindings.lookupByName` 解析为运行时 ID（详见 Ch4）
 6. **全局变量注册**：为静态字段和顶层变量分配 DarticGlobalTable 槽位，初始值设为 `_uninitialized` 哨兵，初始化函数 ID 关联到对应槽位
 7. **IC 缓存重置**：若新模块引入的 classId 与已有类冲突（热重载场景），全局重置所有 IC 缓存（`cachedClassId = -1`）
 

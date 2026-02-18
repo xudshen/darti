@@ -4,18 +4,18 @@ import 'package:dartic/src/bytecode/format.dart';
 import 'package:test/test.dart';
 
 void main() {
-  group('DarticBFormat constants', () {
-    test('magic constant is 0xDAB71B00', () {
-      expect(DarticBFormat.magic, 0xDAB71B00);
+  group('DarbFormat constants', () {
+    test('magic constant is ASCII "DARB" (0x44415242)', () {
+      expect(DarbFormat.magic, 0x44415242);
     });
 
     test('version number is 1', () {
-      expect(DarticBFormat.version, 1);
+      expect(DarbFormat.version, 1);
     });
 
     test('header size is 12 bytes (magic + version + checksum)', () {
       // magic: 4 bytes, version: 4 bytes, checksum: 4 bytes
-      expect(DarticBFormat.headerSize, 12);
+      expect(DarbFormat.headerSize, 12);
     });
 
   });
@@ -63,19 +63,19 @@ void main() {
   group('little-endian UInt32 encoding', () {
     test('magic encodes correctly in little-endian', () {
       // Verify that magic fits in a UInt32 and encodes correctly as LE.
-      final buf = ByteData(4)..setUint32(0, DarticBFormat.magic, Endian.little);
+      final buf = ByteData(4)..setUint32(0, DarbFormat.magic, Endian.little);
       final bytes = buf.buffer.asUint8List();
 
-      // 0xDAB71B00 in LE: [0x00, 0x1B, 0xB7, 0xDA]
-      expect(bytes[0], 0x00);
-      expect(bytes[1], 0x1B);
-      expect(bytes[2], 0xB7);
-      expect(bytes[3], 0xDA);
+      // 0x44415242 ("DARB") in LE: [0x42, 0x52, 0x41, 0x44]
+      expect(bytes[0], 0x42); // 'B'
+      expect(bytes[1], 0x52); // 'R'
+      expect(bytes[2], 0x41); // 'A'
+      expect(bytes[3], 0x44); // 'D'
     });
 
     test('version encodes correctly in little-endian', () {
       final buf = ByteData(4)
-        ..setUint32(0, DarticBFormat.version, Endian.little);
+        ..setUint32(0, DarbFormat.version, Endian.little);
       final bytes = buf.buffer.asUint8List();
 
       // version 1 in LE: [0x01, 0x00, 0x00, 0x00]

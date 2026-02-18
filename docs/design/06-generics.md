@@ -8,7 +8,7 @@
 
 | 方向 | 模块 | 接口 |
 |------|------|------|
-| 输入 | Ch5 编译器 | 编译器从 Kernel 提取类型信息，生成 TypeTemplate 和 SuperTypeMap，写入 .darticb 常量池 |
+| 输入 | Ch5 编译器 | 编译器从 Kernel 提取类型信息，生成 TypeTemplate 和 SuperTypeMap，写入 .darb 常量池 |
 | 输入 | Ch2 对象模型 | 栈帧提供 ITA/FTA 槽位；DarticObject.runtimeType 存储类型信息 |
 | 输入 | Ch3 执行引擎 | 分发循环执行 INSTANCEOF/CAST 等指令 |
 | 输出 | Ch3 执行引擎 | isSubtypeOf 结果驱动 INSTANCEOF/CAST 指令的分支 |
@@ -112,7 +112,7 @@ CFE 已完成所有类型推断，解释器无需重做。Kernel 的 `DartType` 
 
 ### TypeTemplate（编译期类型描述）
 
-编译器将 Kernel 类型节点编码为 TypeTemplate，存入 .darticb 常量池 refs 分区。四种变体：
+编译器将 Kernel 类型节点编码为 TypeTemplate，存入 .darb 常量池 refs 分区。四种变体：
 
 | 变体 | 含义 | resolveType 行为 |
 |------|------|-----------------|
@@ -152,7 +152,7 @@ resolveType 处理 FunctionTypeTemplate 时，递归解析所有内嵌 TypeTempl
 
 编译器预计算每个类对其所有超类型的类型参数映射。
 
-**生成时机**：编译期，遍历类继承图为每个类生成条目，写入 .darticb。
+**生成时机**：编译期，遍历类继承图为每个类生成条目，写入 .darb。
 
 **数据结构**：`classId → { superClassId → List<TypeArgTemplate> }`。每个 TypeArgTemplate 可以是具体类型（如 `String`）或类型参数引用（如 "取 ITA[0]"）。
 

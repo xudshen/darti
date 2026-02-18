@@ -2,7 +2,7 @@
 
 ## 概览
 
-审查发现 Phase 1 遗漏了设计文档中明确要求的关键组件，本 Batch 补充：`.darticb` 二进制模块格式、序列化/反序列化管线、异常处理表结构、StackKind 分类基础设施、IC 表元数据初始化。最终通过编译→序列化→反序列化→执行的 roundtrip 测试验证。
+审查发现 Phase 1 遗漏了设计文档中明确要求的关键组件，本 Batch 补充：`.darb` 二进制模块格式、序列化/反序列化管线、异常处理表结构、StackKind 分类基础设施、IC 表元数据初始化。最终通过编译→序列化→反序列化→执行的 roundtrip 测试验证。
 
 **设计参考：** Ch5"编译产物格式"节、Ch3"异常分发"节、Ch2"StackKind 分类"节、Ch1 IC 结构
 
@@ -10,7 +10,7 @@
 
 ---
 
-### Task 1.5.1: `.darticb` 二进制模块格式
+### Task 1.5.1: `.darb` 二进制模块格式
 
 **产出文件：**
 - Create: `lib/src/bytecode/format.dart`
@@ -18,9 +18,9 @@
 
 **TDD 步骤：**
 
-1. **读设计文档** — Ch5"编译产物格式"节，了解 `.darticb` 文件结构：magic (0xDART1B00) + version (UInt32) + checksum (CRC32) + 各 section
-2. **写测试** — 验证：magic 常量正确（0xDART1B00）；version 编码规则；文件头定义常量（Section 标识、字节序约定等）；CRC32 校验和计算正确
-3. **实现** — DarticBFormat 常量类，定义 magic、version、section 标识等。CRC32 实现（或引用现有纯 Dart 实现）。二进制编码约定常量（小端字节序、UInt32 定宽、UTF-8 前缀长度字符串编码）
+1. **读设计文档** — Ch5"编译产物格式"节，了解 `.darb` 文件结构：magic (0x44415242 "DARB") + version (UInt32) + checksum (CRC32) + 各 section
+2. **写测试** — 验证：magic 常量正确（0x44415242 "DARB"）；version 编码规则；文件头定义常量（Section 标识、字节序约定等）；CRC32 校验和计算正确
+3. **实现** — DarbFormat 常量类，定义 magic、version、section 标识等。CRC32 实现（或引用现有纯 Dart 实现）。二进制编码约定常量（小端字节序、UInt32 定宽、UTF-8 前缀长度字符串编码）
 4. **运行** — `fvm dart analyze && fvm dart test test/bytecode/format_test.dart`
 
 ---
@@ -110,7 +110,7 @@
 
 **TDD 步骤：**
 
-1. **设计测试场景** — 验证完整管线：Dart 源码 → Kernel (.dill) → DarticCompiler 编译 → DarticSerializer 序列化为 .darticb bytes → DarticDeserializer 反序列化 → DarticInterpreter 执行 → 结果正确
+1. **设计测试场景** — 验证完整管线：Dart 源码 → Kernel (.dill) → DarticCompiler 编译 → DarticSerializer 序列化为 .darb bytes → DarticDeserializer 反序列化 → DarticInterpreter 执行 → 结果正确
 2. **写测试** — 验证：
    - `int add(int a, int b) => a + b; int main() => add(1, 2);` → roundtrip 后执行结果仍为 3
    - 常量池内容在 roundtrip 后完全一致
@@ -132,7 +132,7 @@ feat: add module format, exception tables, StackKind, and IC initialization
 
 ## 核心发现
 
-- **Magic 值选定 0xDAB71B00** — 设计文档中的 0xDART1B00 包含非十六进制字符，实际采用 0xDAB71B00 (DAr7ic Binary 00)
+- **Magic 值选定 0x44415242** — ASCII "DARB"，hexdump 时可直接识别文件格式
 - **ExceptionHandler 已前置定义在 module.dart** — 8 字段结构在 Batch 1.2 定义时即包含，不需要创建单独的 exception_handler.dart 文件
 - **StackKind 三分类** — 从 `{value, ref}` 细化为 `{intVal, doubleVal, ref}`，`isValue` getter 统一判断值栈归属，使 double-view 和 int-view 的选择有了编译期依据
 - **IC 表仅序列化 methodNameIndex** — cachedClassId/cachedMethodOffset 是运行时缓存状态，反序列化时重置为 -1/0 (uncached)
@@ -141,7 +141,7 @@ feat: add module format, exception tables, StackKind, and IC initialization
 
 ## Batch 完成检查
 
-- [x] 1.5.1 `.darticb` 二进制模块格式
+- [x] 1.5.1 `.darb` 二进制模块格式
 - [x] 1.5.2 模块序列化/反序列化
 - [x] 1.5.3 异常处理表结构
 - [x] 1.5.4 StackKind 分类

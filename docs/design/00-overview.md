@@ -53,7 +53,7 @@
 | Ch4 → Ch3 | Bridge/DarticProxy 通过运行时 API 操作解释器对象 |
 | Ch6 → Ch2 | 泛型类型信息存储在栈帧的 ITA/FTA 槽位中 |
 | Ch6 → Ch3 | 泛型子类型检查由执行引擎中 INSTANCEOF/CAST 指令驱动 |
-| Ch6 → Ch5 | 编译器从 Kernel 提取类型信息，生成 TypeTemplate 写入 .darticb |
+| Ch6 → Ch5 | 编译器从 Kernel 提取类型信息，生成 TypeTemplate 写入 .darb |
 | Ch7 → Ch3 | 异步帧快照和恢复扩展分发循环 |
 | Ch8 → Ch3 | 沙箱机制复用执行引擎的 fuel 和调用深度限制 |
 
@@ -112,7 +112,7 @@
 ```
                     本机（开发/CI）                     设备端
                   ┌──────────────────┐              ┌─────────────────────┐
-Dart 源码 ──CFE──► .dill (Kernel AST) ──dartic 编译器──► 字节码 (.darticb)     │
+Dart 源码 ──CFE──► .dill (Kernel AST) ──dartic 编译器──► 字节码 (.darb)     │
                   └──────────────────┘    │         │                     │
                                           │         │  dartic 运行时        │
                                           │         │  ┌───────────────┐  │

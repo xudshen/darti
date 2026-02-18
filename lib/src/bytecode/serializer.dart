@@ -5,7 +5,7 @@ import 'constant_pool.dart';
 import 'format.dart';
 import 'module.dart';
 
-/// Serializes a [DarticModule] to the `.darticb` binary format.
+/// Serializes a [DarticModule] to the `.darb` binary format.
 ///
 /// Binary layout:
 /// - Header (12 bytes): magic (UInt32) + version (UInt32) + CRC32 checksum (UInt32)
@@ -32,8 +32,8 @@ class DarticSerializer {
 
     // Build final output: header + payload.
     final header = _ByteWriter();
-    _writeUint32(header, DarticBFormat.magic);
-    _writeUint32(header, DarticBFormat.version);
+    _writeUint32(header, DarbFormat.magic);
+    _writeUint32(header, DarbFormat.version);
     _writeUint32(header, checksum);
 
     final headerBytes = header.toBytes();

@@ -18,7 +18,7 @@
 | 1.2 | Ch2 内存模型 | 三栈模型、StackKind、DarticObject、DarticClassInfo、DarticFuncProto、DarticFrame |
 | 1.3 | Ch3 执行引擎 | 分发循环、调用约定、IC 分发、异常分发 |
 | 1.4 | Ch5 编译器 | 编译管线、寄存器分配、表达式/语句编译、Kernel 加载 |
-| 1.5 | Ch1 + Ch2 + Ch3 + Ch5 | .darticb 格式、异常处理表、StackKind 分类、IC 表初始化 |
+| 1.5 | Ch1 + Ch2 + Ch3 + Ch5 | .darb 格式、异常处理表、StackKind 分类、IC 表初始化 |
 
 ## Batch 索引
 

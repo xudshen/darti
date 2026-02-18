@@ -167,7 +167,7 @@ Phase 6  异步与高级特性     ← co19: LibTest/async + Ch7 Async + Languag
 
 审查发现 Phase 1 遗漏了设计文档中明确要求的关键组件，补充如下：
 
-- [ ] 1.5.1 `.darticb` 二进制模块格式（header + magic + 版本 + 校验和） → `lib/src/bytecode/format.dart`
+- [ ] 1.5.1 `.darb` 二进制模块格式（header + magic + 版本 + 校验和） → `lib/src/bytecode/format.dart`
 - [ ] 1.5.2 模块序列化/反序列化管线 → `lib/src/bytecode/serializer.dart`
 - [ ] 1.5.3 异常处理表结构（try 范围 → handler PC 映射） → 扩展 `module.dart` + `interpreter.dart`
 - [ ] 1.5.4 StackKind 分类（编译器为每个变量/临时值标注 intVal/doubleVal/ref，保证双视图不变式） → 扩展 `compiler.dart`
@@ -177,7 +177,7 @@ Phase 6  异步与高级特性     ← co19: LibTest/async + Ch7 Async + Languag
 **commit:** `feat: add module format, exception tables, StackKind, and IC initialization`
 
 > **核心发现：**
-> _(执行时填写：.darticb 格式的版本兼容策略、异常处理表对 finally 的特殊处理、StackKind 推断的 edge case 等)_
+> _(执行时填写：.darb 格式的版本兼容策略、异常处理表对 finally 的特殊处理、StackKind 推断的 edge case 等)_
 
 ### Phase 1 里程碑验证
 
