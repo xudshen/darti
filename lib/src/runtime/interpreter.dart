@@ -520,6 +520,89 @@ class DarticInterpreter {
           final value = rs.read(rBase + b);
           rs.write(rBase + a, caster(value));
 
+        // ── Exception Handling (0xA4-0xA5) ──
+
+        case Op.throw_: // THROW A — throw refStack[A]
+          final a = (instr >> 8) & 0xFF;
+          final exception = rs.read(rBase + a);
+          final stackTrace = StackTrace.current;
+
+          // Search for matching handler in the current function.
+          final funcProto = module.functions[callStack.funcId];
+          final handlerResult = _findHandler(funcProto, pc - 1);
+          if (handlerResult != null) {
+            // Unwind stacks to handler's saved depths.
+            rs.clearRange(rBase + handlerResult.refStackDP, rs.sp);
+            vs.sp = vBase + handlerResult.valStackDP;
+            rs.sp = rBase + handlerResult.refStackDP;
+
+            // Bind exception variable.
+            rs.write(rBase + handlerResult.exceptionReg, exception);
+            if (handlerResult.stackTraceReg >= 0) {
+              rs.write(rBase + handlerResult.stackTraceReg, stackTrace);
+            }
+
+            // Jump to handler.
+            pc = handlerResult.handlerPC;
+          } else {
+            // No handler — propagate through call stack.
+            // For now, simply rethrow as a Dart exception.
+            // The Dart VM will unwind the call stack.
+            throw exception!;
+          }
+
+        case Op.rethrow_: // RETHROW A, B — rethrow refStack[A] with stackTrace refStack[B]
+          final a = (instr >> 8) & 0xFF;
+          final exception = rs.read(rBase + a);
+          // B operand is the stackTrace register — preserved from original throw.
+          // For Phase 2 we simply rethrow; full stackTrace handling in later phases.
+
+          final funcProto = module.functions[callStack.funcId];
+          final handlerResult = _findHandler(funcProto, pc - 1);
+          if (handlerResult != null) {
+            rs.clearRange(rBase + handlerResult.refStackDP, rs.sp);
+            vs.sp = vBase + handlerResult.valStackDP;
+            rs.sp = rBase + handlerResult.refStackDP;
+
+            rs.write(rBase + handlerResult.exceptionReg, exception);
+            if (handlerResult.stackTraceReg >= 0) {
+              final b = (instr >> 16) & 0xFF;
+              rs.write(
+                  rBase + handlerResult.stackTraceReg, rs.read(rBase + b));
+            }
+
+            pc = handlerResult.handlerPC;
+          } else {
+            throw exception!;
+          }
+
+        case Op.assert_: // ASSERT A, Bx — if valueStack[A] == 0 → throw AssertionError
+          final a = (instr >> 8) & 0xFF;
+          final bx = (instr >> 16) & 0xFFFF;
+          if (vs.readInt(vBase + a) == 0) {
+            final message =
+                bx != 0xFFFF ? module.constantPool.getRef(bx) : null;
+            final exception = AssertionError(message?.toString());
+            final stackTrace = StackTrace.current;
+
+            final funcProto = module.functions[callStack.funcId];
+            final handler = _findHandler(funcProto, pc - 1);
+            if (handler != null) {
+              rs.clearRange(rBase + handler.refStackDP, rs.sp);
+              vs.sp = vBase + handler.valStackDP;
+              rs.sp = rBase + handler.refStackDP;
+
+              rs.write(rBase + handler.exceptionReg, exception);
+              if (handler.stackTraceReg >= 0) {
+                rs.write(rBase + handler.stackTraceReg, stackTrace);
+              }
+
+              pc = handler.handlerPC;
+            } else {
+              throw exception;
+            }
+          }
+
         // ── Null Safety (0xA7) ──
 
         case Op.nullCheck: // NULL_CHECK A — if refStack[A] == null → throw
@@ -547,5 +630,20 @@ class DarticInterpreter {
       }
     }
     // Fuel exhausted — Phase 1: silently return.
+  }
+
+  /// Searches [funcProto]'s exception table for a handler matching [pc].
+  ///
+  /// Returns the first matching [ExceptionHandler] where
+  /// `startPC <= pc < endPC`, or null if no handler matches.
+  /// Phase 2: only supports catch-all (catchType == -1).
+  ExceptionHandler? _findHandler(DarticFuncProto funcProto, int pc) {
+    for (final handler in funcProto.exceptionTable) {
+      if (pc >= handler.startPC && pc < handler.endPC) {
+        // Phase 2: only catch-all handlers.
+        if (handler.catchType == -1) return handler;
+      }
+    }
+    return null;
   }
 }

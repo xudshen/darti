@@ -72,6 +72,30 @@ class DarticCompiler {
   final List<({int pc, int srcReg, int argIdx, ResultLoc loc})>
       _pendingArgMoves = [];
 
+  /// Maps LabeledStatement → list of JUMP placeholder PCs that need to be
+  /// backpatched to the label's end when the LabeledStatement finishes.
+  final Map<ir.LabeledStatement, List<int>> _labelBreakJumps = {};
+
+  /// Maps loop/switch statements to their continue target PC
+  /// (the update-step PC for for-loops, the condition PC for while-loops).
+  final Map<ir.Statement, int> _continueTargets = {};
+
+  /// Maps loop/switch statements to their break jump lists.
+  /// BreakStatement that targets a loop/switch (not a LabeledStatement)
+  /// records its JUMP placeholder here.
+  final Map<ir.Statement, List<int>> _breakTargets = {};
+
+  /// Maps SwitchCase → PC of the case body start (for ContinueSwitchStatement).
+  final Map<ir.SwitchCase, int> _switchCasePCs = {};
+
+  /// Exception handler table being built for the current function.
+  final List<ExceptionHandler> _exceptionHandlers = [];
+
+  /// Maps catch Rethrow → the exception/stackTrace register pair
+  /// for the innermost catch clause.
+  int _catchExceptionReg = -1;
+  int _catchStackTraceReg = -1;
+
   /// Compiles the component and returns a [DarticModule].
   ///
   /// Two-pass strategy:
@@ -164,6 +188,13 @@ class DarticCompiler {
     _refAlloc = RegisterAllocator();
     _isEntryFunction = funcId == _entryFuncId;
     _pendingArgMoves.clear();
+    _labelBreakJumps.clear();
+    _continueTargets.clear();
+    _breakTargets.clear();
+    _switchCasePCs.clear();
+    _exceptionHandlers.clear();
+    _catchExceptionReg = -1;
+    _catchStackTraceReg = -1;
 
     // Create the function-level scope.
     _scope = Scope(valueAlloc: _valueAlloc, refAlloc: _refAlloc);
@@ -203,6 +234,7 @@ class DarticCompiler {
       valueRegCount: valRegCount,
       refRegCount: refRegCount,
       paramCount: fn.positionalParameters.length,
+      exceptionTable: List.of(_exceptionHandlers),
       // TODO(Phase 2+): Handle namedParameters.
     );
   }
@@ -369,6 +401,26 @@ class DarticCompiler {
       // it may alias a variable binding. Scope-level release handles cleanup.
     } else if (stmt is ir.VariableDeclaration) {
       _compileVariableDeclaration(stmt);
+    } else if (stmt is ir.IfStatement) {
+      _compileIfStatement(stmt);
+    } else if (stmt is ir.WhileStatement) {
+      _compileWhileStatement(stmt);
+    } else if (stmt is ir.ForStatement) {
+      _compileForStatement(stmt);
+    } else if (stmt is ir.DoStatement) {
+      _compileDoStatement(stmt);
+    } else if (stmt is ir.SwitchStatement) {
+      _compileSwitchStatement(stmt);
+    } else if (stmt is ir.LabeledStatement) {
+      _compileLabeledStatement(stmt);
+    } else if (stmt is ir.BreakStatement) {
+      _compileBreakStatement(stmt);
+    } else if (stmt is ir.TryCatch) {
+      _compileTryCatch(stmt);
+    } else if (stmt is ir.TryFinally) {
+      _compileTryFinally(stmt);
+    } else if (stmt is ir.AssertStatement) {
+      _compileAssertStatement(stmt);
     } else if (stmt is ir.EmptyStatement) {
       // No-op.
     } else {
@@ -394,6 +446,449 @@ class DarticCompiler {
     // Release block-local registers and restore outer scope.
     _scope.release();
     _scope = outerScope;
+  }
+
+  // ── Control flow: if/else ──
+
+  void _compileIfStatement(ir.IfStatement stmt) {
+    // 1. Compile the condition expression → result on value stack.
+    final (condReg, _) = _compileExpression(stmt.condition);
+
+    // 2. JUMP_IF_FALSE condReg → else/end (placeholder).
+    final jumpToElse = _emitter.emitPlaceholder();
+
+    // 3. Compile then branch.
+    _compileStatement(stmt.then);
+
+    if (stmt.otherwise != null) {
+      // 4a. JUMP → end (skip else branch, placeholder).
+      final jumpToEnd = _emitter.emitPlaceholder();
+
+      // 5. Backpatch: JUMP_IF_FALSE → else start.
+      final elsePC = _emitter.currentPC;
+      _emitter.patchJump(
+        jumpToElse,
+        encodeAsBx(Op.jumpIfFalse, condReg, elsePC - jumpToElse - 1),
+      );
+
+      // 6. Compile else branch.
+      _compileStatement(stmt.otherwise!);
+
+      // 7. Backpatch: JUMP → end.
+      final endPC = _emitter.currentPC;
+      _emitter.patchJump(
+        jumpToEnd,
+        encodeAsBx(Op.jump, 0, endPC - jumpToEnd - 1),
+      );
+    } else {
+      // 4b. No else: backpatch JUMP_IF_FALSE → end.
+      final endPC = _emitter.currentPC;
+      _emitter.patchJump(
+        jumpToElse,
+        encodeAsBx(Op.jumpIfFalse, condReg, endPC - jumpToElse - 1),
+      );
+    }
+  }
+
+  // ── Control flow: loops ──
+
+  void _compileWhileStatement(ir.WhileStatement stmt) {
+    // Record loop start for backward jump.
+    final loopStartPC = _emitter.currentPC;
+
+    // 1. Compile condition.
+    final (condReg, _) = _compileExpression(stmt.condition);
+
+    // 2. JUMP_IF_FALSE → exit (placeholder).
+    final jumpToExit = _emitter.emitPlaceholder();
+
+    // 3. Compile body.
+    _compileStatement(stmt.body);
+
+    // 4. JUMP backward to loop start.
+    final jumpPC = _emitter.currentPC;
+    _emitter.emit(encodeAsBx(Op.jump, 0, loopStartPC - jumpPC - 1));
+
+    // 5. Backpatch exit.
+    final exitPC = _emitter.currentPC;
+    _emitter.patchJump(
+      jumpToExit,
+      encodeAsBx(Op.jumpIfFalse, condReg, exitPC - jumpToExit - 1),
+    );
+  }
+
+  void _compileForStatement(ir.ForStatement stmt) {
+    // Enter scope for loop variables.
+    final outerScope = _scope;
+    _scope = Scope(
+      valueAlloc: _valueAlloc,
+      refAlloc: _refAlloc,
+      parent: outerScope,
+    );
+
+    // 1. Compile variable initializers.
+    for (final v in stmt.variables) {
+      _compileVariableDeclaration(v);
+    }
+
+    // 2. Record loop start (condition check point).
+    final loopStartPC = _emitter.currentPC;
+
+    // 3. Compile condition (if present; null = infinite loop).
+    int? condReg;
+    int? jumpToExit;
+    if (stmt.condition != null) {
+      final (reg, _) = _compileExpression(stmt.condition!);
+      condReg = reg;
+      jumpToExit = _emitter.emitPlaceholder();
+    }
+
+    // 4. Compile body.
+    _compileStatement(stmt.body);
+
+    // 5. Compile update expressions.
+    for (final update in stmt.updates) {
+      _compileExpression(update);
+    }
+
+    // 6. JUMP backward to loop start.
+    final jumpPC = _emitter.currentPC;
+    _emitter.emit(encodeAsBx(Op.jump, 0, loopStartPC - jumpPC - 1));
+
+    // 7. Backpatch exit (if condition exists).
+    if (jumpToExit != null) {
+      final exitPC = _emitter.currentPC;
+      _emitter.patchJump(
+        jumpToExit,
+        encodeAsBx(Op.jumpIfFalse, condReg!, exitPC - jumpToExit - 1),
+      );
+    }
+
+    // Exit scope.
+    _scope.release();
+    _scope = outerScope;
+  }
+
+  void _compileDoStatement(ir.DoStatement stmt) {
+    // 1. Record loop start.
+    final loopStartPC = _emitter.currentPC;
+
+    // 2. Compile body (executes at least once).
+    _compileStatement(stmt.body);
+
+    // 3. Compile condition.
+    final (condReg, _) = _compileExpression(stmt.condition);
+
+    // 4. JUMP_IF_TRUE backward to loop start.
+    final jumpPC = _emitter.currentPC;
+    _emitter.emit(encodeAsBx(Op.jumpIfTrue, condReg, loopStartPC - jumpPC - 1));
+  }
+
+  // ── Control flow: switch/case ──
+
+  void _compileSwitchStatement(ir.SwitchStatement stmt) {
+    // Phase 2 strategy: compile as sequential comparison chain (if-else chain).
+    //
+    // For each SwitchCase:
+    //   - Compare switch expression with each case expression
+    //   - If any matches → jump to body
+    //   - If none → fall through to next case
+    //   - Default case → always executes
+    //   - After body → JUMP to switch end
+
+    // 1. Compile switch expression.
+    final (switchReg, switchLoc) = _compileExpression(stmt.expression);
+    final isValueSwitch = switchLoc == ResultLoc.value;
+
+    // Collect end-of-body jumps for backpatching.
+    final endJumps = <int>[];
+
+    for (var i = 0; i < stmt.cases.length; i++) {
+      final switchCase = stmt.cases[i];
+
+      if (switchCase.isDefault) {
+        // Default case: always execute body.
+        _compileStatement(switchCase.body);
+        if (i < stmt.cases.length - 1) {
+          endJumps.add(_emitter.emitPlaceholder());
+        }
+        continue;
+      }
+
+      // For each case expression, compare and conditionally jump to body.
+      final resultReg = _allocValueReg();
+      final matchJumps = <int>[];
+
+      for (final caseExpr in switchCase.expressions) {
+        final (caseReg, _) = _compileExpression(caseExpr);
+        if (isValueSwitch) {
+          _emitter.emit(encodeABC(Op.eqInt, resultReg, switchReg, caseReg));
+        } else {
+          _emitter.emit(encodeABC(Op.eqRef, resultReg, switchReg, caseReg));
+        }
+        matchJumps.add(_emitter.emitPlaceholder()); // JUMP_IF_TRUE → body
+      }
+
+      // No match → jump to next case.
+      final nextCaseJump = _emitter.emitPlaceholder();
+
+      // Backpatch match jumps → body start.
+      final bodyPC = _emitter.currentPC;
+      for (final jumpPC in matchJumps) {
+        _emitter.patchJump(
+          jumpPC,
+          encodeAsBx(Op.jumpIfTrue, resultReg, bodyPC - jumpPC - 1),
+        );
+      }
+
+      // Compile case body.
+      _compileStatement(switchCase.body);
+
+      // JUMP to switch end (skip remaining cases).
+      if (i < stmt.cases.length - 1) {
+        endJumps.add(_emitter.emitPlaceholder());
+      }
+
+      // Backpatch next case jump.
+      final nextCasePC = _emitter.currentPC;
+      _emitter.patchJump(
+        nextCaseJump,
+        encodeAsBx(Op.jump, 0, nextCasePC - nextCaseJump - 1),
+      );
+    }
+
+    // Backpatch all end-of-body jumps.
+    final endPC = _emitter.currentPC;
+    for (final jumpPC in endJumps) {
+      _emitter.patchJump(
+        jumpPC,
+        encodeAsBx(Op.jump, 0, endPC - jumpPC - 1),
+      );
+    }
+  }
+
+  // ── Control flow: labeled statement & break ──
+
+  void _compileLabeledStatement(ir.LabeledStatement stmt) {
+    // Register the label for break target resolution.
+    _labelBreakJumps[stmt] = [];
+
+    // Compile the body.
+    _compileStatement(stmt.body);
+
+    // Backpatch all break jumps targeting this label.
+    final endPC = _emitter.currentPC;
+    for (final jumpPC in _labelBreakJumps[stmt]!) {
+      _emitter.patchJump(
+        jumpPC,
+        encodeAsBx(Op.jump, 0, endPC - jumpPC - 1),
+      );
+    }
+    _labelBreakJumps.remove(stmt);
+  }
+
+  void _compileBreakStatement(ir.BreakStatement stmt) {
+    // Kernel's BreakStatement targets a LabeledStatement.
+    final target = stmt.target;
+    final breakList = _labelBreakJumps[target];
+    if (breakList != null) {
+      breakList.add(_emitter.emitPlaceholder());
+    } else {
+      throw StateError(
+        'BreakStatement targets unknown LabeledStatement',
+      );
+    }
+  }
+
+  // ── Control flow: try/catch/finally ──
+
+  void _compileTryCatch(ir.TryCatch stmt) {
+    // Record the value/ref stack depths at try entry for stack unwinding.
+    final valStackDP = _valueAlloc.maxUsed;
+    final refStackDP = _refAlloc.maxUsed;
+
+    // 1. Record try body start PC.
+    final startPC = _emitter.currentPC;
+
+    // 2. Compile try body.
+    _compileStatement(stmt.body);
+
+    // 3. Record try body end PC and jump over all catch handlers.
+    final endPC = _emitter.currentPC;
+    final jumpOverCatches = _emitter.emitPlaceholder();
+
+    // 4. Compile each catch clause.
+    for (final catchClause in stmt.catches) {
+      // Allocate registers for exception and stackTrace variables.
+      final exceptionReg = _allocRefReg();
+      int stackTraceReg = -1;
+
+      // Declare exception variable in scope.
+      if (catchClause.exception != null) {
+        _scope.declareWithReg(catchClause.exception!, StackKind.ref, exceptionReg);
+      }
+
+      if (catchClause.stackTrace != null) {
+        stackTraceReg = _allocRefReg();
+        _scope.declareWithReg(
+            catchClause.stackTrace!, StackKind.ref, stackTraceReg);
+      }
+
+      // Record handler start PC.
+      final handlerPC = _emitter.currentPC;
+
+      // Set up rethrow context.
+      final savedExReg = _catchExceptionReg;
+      final savedStReg = _catchStackTraceReg;
+      _catchExceptionReg = exceptionReg;
+      _catchStackTraceReg = stackTraceReg;
+
+      // Compile catch body.
+      _compileStatement(catchClause.body);
+
+      // Restore rethrow context.
+      _catchExceptionReg = savedExReg;
+      _catchStackTraceReg = savedStReg;
+
+      // Jump to end of all catch handlers.
+      final jumpToEnd = _emitter.emitPlaceholder();
+
+      // Add exception handler entry.
+      _exceptionHandlers.add(ExceptionHandler(
+        startPC: startPC,
+        endPC: endPC,
+        handlerPC: handlerPC,
+        catchType: -1, // Phase 2: catch-all only
+        valStackDP: valStackDP,
+        refStackDP: refStackDP,
+        exceptionReg: exceptionReg,
+        stackTraceReg: stackTraceReg,
+      ));
+
+      // Backpatch jump-to-end.
+      final endOfHandler = _emitter.currentPC;
+      _emitter.patchJump(
+        jumpToEnd,
+        encodeAsBx(Op.jump, 0, endOfHandler - jumpToEnd - 1),
+      );
+    }
+
+    // 5. Backpatch jump over catches (from end of try body).
+    final afterCatches = _emitter.currentPC;
+    _emitter.patchJump(
+      jumpOverCatches,
+      encodeAsBx(Op.jump, 0, afterCatches - jumpOverCatches - 1),
+    );
+  }
+
+  void _compileTryFinally(ir.TryFinally stmt) {
+    final valStackDP = _valueAlloc.maxUsed;
+    final refStackDP = _refAlloc.maxUsed;
+
+    // Allocate registers for exception/stackTrace in the error path.
+    final exceptionReg = _allocRefReg();
+    final stackTraceReg = _allocRefReg();
+
+    // 1. Record try start PC.
+    final startPC = _emitter.currentPC;
+
+    // 2. Compile try body.
+    _compileStatement(stmt.body);
+
+    // 3. Record try end and compile finally on normal path.
+    final endPC = _emitter.currentPC;
+
+    // Normal path: compile finalizer body.
+    _compileStatement(stmt.finalizer);
+
+    // Jump over the exception-path finalizer.
+    final jumpOverExPath = _emitter.emitPlaceholder();
+
+    // 4. Exception path: handler entry.
+    final handlerPC = _emitter.currentPC;
+
+    // Compile finalizer again for exception path.
+    _compileStatement(stmt.finalizer);
+
+    // RETHROW to continue propagating the exception.
+    _emitter.emit(encodeABC(Op.rethrow_, exceptionReg, stackTraceReg, 0));
+
+    // 5. Add exception handler.
+    _exceptionHandlers.add(ExceptionHandler(
+      startPC: startPC,
+      endPC: endPC,
+      handlerPC: handlerPC,
+      catchType: -1, // finally = catch-all
+      valStackDP: valStackDP,
+      refStackDP: refStackDP,
+      exceptionReg: exceptionReg,
+      stackTraceReg: stackTraceReg,
+    ));
+
+    // 6. Backpatch jump over exception path.
+    final afterExPath = _emitter.currentPC;
+    _emitter.patchJump(
+      jumpOverExPath,
+      encodeAsBx(Op.jump, 0, afterExPath - jumpOverExPath - 1),
+    );
+  }
+
+  // ── Control flow: assert ──
+
+  void _compileAssertStatement(ir.AssertStatement stmt) {
+    // Compile the condition expression.
+    final (condReg, _) = _compileExpression(stmt.condition);
+
+    // Determine message constant pool index.
+    // 0xFFFF = sentinel for "no message".
+    int msgIdx = 0xFFFF;
+    if (stmt.message != null) {
+      // Compile the message expression. For Phase 2, we evaluate it eagerly
+      // and store the result in the constant pool if it's a string literal.
+      // For non-literal messages, we compile and box the result.
+      final msgExpr = stmt.message!;
+      if (msgExpr is ir.StringLiteral) {
+        msgIdx = _constantPool.addRef(msgExpr.value);
+      } else {
+        // Evaluate the message and add to constant pool via ref.
+        // For now, treat non-literal messages as "no message".
+        // Phase 3+ can handle lazy evaluation.
+        msgIdx = 0xFFFF;
+      }
+    }
+
+    // Emit ASSERT A, Bx — instruction checks condition and throws if false.
+    _emitter.emit(encodeABx(Op.assert_, condReg, msgIdx));
+  }
+
+  // ── Exception expressions: throw / rethrow ──
+
+  (int, ResultLoc) _compileThrow(ir.Throw expr) {
+    // 1. Compile the operand (the value being thrown).
+    var (reg, loc) = _compileExpression(expr.expression);
+
+    // 2. Ensure it's on the ref stack — exceptions are always objects.
+    if (loc == ResultLoc.value) {
+      final exprType = _inferExprType(expr.expression);
+      reg = _emitBoxToRef(reg, exprType);
+    }
+
+    // 3. Emit THROW A.
+    _emitter.emit(encodeABC(Op.throw_, reg, 0, 0));
+
+    // Throw has type Never — return a dummy ref register.
+    // The result is never used since control transfers to a handler.
+    return (reg, ResultLoc.ref);
+  }
+
+  (int, ResultLoc) _compileRethrow(ir.Rethrow expr) {
+    // Emit RETHROW A, B using the enclosing catch clause's registers.
+    assert(_catchExceptionReg >= 0, 'Rethrow outside of catch clause');
+    _emitter.emit(
+        encodeABC(Op.rethrow_, _catchExceptionReg, _catchStackTraceReg, 0));
+
+    // Rethrow has type Never — return a dummy ref register.
+    return (_catchExceptionReg, ResultLoc.ref);
   }
 
   void _compileReturnStatement(ir.ReturnStatement stmt) {
@@ -500,6 +995,8 @@ class DarticCompiler {
     }
     if (expr is ir.IsExpression) return _compileIsExpression(expr);
     if (expr is ir.AsExpression) return _compileAsExpression(expr);
+    if (expr is ir.Throw) return _compileThrow(expr);
+    if (expr is ir.Rethrow) return _compileRethrow(expr);
     throw UnsupportedError(
       'Unsupported expression: ${expr.runtimeType}',
     );

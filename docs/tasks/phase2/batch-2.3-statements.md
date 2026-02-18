@@ -173,18 +173,23 @@ feat: support control flow statements and exception handling
 
 ## 核心发现
 
-_(执行时填写：异常处理表实际生成方式、label 跳转的编译策略（Kernel LabeledStatement 结构）、finally 的控制流复杂度、Kernel 中 SwitchStatement/ForStatement 的具体字段结构、break/continue 在 Kernel 中的表示方式等)_
+- **Kernel LabeledStatement 统一表示 break/continue**：CFE 将所有 break 和 continue 编译为 `LabeledStatement` + `BreakStatement` 对。while-loop 的 continue 不需要单独的 continue 目标追踪——CFE 会将 continue 转换为 break 到一个包裹循环体的 LabeledStatement。这大大简化了编译器实现。
+- **异常处理表结构**：每个 `ExceptionHandler` 记录 `(startPC, endPC, handlerPC, catchType, valStackDP, refStackDP, exceptionReg, stackTraceReg)`。try body 的 PC 范围为 `[startPC, endPC)`，异常发生时搜索匹配处理器。Phase 2 仅支持 catch-all（`catchType=-1`）。
+- **finally 双路径编译**：try-finally 编译为两份 finalizer 代码——正常路径和异常路径。异常路径以 RETHROW 结尾继续传播异常。
+- **switch 编译为 if-else 链**：Phase 2 使用顺序比较链（EQ_INT/EQ_REF + JUMP_IF_TRUE），每个 case 表达式逐一比较。CFE 将 switch 包裹在 LabeledStatement 中以支持 break。
+- **ASSERT 使用 ABx 格式**：条件寄存器在 A，消息常量池索引在 Bx（0xFFFF 表示无消息）。ASSERT 失败时复用 THROW 的异常分发逻辑，因此 `try { assert(false); } catch (e) { ... }` 能正确工作。
+- **Entry function 寄存器偏移**：在 entry function 中直接使用临时表达式会占用低位寄存器，导致 return 值不在 v0。测试应使用 `int f() { ... } int main() => f();` 模式通过 RETURN_VAL/CALL_STATIC 传递返回值。
 
 ## Batch 完成检查
 
-- [ ] 2.3.1 if/else 语句
-- [ ] 2.3.2 for / while / do-while 循环
-- [ ] 2.3.3 switch/case 语句
-- [ ] 2.3.4 break / continue / label
-- [ ] 2.3.5 try / catch / finally + THROW / RETHROW
-- [ ] 2.3.6 assert 语句
-- [ ] `fvm dart analyze` 零警告
-- [ ] `fvm dart test` 全部通过
+- [x] 2.3.1 if/else 语句
+- [x] 2.3.2 for / while / do-while 循环
+- [x] 2.3.3 switch/case 语句
+- [x] 2.3.4 break / continue / label
+- [x] 2.3.5 try / catch / finally + THROW / RETHROW
+- [x] 2.3.6 assert 语句
+- [x] `fvm dart analyze` 零警告
+- [x] `fvm dart test` 全部通过（750 tests）
 - [ ] commit 已提交
 - [ ] overview.md 已更新
 - [ ] code review 已完成
