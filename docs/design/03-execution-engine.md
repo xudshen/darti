@@ -11,10 +11,10 @@
 | 输入 | Ch2 内存模型 | 使用三栈模型、DarticObject、DarticFrame 等核心数据结构 |
 | 输入 | Ch5 编译器 | 加载编译器产出的 `.darticb` 字节码模块，含字节码、常量池、符号表 |
 | 输入 | Ch1 ISA | 分发循环解码并执行 Ch1 定义的 32 位定宽指令 |
-| 输出 | Ch4 互调 | 暴露运行时 API（字段读写、方法调用、对象创建）供 Bridge/Proxy 回调解释器 |
+| 输出 | Ch4 互调 | 暴露运行时 API（`invokeClosure`、字段读写、方法调用、对象创建）供 Bridge/Proxy 回调解释器 |
+| 输出 | Ch6 泛型 | INSTANCEOF/CAST 指令调用 Ch6 的 `resolveType` 和 `isSubtypeOf` 完成参数化类型检查；栈帧中的 ITA/FTA 槽位为泛型系统提供类型参数传递通道 |
 | 扩展 | Ch7 异步 | 异步子系统复用分发循环的帧管理机制，扩展 DarticFrame 支持挂起/恢复 |
 | 扩展 | Ch8 沙箱 | 沙箱层在模块加载时执行字节码验证，复用运行时的 fuel 计数和调用深度限制 |
-| 依赖 | Ch6 泛型 | 栈帧中的 ITA/FTA 槽位为泛型系统提供类型参数传递通道 |
 
 ## 设计决策
 
@@ -28,54 +28,46 @@
 | Super 解析 | 编译期完全解析 | 运行时沿 superClassId 链查找：每次 super 调用多一次链遍历 | Kernel 的 interfaceTarget 已指向具体方法，编译器直接绑定 DarticFuncProto 索引 |
 | 动态分发 IC | 不使用 IC | 复用 CALL_VIRTUAL 的单态 IC：dynamic 调用点类型不稳定，IC 命中率低于 50% | dynamic 调用走 DarticClassInfo 方法表/字段表查找，频率远低于虚调用 |
 
+## 核心概念
+
+### DarticFuncProto（函数原型）
+
+DarticFuncProto 是编译器为每个函数生成的元数据对象，包含执行该函数所需的全部静态信息。多个帧执行同一函数时共享同一份 DarticFuncProto。
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| bytecode | Uint32List | 函数体的 32 位定宽指令序列（Ch1） |
+| valueRegCount | int | 值栈寄存器数量（编译器寄存器分配输出，Ch5） |
+| refRegCount | int | 引用栈寄存器数量 |
+| paramCount | int | 参数数量（含 receiver） |
+| exceptionTable | List\<ExceptionHandler\> | 异常处理器表（按 PC 范围排序，详见"异常分发"节） |
+| icTable | List\<ICEntry\> | 内联缓存表（每个 CALL_VIRTUAL 指令一个条目，详见"内联缓存分发"节；IC 条目结构定义详见 Ch1） |
+| upvalueDescriptors | List\<UpvalueDescriptor\> | 上值描述符列表（闭包构建用，Upvalue 结构详见 Ch2） |
+| asyncMarker | AsyncMarker | 函数的异步标记（sync / async / asyncStar / syncStar，详见 Ch7） |
+
+### 运行时公开 API
+
+执行引擎对外暴露以下 API，供 Ch4（互调）、Ch7（异步）、Ch8（沙箱）使用：
+
+| API | 签名 | 说明 | 主要消费者 |
+|-----|------|------|-----------|
+| loadModule | (Uint8List bytes) -> void | 加载并注册 .darticb 字节码模块（详见"模块加载"节） | 宿主应用 |
+| execute | (int entryFuncId) -> Future\<Object?\> | 创建 DarticFrame 入队 `_runQueue`，启动分发循环 | 宿主应用 |
+| invokeClosure | (DarticClosure, List\<Object?\> args) -> Object? | VM 回调解释器闭包的入口（详见"invokeClosure 机制"节） | Ch4 DarticCallbackProxy、BridgeMixin |
+| invokeMethod | (DarticObject, String name, List\<Object?\> args) -> Object? | 按名称调用解释器对象的方法（查方法表 + invokeClosure） | Ch4 DarticProxy.toString()、BridgeMixin.$_invoke |
+| getField / setField | (DarticObject, String name) -> Object? | 读写解释器对象的字段（查 DarticClassInfo.fields） | Ch4 BridgeMixin.$_get/$_set |
+
+**不变式**：`invokeClosure` 和 `invokeMethod` 是同步调用，在当前 VM 调用栈上嵌套执行。它们共享外层分发循环的 fuel 预算（详见"fuel 共享不变式"），不独立启动 `_driveInterpreter` 回合。
+
 ## 工作流程
 
-### 模块加载
-
-`loadModule` 将编译器产出的 `.darticb` 字节码模块注册到运行时，是执行前的必要步骤。
-
-**加载流程**：
-
-1. **字节码验证**（委托 Ch8 沙箱层）：操作码合法性、操作数范围、WIDE 规则、跳转目标有效性
-2. **DarticClassInfo 注册**：遍历模块中的类定义，为每个类创建 DarticClassInfo（构建方法表、字段布局、supertypeIds 传递闭包）并注册到全局类表（DarticClassInfo 结构定义详见 Ch2）
-3. **DarticFuncProto 注册**：将模块中的函数原型（含字节码、异常处理器表、IC 表、上值描述符）注册到全局 DarticFuncProto 表
-4. **常量池挂载**：将模块的四分区常量池（refs/ints/doubles/names）关联到运行时
-5. **全局变量注册**：为静态字段和顶层变量分配 DarticGlobalTable 槽位，初始值设为 `_uninitialized` 哨兵，初始化函数 ID 关联到对应槽位
-6. **IC 缓存重置**：若新模块引入的 classId 与已有类冲突（热重载场景），全局重置所有 IC 缓存（`cachedClassId = -1`）
-
-**常量池物化策略**：
-
-- 原始常量（int/double/string）：直接存入对应分区的 typed list，零额外处理
-- 复合常量（`InstanceConstant`、`ListConstant` 等）：编译器在常量池 refs 分区序列化为描述符，`LOAD_CONST` 首次加载时按描述符物化为宿主对象并原地替换（后续加载直接取缓存）
-
-**不变式**：`loadModule` 完成后，模块中所有 DarticFuncProto 通过索引可达，所有 DarticClassInfo 通过 classId 可达，但全局变量和复合常量仍处于惰性未初始化状态。
-
-### 全局变量惰性初始化
-
-DarticGlobalTable 存储静态字段和顶层变量。每个槽位初始为 `_uninitialized` 哨兵，附带一个初始化函数 ID（由编译器从 Kernel `Field.initializer` 生成）。
-
-**惰性初始化流程**（`LOAD_GLOBAL` 首次访问时触发）：
-
-1. 读取 `slots[index]`
-2. 若值为 `_initializing` 哨兵 → 抛出循环依赖错误
-3. 若值为 `_uninitialized` 哨兵：
-   a. 标记为 `_initializing`（防循环）
-   b. 执行初始化函数（`initializerFuncIds[index]`）
-   c. 存储结果，返回
-   d. 若初始化失败，重置为 `_uninitialized`
-4. 否则直接返回已缓存的值
-
-**Late 变量**：Late 局部变量使用相同的哨兵值机制。编译器为 `late` 变量的读取插入检查——值为哨兵时抛出 `LateInitializationError`。有初始化器的 `late` 变量（`late int x = compute()`）首次读取时执行初始化器并缓存结果。
-
 ### 分发循环
-
-运行时公开 API 包括：`loadModule`（详见"模块加载"节）、`execute`（执行模块入口函数）、字段读写与方法调用（供 Bridge/Proxy 使用，详见 Ch4）。
 
 `_runQueue` 是 `Queue<DarticFrame>` 类型的就绪队列，存储当前可执行的帧（DarticFrame 结构详见 Ch2，三栈结构定义详见 Ch2）。帧的进出规则：
 
 - **入队**：`execute()` 启动模块时入队；async 帧 Future 完成后通过 `scheduleMicrotask` 重新入队
-- **保留**：同步 CALL/RETURN 不操作 `_runQueue`（嵌套帧通过 CallStack 管理）；fuel 耗尽时帧保留在队列中（浅保存）
-- **出队**：AWAIT 挂起时移出（深保存，快照栈数据）；ASYNC_RETURN / HALT 完成时移出
+- **保留**：同步 CALL/RETURN 不操作 `_runQueue`（嵌套帧通过 CallStack 管理）；fuel 耗尽时帧保留在队列中（仅保存 pc 等少量状态，Ch7 称之为"浅保存"）
+- **出队**：AWAIT 挂起时移出（快照栈数据到帧对象，Ch7 称之为"深保存"）；ASYNC_RETURN / HALT 完成时移出
 
 分发循环采用外/内双层循环结构，fuel 计数控制单回合执行量：
 
@@ -94,10 +86,10 @@ DarticGlobalTable 存储静态字段和顶层变量。每个槽位初始为 `_un
 │  │  │  解码: op = instr & 0xFF                              │ │ │
 │  │  │  执行: switch(op)                                     │ │ │
 │  │  │    ├─ 算术/逻辑指令 → 值栈操作，继续内循环            │ │ │
-│  │  │    ├─ CALL → 保存 PC，push 新帧，break 内循环         │ │ │
-│  │  │    ├─ RETURN → pop 帧（或遇哨兵帧退出drive），break  │ │ │
+│  │  │    ├─ CALL 族 → 压帧（详见"调用约定"节），break       │ │ │
+│  │  │    ├─ RETURN 族 → 弹帧/哨兵帧退出，break             │ │ │
 │  │  │    ├─ THROW → 异常分发（查handler/栈展开），break     │ │ │
-│  │  │    ├─ AWAIT → 保存帧，移出队列，break 内循环(详见Ch7) │ │ │
+│  │  │    ├─ AWAIT → 保存帧，移出队列，break (详见 Ch7)      │ │ │
 │  │  │    ├─ ASYNC_RETURN → 完成Completer，移出队列(详见Ch7) │ │ │
 │  │  │    └─ HALT → pop 帧，break 内循环                     │ │ │
 │  │  │                                                       │ │ │
@@ -111,15 +103,73 @@ DarticGlobalTable 存储静态字段和顶层变量。每个槽位初始为 `_un
 └────────────────────────────────────────────────────────────────┘
 ```
 
-**帧切换**：`CALL` 保存当前 PC 后 `break` 内循环，外层循环从 `_runQueue.first` 取新帧继续。`RETURN` 弹出当前帧，恢复调用者的栈指针和返回值寄存器后 `break` 内循环。若 `RETURN` 检测到 CallStack 栈顶为 HOST_BOUNDARY 哨兵帧（详见 Ch2），则不恢复调用者——而是退出 `drive()`，将控制权和返回值交还给 `invokeClosure` 的调用方（详见 Ch4）。
-
-**返回值传递**：`resultReg` 记录调用者期望接收返回值的寄存器编号。返回值写入值栈还是引用栈由返回指令类型决定——`RETURN_VAL` 写调用者值栈的 `resultReg` 位置，`RETURN_REF` 写调用者引用栈的 `resultReg` 位置。两条指令共用同一个 `resultReg` 字段，因为同一次调用只会执行一条返回指令。
+**帧切换**：`CALL` 族指令保存当前 PC 后 `break` 内循环，外层循环从 `_runQueue.first` 取新帧继续。`RETURN` 族指令弹出当前帧，恢复调用者的栈指针和返回值寄存器后 `break` 内循环。若 `RETURN` 检测到 CallStack 栈顶为 HOST_BOUNDARY 哨兵帧（详见 Ch2），则不恢复调用者——而是退出 `_driveInterpreter()`，将控制权和返回值交还给 `invokeClosure` 的调用方（详见"invokeClosure 机制"节）。
 
 **fuel 计量范围**：fuel 只计量解释器字节码指令，不计量 `CALL_HOST` 调用的宿主函数执行时间。整条 `CALL_HOST`（含宿主函数执行）消耗 1 fuel。耗时较长的宿主操作（如 IO）可能导致某回合超过 10ms 目标，但宿主函数是受信任代码，此限制可接受。
 
-**fuel 共享不变式**：当 VM 通过 DarticCallbackProxy 回调解释器时（详见 Ch4），`invokeClosure` 内部调用 `drive()` 与外层分发循环**共享同一回合的 fuel 预算**，不分配独立预算。这保证了回调中的无限循环同样受 fuel 保护，不会饿死宿主事件循环。
+**fuel 共享不变式**：当 VM 通过 DarticCallbackProxy 回调解释器时（详见 Ch4），`invokeClosure` 内部调用 `_driveInterpreter()` 与外层分发循环**共享同一回合的 fuel 预算**，不分配独立预算。这保证了回调中的无限循环同样受 fuel 保护，不会饿死宿主事件循环。
 
-**优化要点**：(1) opcode 解码内联——`instr & 0xFF`、`(instr >> 8) & 0xFF` 等位运算在 switch case 内直接展开，Dart AOT 编译为单条机器指令；(2) switch 密度——所有 256 个 case 值填满，确保 AOT 生成跳转表而非二分查找；(3) 内循环零分配——值栈操作全部是 typed list 索引赋值，零 GC 压力；(4) 帧切换最小化——通过 break innerLoop + 外层重取帧实现，无需额外函数调用。
+**优化要点**：(1) opcode 解码内联——`instr & 0xFF`、`(instr >> 8) & 0xFF` 等位运算在 switch case 内直接展开，Dart AOT 编译为单条机器指令；(2) switch 密度——所有 256 个 case 值填满（未使用的 opcode 映射到 ILLEGAL 错误处理，详见 Ch1），确保 AOT 生成跳转表而非二分查找；(3) 内循环零分配——值栈操作全部是 typed list 索引赋值，零 GC 压力；(4) 帧切换最小化——通过 break innerLoop + 外层重取帧实现，无需额外函数调用。
+
+### 调用约定
+
+所有 CALL 族指令（`CALL`、`CALL_STATIC`、`CALL_VIRTUAL`、`CALL_SUPER`、`CALL_HOST`）共享统一的帧管理协议。以 `CALL_STATIC A, Bx` 为例（A 为调用者接收返回值的寄存器，Bx 为目标 DarticFuncProto 索引）：
+
+**压帧流程**（CALL 指令执行时）：
+
+1. **溢出检查**：检查三栈剩余容量（`vs.sp + funcProto.valueRegCount > vs.capacity` 等），不足时抛出 `DarticError('Stack overflow')`（不依赖 Dart 的 `RangeError`——详见 Ch2 溢出保护）
+2. **调用深度检查**：检查 CallStack 帧数是否超过 `maxCallDepth`（512），超过时抛出 `DarticError('Maximum call depth exceeded')`
+3. **保存调用者状态**：在 CallStack 上压入新帧元数据——funcId、returnPC（当前 PC）、savedFP、savedVSP、savedRSP、resultReg（= A）（CallStack 帧布局详见 Ch2）
+4. **参数传递**：调用者在 CALL 之前已通过 `MOVE_REF` / `MOVE_VAL` 等指令将参数写入被调用者帧的寄存器区域（编译器分配的连续槽位）
+5. **推进栈指针**：`vs.sp += funcProto.valueRegCount`，`rs.sp += funcProto.refRegCount`，预留被调用者的寄存器空间
+6. **设置 PC**：`pc = 0`（被调用者字节码起始位置）
+7. **break 内循环**：外层循环重新取 `_runQueue.first`，以新帧状态继续执行
+
+**返回值传递**：`resultReg` 记录调用者期望接收返回值的寄存器编号。返回值写入值栈还是引用栈由返回指令类型决定——`RETURN_VAL` 写调用者值栈的 `resultReg` 位置，`RETURN_REF` 写调用者引用栈的 `resultReg` 位置，`RETURN_NULL` 写调用者引用栈的 `resultReg` 为 null。三条返回指令共用同一个 `resultReg` 字段，因为同一次调用只会执行一条返回指令。
+
+**各 CALL 变体的差异**：
+
+| 指令 | 目标确定方式 | 备注 |
+|------|-------------|------|
+| CALL A, B, C | `refStack[B]` 为 DarticClosure → 提取 funcProto + upvalues | 闭包调用，上值表存入新帧 |
+| CALL_STATIC A, Bx | 全局 DarticFuncProto 表 `[Bx]` | 静态函数/顶层函数直接索引 |
+| CALL_VIRTUAL A, B, C | IC 分发（详见"内联缓存分发"节） | C 为 IC 表索引 |
+| CALL_SUPER A, Bx | 全局 DarticFuncProto 表 `[Bx]`（编译期解析） | 详见"Super 方法解析"节 |
+| CALL_HOST A, Bx | `HostBindings.invoke(runtimeId, args)` | 宿主函数调用，不压 CallStack 帧（详见 Ch4） |
+
+**CALL_HOST 特殊性**：CALL_HOST 不在 CallStack 上压帧——它直接在当前 VM 调用栈上调用宿主函数（通过 HostBindings 的 typed wrapper 闭包），返回值直接写入 `refStack[A]`。宿主函数执行期间不消耗额外 fuel（整条 CALL_HOST 消耗 1 fuel）。
+
+### invokeClosure 机制
+
+`invokeClosure` 是 VM 回调解释器的统一入口，供 Ch4 的 DarticCallbackProxy 和 BridgeMixin 使用。当 VM 侧代码（如 `list.map(callback)`）触发解释器闭包时，调用链为：VM API -> DarticCallbackProxy.proxyN() -> `_runtime.invokeClosure(closure, args)`。
+
+**执行流程**：
+
+1. 在 CallStack 上压入 HOST_BOUNDARY 哨兵帧（`funcId = SENTINEL_HOST_BOUNDARY`，详见 Ch2），标记回调入口边界
+2. 在值栈/引用栈栈顶为回调分配新帧空间（按 `closure.funcProto` 的寄存器需求）
+3. 将 VM 传入的参数写入新帧的寄存器（经 `DarticProxyManager.unwrapForInterpreter()` 解包，详见 Ch4）
+4. 调用 `_driveInterpreter()` 执行回调字节码（共享当前 fuel 预算）
+5. 回调的 RETURN 指令检测到 HOST_BOUNDARY 哨兵帧 -> 不弹栈回退到调用者，而是退出 `_driveInterpreter()`
+6. 从值栈/引用栈读取返回值，恢复栈指针到回调入口前的状态
+7. 弹出 HOST_BOUNDARY 哨兵帧，返回结果给 VM 调用方
+
+**不变式**：invokeClosure 是同步的——它在当前 VM 调用栈上嵌套执行，阻塞直到回调完成或遇到异常。回调中的异常会穿过 HOST_BOUNDARY 哨兵帧，作为 Dart 异常抛给 VM 调用方（详见"异常分发"节边界情况）。
+
+### 内联缓存 (IC) 分发
+
+每个 `CALL_VIRTUAL` 指令关联一个 IC 槽位（存储在 DarticFuncProto.icTable 中，IC 条目结构定义详见 Ch1），记录最近一次成功匹配的 classId 和方法偏移。
+
+**IC 分发流程**：
+
+1. 从 `CALL_VIRTUAL` 指令的 C 操作数取 IC 表索引
+2. **单态命中**：`ic.cachedClassId == receiver.classId` -> 直接调用缓存的方法偏移（一次 int 比较，O(1)）
+3. **未命中**（慢路径）：查虚方法表（classId -> DarticClassInfo -> MethodTable 查找，DarticClassInfo 结构定义详见 Ch2）-> 更新 IC 缓存 -> 调用
+
+命中率：典型面向对象代码约 85-95%。命中 vs 未命中性能差约 10-50x。
+
+**IC 失效**：`loadModule` 加载新模块时，若出现 classId 冲突（同名类的新版本），需全局重置所有 IC 缓存（`cachedClassId = -1`）。`loadModule` 是低频操作，全局重置的开销可接受。正常运行中（无新模块加载）IC 无需失效——新 classId 的首次调用只是不命中，走慢路径后自动更新缓存。
+
+> 多态 IC 演进方向详见"已知局限与演进路径"。
 
 ### 异常分发
 
@@ -134,7 +184,7 @@ DarticGlobalTable 存储静态字段和顶层变量。每个槽位初始为 `_un
 | startPC | int | try 块起始 PC（含） |
 | endPC | int | try 块结束 PC（不含） |
 | handlerPC | int | catch/finally 处理器入口 PC |
-| catchType | int | 常量池中的类型索引（-1 = catch-all / finally） |
+| catchType | int | 常量池中的 TypeTemplate 索引（-1 = catch-all / finally） |
 | valStackDP | int | 进入 try 时的值栈深度（异常时回退目标） |
 | refStackDP | int | 进入 try 时的引用栈深度（异常时回退目标） |
 | exceptionReg | int | catch 子句中 exception 变量的引用栈寄存器 |
@@ -149,15 +199,19 @@ DarticGlobalTable 存储静态字段和顶层变量。每个槽位初始为 `_un
 **处理器匹配算法**（从当前帧开始，逐帧向外搜索）：
 
 ```
-for each frame in call stack (current → bottom):
+for each frame in call stack (current -> bottom):
   for each handler in frame.funcProto.exceptionTable:
     if handler.startPC <= currentPC < handler.endPC:
       if handler.catchType == -1:
-        → 匹配（catch-all / finally）
-      if exception is handler.catchType:
-        → 匹配
-  // 当前帧无匹配 → 弹出帧，继续搜索调用者帧
+        -> 匹配（catch-all / finally）
+      resolve catchType:
+        TypeTemplate -> resolveType(ITA, FTA) -> DarticType (详见 Ch6)
+      if isSubtypeOf(exceptionType, resolvedCatchType):  (详见 Ch6)
+        -> 匹配
+  // 当前帧无匹配 -> 弹出帧，继续搜索调用者帧
 ```
+
+**catch 类型匹配说明**：`handler.catchType` 索引常量池中的 TypeTemplate（而非直接的 classId），运行时需先通过 Ch6 的 `resolveType` 将其解析为具体 DarticType（处理泛型参数替换），再调用 `isSubtypeOf` 进行子类型判定。对于非泛型的简单类型（如 `on FormatException`），TypeTemplate 为 ConcreteTypeTemplate，resolveType 直接返回预驻留的 DarticType，开销极低。
 
 **栈展开（匹配成功后）**：
 
@@ -174,28 +228,12 @@ for each frame in call stack (current → bottom):
 
 | 情况 | 行为 |
 |------|------|
-| 同步调用链耗尽（无匹配 handler） | 异常传播到 `drive()` 顶层 try-catch，按"错误恢复"节的 DarticError 路径处理 |
-| HOST_BOUNDARY 哨兵帧 | 停止搜索，退出当前 `drive()` 调用，将异常作为 Dart 异常抛出给触发回调的 VM 代码（HOST_BOUNDARY 定义详见 Ch2） |
+| 同步调用链耗尽（无匹配 handler） | 异常传播到 `_driveInterpreter()` 顶层 try-catch，按"错误恢复"节的 DarticError 路径处理 |
+| HOST_BOUNDARY 哨兵帧 | 停止搜索，退出当前 `_driveInterpreter()` 调用，将异常作为 Dart 异常抛出给触发回调的 VM 代码（HOST_BOUNDARY 定义详见 Ch2） |
 | async 帧 | 未捕获的异常路由到 `completer.completeError(exception, stackTrace)`，帧从 `_runQueue` 移除（详见 Ch7） |
 | 嵌套 try | 处理器表按范围排序保证内层优先匹配；内层 catch 未匹配时继续搜索外层 |
 
 **不变式**：栈展开过程中引用栈的逐槽置 null 不可省略——省略会导致被跳过的临时对象无法被 GC 回收，造成内存泄漏。
-
-### 内联缓存 (IC) 分发
-
-每个 `CALL_VIRTUAL` 指令关联一个 IC 槽，存储最近一次成功匹配的 classId 和方法偏移。
-
-**IC 分发流程**：
-
-1. 从 `CALL_VIRTUAL` 指令的 C 操作数取 IC 槽索引
-2. **单态命中**：`ic.cachedClassId == receiver.classId` → 直接调用缓存的方法偏移（一次 int 比较，O(1)）
-3. **未命中**（慢路径）：查虚方法表（classId → DarticClassInfo → MethodTable 查找）→ 更新 IC 缓存 → 调用
-
-命中率：典型面向对象代码约 85-95%。命中 vs 未命中性能差约 10-50x。
-
-**IC 失效**：`loadModule` 加载新模块时，若出现 classId 冲突（同名类的新版本），需全局重置所有 IC 缓存（`cachedClassId = -1`）。`loadModule` 是低频操作，全局重置的开销可接受。正常运行中（无新模块加载）IC 无需失效——新 classId 的首次调用只是不命中，走慢路径后自动更新缓存。
-
-> 多态 IC 演进方向详见"已知局限与演进路径"。
 
 ### 类型检查（is / as）
 
@@ -203,9 +241,10 @@ for each frame in call stack (current → bottom):
 
 **解释器对象路径**（接收者为 DarticObject）：
 
-1. 取 `receiver.classId`，查找对应的 DarticClassInfo（DarticClassInfo 结构定义详见 Ch2）
-2. 检查目标类型的 classId 是否在 `DarticClassInfo.supertypeIds` 集合中（O(1) 哈希查找）
-3. 若目标类型包含泛型参数（如 `List<int>`），委托 Ch6 的子类型检查算法做参数化类型匹配
+1. 从常量池取目标类型的 TypeTemplate，调用 Ch6 的 `resolveType(ITA, FTA)` 解析为具体 DarticType（处理泛型参数替换，如将 `List<T>` 中的 T 替换为实际类型参数）
+2. 从接收者提取运行时类型（`receiver.runtimeType`，为已驻留的 DarticType）
+3. **简单类型快速路径**：若目标类型无泛型参数，检查目标类型的 classId 是否在 `DarticClassInfo.supertypeIds` 集合中（O(1) 哈希查找，DarticClassInfo 结构定义详见 Ch2）
+4. **参数化类型路径**：若目标类型包含泛型参数（如 `List<int>`），调用 Ch6 的 `isSubtypeOf(objType, targetType)` 做完整子类型判定（含 SuperTypeMap 查找和类型参数递归检查）
 
 **宿主对象路径**（接收者为宿主 VM 原生对象或 Bridge 实例）：
 
@@ -222,28 +261,69 @@ for each frame in call stack (current → bottom):
 **分发流程**：
 
 1. 检查接收者类型：
-   - DarticObject → 通过 `classId` 查找 DarticClassInfo，在 `fields` 或 `methods` 中按名称索引查找
-   - 宿主对象 → 委托给 HostClassWrapper 路由（详见 Ch4）
-2. 查找失败时 → 查找接收者类的 `noSuchMethod` 方法并调用，传入 `Invocation` 描述对象
+   - DarticObject -> 通过 `classId` 查找 DarticClassInfo，在 `fields` 或 `methods` 中按名称索引查找
+   - 宿主对象 -> 委托给 HostClassWrapper 路由（详见 Ch4）
+2. 查找失败时 -> 查找接收者类的 `noSuchMethod` 方法并调用，传入 `Invocation` 描述对象
 
 动态分发不使用 IC 缓存——`dynamic` 调用点类型不稳定，单态 IC 的命中率低，缓存维护开销大于收益。
 
 ### Super 方法解析
 
-`CALL_SUPER A, Bx` 的方法目标在编译期完全解析。Bx 直接索引 DarticFuncProto 表中的具体方法——编译器在编译 `SuperMethodInvocation` / `SuperPropertyGet` / `SuperPropertySet` 时，已通过 Kernel 的 `interfaceTarget` 确定目标方法并分配 DarticFuncProto 索引。运行时执行 `CALL_SUPER` 时无需遍历 `superClassId` 链查找，直接按 Bx 调用目标函数。
+`CALL_SUPER A, Bx` 的方法目标在编译期完全解析。Bx 直接索引全局 DarticFuncProto 表中的具体方法——编译器在编译 `SuperMethodInvocation` / `SuperPropertyGet` / `SuperPropertySet` 时，已通过 Kernel 的 `interfaceTarget` 确定目标方法并分配 DarticFuncProto 索引。运行时执行 `CALL_SUPER` 时无需遍历 `superClassId` 链查找，直接按 Bx 调用目标函数。
+
+**注意**：当 super 目标是宿主 VM 类的方法时（如 Bridge 类调用 `super.build(context)`），编译器生成 `CALL_HOST` 指向 BridgeGenerator 预生成的 super 转发器绑定（而非 `CALL_SUPER`），详见 Ch4。
+
+### 模块加载
+
+`loadModule` 将编译器产出的 `.darticb` 字节码模块注册到运行时，是执行前的必要步骤。
+
+**加载流程**：
+
+1. **字节码验证**（委托 Ch8 沙箱层）：操作码合法性、操作数范围、WIDE 规则、跳转目标有效性
+2. **DarticClassInfo 注册**：遍历模块中的类定义，为每个类创建 DarticClassInfo（构建方法表、字段布局、supertypeIds 传递闭包）并注册到全局类表（DarticClassInfo 结构定义详见 Ch2）
+3. **DarticFuncProto 注册**：将模块中的函数原型注册到全局 DarticFuncProto 表
+4. **常量池挂载**：将模块的四分区常量池（refs/ints/doubles/names，详见 Ch1）关联到运行时
+5. **HostBindings 符号解析**：将 .darticb 绑定名称表中的符号名通过 `HostBindings.lookupByName` 解析为运行时 ID（详见 Ch4）
+6. **全局变量注册**：为静态字段和顶层变量分配 DarticGlobalTable 槽位，初始值设为 `_uninitialized` 哨兵，初始化函数 ID 关联到对应槽位
+7. **IC 缓存重置**：若新模块引入的 classId 与已有类冲突（热重载场景），全局重置所有 IC 缓存（`cachedClassId = -1`）
+
+**常量池物化策略**：
+
+- 原始常量（int/double/string）：直接存入对应分区的 typed list，零额外处理
+- 复合常量（`InstanceConstant`、`ListConstant` 等）：编译器在常量池 refs 分区序列化为描述符，`LOAD_CONST` 首次加载时按描述符物化为宿主对象并原地替换（后续加载直接取缓存）
+
+**不变式**：`loadModule` 完成后，模块中所有 DarticFuncProto 通过索引可达，所有 DarticClassInfo 通过 classId 可达，但全局变量和复合常量仍处于惰性未初始化状态。
+
+### 全局变量惰性初始化
+
+DarticGlobalTable 存储静态字段和顶层变量。每个槽位初始为 `_uninitialized` 哨兵，附带一个初始化函数 ID（由编译器从 Kernel `Field.initializer` 生成）。
+
+**惰性初始化流程**（`LOAD_GLOBAL` 首次访问时触发）：
+
+1. 读取 `slots[index]`
+2. 若值为 `_initializing` 哨兵 -> 抛出循环依赖错误
+3. 若值为 `_uninitialized` 哨兵：
+   a. 标记为 `_initializing`（防循环）
+   b. 执行初始化函数（`initializerFuncIds[index]`）
+   c. 存储结果，返回
+   d. 若初始化失败，重置为 `_uninitialized`
+4. 否则直接返回已缓存的值
+
+**Late 变量**：Late 局部变量使用相同的哨兵值机制。编译器为 `late` 变量的读取插入检查——值为哨兵时抛出 `LateInitializationError`。有初始化器的 `late` 变量（`late int x = compute()`）首次读取时执行初始化器并缓存结果。
 
 ### GC 集成
 
 解释器不实现自己的 GC。所有对象（DarticObject、Bridge 实例、闭包）都是宿主 Dart VM 堆对象，由 VM GC 管理。关键的 GC 协作点：
 
-- **引用栈弹出置 null**：确保弹出的对象可被 GC 回收
+- **引用栈弹出置 null**：RETURN 弹帧后，将被调用者引用栈区域逐槽置 null，确保弹出的对象可被 GC 回收
 - **上值关闭**：`CLOSE_UPVALUE` 将值从栈复制到上值对象内部后，栈槽置 null（Upvalue 结构详见 Ch2）
 - **帧销毁**：帧从 `_runQueue` 移除后，帧对象及其引用可被 GC 回收（除非被挂起的 async 帧持有，详见 Ch7）
 - **异常处理栈清理**：栈展开回退到 `(valStackDP, refStackDP)` 时，引用栈中被跳过的槽位 `[refStackDP, currentRSP)` 必须逐一置 null，防止过期引用延长对象生命周期
+- **async 帧挂起**：快照引用栈数据到帧对象后，原栈位置全部置 null 释放引用（详见 Ch7）
 
 ### 错误恢复
 
-用户代码的 `try`-`catch` 由"异常分发"机制在分发循环内部处理。当异常穿透所有用户代码 handler 后，`drive()` 的顶层 try-catch 作为最终防线，区分两类错误并采取不同恢复策略：
+用户代码的 `try`-`catch` 由"异常分发"机制在分发循环内部处理。当异常穿透所有用户代码 handler 后，`_driveInterpreter()` 的顶层 try-catch 作为最终防线，区分两类错误并采取不同恢复策略：
 
 **DarticError**（预期错误：栈溢出、类型检查失败、未捕获的用户异常等）：
 1. 清理当前帧的栈空间（弹出值栈/引用栈至帧入口基址，弹出 CallStack 帧）
@@ -263,19 +343,19 @@ for each frame in call stack (current → bottom):
 | 约束项 | 值 | 来源 |
 |--------|-----|------|
 | fuel 预算 | 50,000 指令/回合 | ~200us `Timer.run` 调度开销 + ~10ms 目标回合时间（保持 UI 60fps 流畅）。注意：实测可能仅需 1-3ms（平均 ~30ns/指令），可根据 profiling 上调至 100,000-200,000 |
-| 最大调用深度 | 512 帧 | 满足正常递归深度（Dart 常规代码极少超过 100 层），同时防止栈溢出消耗过多内存。HOST_BOUNDARY 哨兵帧计入此限制，交替调用（解释器↔VM）每层消耗约 3-5 个 VM 帧，512 层约占 ~512KB VM 栈空间（默认 1MB） |
+| 最大调用深度 | 512 帧 | 满足正常递归深度（Dart 常规代码极少超过 100 层），同时防止栈溢出消耗过多内存。HOST_BOUNDARY 哨兵帧计入此限制，交替调用（解释器<->VM）每层消耗约 3-5 个 VM 帧，512 层约占 ~512KB VM 栈空间（默认 1MB） |
 | ExceptionHandler 条目大小 | 8 个 int | startPC + endPC + handlerPC + catchType + valStackDP + refStackDP + exceptionReg + stackTraceReg |
 | 异常处理器表大小 | 每函数无硬上限 | 按 (startPC, endPC) 排序保证内层优先匹配；实际嵌套深度通常 ≤ 5 |
+| invokeClosure 嵌套深度 | 受 maxCallDepth 统一限制 | HOST_BOUNDARY 哨兵帧占用 CallStack 槽位，计入 512 帧上限 |
 
 ## 已知局限与演进路径
 
-> **Phase 2**：运行时 Quickening。触发条件：profiling 显示编译器静态类型特化覆盖不足（当前编译器已根据 CFE 静态类型信息生成特化指令如 `ADD_INT`、`ADD_DBL`）。
-
-> **Phase 2**：多态 IC（2-4 条目）和超态回退（megamorphic 全局查找）。触发条件：profiling 显示 IC miss 路径时间占比 > 15%。Flutter Widget tree 的多态调用点（多种 Widget 子类）可能较早触发此需求。
-
-> **Phase 2**：同步 CALL 快速路径。当前所有 CALL 均通过 `break innerLoop` + 外层重取帧实现。可为同步调用提供就地切换帧状态的快速路径（直接更新 `code`/`pc`/`sp` 局部变量，`continue innerLoop`），仅 RETURN/AWAIT/fuel 耗尽时 break。触发条件：benchmark 显示函数调用密集代码的帧切换开销 > 3%。
-
-> **Phase 2**：fuel 预算自适应调整。首次运行时测量平均指令执行时间，动态计算 fuel 预算以稳定命中 10ms 目标回合时间。
+| 局限 | 影响 | 演进计划 |
+|------|------|---------|
+| 编译器静态类型特化覆盖不足 | 部分可特化的操作走通用慢路径 | Phase 2：运行时 Quickening。触发条件：profiling 显示编译器特化覆盖率不足（当前编译器已根据 CFE 静态类型信息生成特化指令如 `ADD_INT`、`ADD_DBL`） |
+| 单态 IC 对多态调用点效果差 | Flutter Widget tree 多子类场景 IC miss 率高 | Phase 2：多态 IC（2-4 条目）和超态回退（megamorphic 全局查找）。触发条件：profiling 显示 IC miss 路径时间占比 > 15% |
+| 同步 CALL 帧切换开销 | 所有 CALL 均通过 break + 外层重取帧 | Phase 2：同步 CALL 快速路径——就地切换帧状态（直接更新 `code`/`pc`/`sp` 局部变量，`continue innerLoop`），仅 RETURN/AWAIT/fuel 耗尽时 break。触发条件：benchmark 显示函数调用密集代码的帧切换开销 > 3% |
+| fuel 预算固定值 | 不同设备执行速度差异大 | Phase 2：fuel 预算自适应调整。首次运行时测量平均指令执行时间，动态计算 fuel 预算以稳定命中 10ms 目标回合时间 |
 
 ## 附录：参考实现
 
@@ -291,7 +371,7 @@ void _dispatchException(Object exception, StackTrace stackTrace) {
     for (final handler in funcProto.exceptionTable) {
       if (pc >= handler.startPC && pc < handler.endPC) {
         if (handler.catchType == -1 ||
-            _isInstanceOf(exception, handler.catchType)) {
+            _isSubtypeOf(exception, handler.catchType)) {
           // 栈展开：引用栈置 null
           for (var i = handler.refStackDP; i < _refStack.sp; i++) {
             _refStack.slots[i] = null;
@@ -375,6 +455,56 @@ Object? load(int index, DarticRuntime runtime) {
     }
   }
   return value;
+}
+```
+
+</details>
+
+<details>
+<summary>invokeClosure 实现</summary>
+
+```dart
+Object? invokeClosure(DarticClosure closure, List<Object?> args) {
+  final proto = closure.funcProto;
+
+  // 1. 溢出检查
+  _checkStackCapacity(proto);
+  _checkCallDepth();
+
+  // 2. 压入 HOST_BOUNDARY 哨兵帧
+  _callStack.push(
+    funcId: SENTINEL_HOST_BOUNDARY,
+    returnPC: 0,
+    savedFP: _callStack.fp,
+    savedVSP: _valueStack.sp,
+    savedRSP: _refStack.sp,
+    resultReg: 0,
+  );
+
+  // 3. 分配新帧空间并写入参数
+  final vBase = _valueStack.sp;
+  final rBase = _refStack.sp;
+  _valueStack.sp += proto.valueRegCount;
+  _refStack.sp += proto.refRegCount;
+
+  // 写入上值（若有）
+  _currentUpvalues = closure.upvalues;
+
+  // 写入参数到引用栈寄存器
+  for (int i = 0; i < args.length; i++) {
+    _refStack.slots[rBase + 2 + i] = args[i]; // rsp+0=ITA, rsp+1=FTA, rsp+2+=args
+  }
+
+  // 4. 执行
+  _driveInterpreter();
+
+  // 5. 读取返回值并恢复栈
+  final result = _refStack.slots[rBase]; // 返回值约定位置
+  _valueStack.sp = vBase;
+  _refStack.sp = rBase;
+  _callStack.pop(); // 弹出 HOST_BOUNDARY
+
+  return result;
 }
 ```
 

@@ -9,12 +9,11 @@
 | 方向 | 模块 | 接口 |
 |------|------|------|
 | 依赖 | Ch2 对象模型 | 使用 DarticObject、引用栈等核心数据结构 |
-| 依赖 | Ch3 执行引擎 | 使用分发循环的 `CALL_HOST` / `GET_FIELD_DYN` 指令和运行时 API |
-| 依赖 | Ch1 字节码 ISA | `CALL_HOST`、`GET_FIELD_DYN`、`SET_FIELD_DYN`、`NEW_INSTANCE` 指令编码 |
+| 依赖 | Ch3 执行引擎 | 使用分发循环暴露的运行时 API（字段读写、方法调用、对象创建），供 Bridge/Proxy 回调解释器 |
 | 被依赖 | Ch5 编译器 | 编译器生成 .darticb 绑定名称表，运行时加载时通过 HostBindings 做符号解析 |
 | 被依赖 | Ch6 泛型 | 跨边界泛型类型检查依赖 Bridge 的类型信息（详见 Ch6） |
 | 被依赖 | Ch7 异步 | async 帧的 `Completer` 桥接依赖异常传播契约（详见 Ch7） |
-| 契约 | Ch8 沙箱 | `CALL_HOST` 调用计入沙箱的调用深度限制 |
+| 契约 | Ch8 沙箱 | `CALL_HOST` 调用计入沙箱的调用深度限制；Bridge 注册表天然形成 API 边界（详见 Ch8） |
 
 ## 设计决策
 
@@ -32,36 +31,38 @@
 
 ## 核心概念
 
+本章各组件通过 `DarticRuntime` 与执行引擎交互。DarticRuntime 是 Ch3 分发循环对外暴露的运行时 API 门面，提供 `invokeMethod`（方法调用）、`invokeClosure`（闭包调用）、`getField` / `setField`（字段读写）等方法，供 Bridge、DarticProxy、DarticCallbackProxy 回调解释器。
+
 ### 组件关系
 
 ```
-解释器内部                      边界层                          宿主 VM
-┌───────────────┐         ┌──────────────────┐          ┌───────────────┐
-│ Interpreter   │         │  HostBindings    │  invoke   │               │
-│ Object        │ ──ref──►│  (符号→ID 注册表) │ ────────► │  VM 函数/方法  │
-│               │         ├──────────────────┤          │               │
-│               │  wrap   │  DarticProxyManager    │          │               │
-│               │ ──────► │  (Expando 双向缓存)│          │               │
-│               │         ├──────────────────┤          │               │
-│               │         │  DarticProxy    │ ────────► │  VM 消费侧    │
-│               │         │  (通用属性/方法转发)│          │  (无类型保证)  │
-│               │         ├──────────────────┤          │               │
-│               │         │  DarticCallbackProxy   │ ◄──call── │  VM 回调触发   │
-│               │         │  (闭包→Dart Function)│        │  (如 list.map) │
-│               │         ├──────────────────┤          │               │
-│               │         │  Bridge 实例      │ ◄──call── │  VM 类型系统   │
-│               │ ◄─委托── │  (extends 宿主类) │          │  (is 检查通过) │
-│               │         └──────────────────┘          └───────────────┘
-└───────────────┘                 │
-                           ┌──────┴───────┐
-                           │ BridgeGenerator│
-                           │ (编译期代码生成) │
-                           └──────────────┘
+解释器内部                      边界层                              宿主 VM
+┌───────────────┐         ┌─────────────────────────┐          ┌───────────────┐
+│ DarticObject  │         │  HostBindings           │  invoke   │               │
+│               │ ──ref──►│  (符号→ID 注册表)        │ ────────► │  VM 函数/方法  │
+│               │         ├─────────────────────────┤          │               │
+│               │  wrap   │  DarticProxyManager     │          │               │
+│               │ ──────► │  (Expando 双向缓存)      │          │               │
+│               │         ├─────────────────────────┤          │               │
+│               │         │  DarticProxy            │ ────────► │  VM 消费侧    │
+│               │         │  (通用属性/方法转发)      │          │  (无类型保证)  │
+│               │         ├─────────────────────────┤          │               │
+│               │         │  DarticCallbackProxy    │ ◄──call── │  VM 回调触发   │
+│               │         │  (闭包→Dart Function)   │          │  (如 list.map) │
+│               │         ├─────────────────────────┤          │               │
+│               │         │  Bridge 实例             │ ◄──call── │  VM 类型系统   │
+│               │ ◄─委托── │  (extends 宿主类)        │          │  (is 检查通过) │
+│               │         └─────────────────────────┘          └───────────────┘
+└───────────────┘                    │
+                              ┌──────┴───────┐
+                              │ BridgeGenerator│
+                              │ (编译期代码生成) │
+                              └──────────────┘
 ```
 
 ### HostBindings（宿主函数注册表）
 
-HostBindings 将宿主 VM 的函数和方法映射为符号名到整数 ID 的注册表。Bridge 预生成库在初始化时批量注册绑定，运行时通过整数 ID 进行 O(1) 调用分发。编译器将宿主方法调用编译为 `CALL_HOST A, Bx`，其中 Bx 指向 .darticb 绑定名称表条目（含符号名和 argCount），加载时通过符号解析映射为运行时 ID（详见 Ch5）。
+HostBindings 将宿主 VM 的函数和方法映射为符号名到整数 ID 的注册表。Bridge 预生成库在初始化时批量注册绑定，运行时通过整数 ID 进行 O(1) 调用分发。编译器将宿主方法调用编译为 `CALL_HOST A, Bx`（Ch1 ABx 编码格式），其中 Bx 指向 .darticb 绑定名称表条目（含符号名和 argCount，编译期生成详见 Ch5），加载时通过符号解析映射为运行时 ID（加载流程详见 Ch3 模块加载）。
 
 | 属性 | 类型 | 说明 |
 |------|------|------|
@@ -72,14 +73,14 @@ HostBindings 将宿主 VM 的函数和方法映射为符号名到整数 ID 的�
 
 ### HostClassWrapper（宿主类包装器）
 
-HostClassWrapper 为每个需要交互的宿主类提供属性名/方法名到具体访问的分发路由。预生成库为每个宿主类生成一个 HostClassWrapper 子类（如 `$List`、`$Map`），运行时维护 `classId -> HostClassWrapper` 映射表。`GET_FIELD_DYN` / `SET_FIELD_DYN` 指令通过此表路由属性访问。
+HostClassWrapper 为每个需要交互的宿主类提供属性名/方法名到具体访问的分发路由。预生成库为每个宿主类生成一个 HostClassWrapper 子类（如 `$List`、`$Map`），运行时维护 `Type -> HostClassWrapper` 映射表（按 VM 对象的 `runtimeType` 查找）。`GET_FIELD_DYN` / `SET_FIELD_DYN` 指令在接收者为宿主对象时通过此表路由属性访问（分发逻辑详见 Ch3 动态分发）。
 
 | 方法 | 签名 | 说明 |
 |------|------|------|
 | getProperty | (Object host, String name) -> Object? | 按名称读取宿主对象属性 |
 | invokeMethod | (Object host, String name, List\<Object?\> args) -> Object? | 按名称调用宿主对象方法 |
 
-HostClassWrapper 在转发回调参数时识别 DarticClosure，自动通过 DarticCallbackProxy 包装后传给宿主 API（包装与参数转换流程详见下方 DarticCallbackProxy 节）。
+HostClassWrapper 在转发方法参数时，对每个参数执行 `is DarticClosure` 检查（DarticClosure 是解释器闭包类型，定义详见 Ch2）。检测到 DarticClosure 后，自动创建 DarticCallbackProxy 并根据宿主方法签名的参数数量选择 `proxyN()` 生成 Dart 闭包，再将闭包传给宿主 API（完整包装与参数转换流程详见下方 DarticCallbackProxy 节）。
 
 **操作符路由**：操作符调用通过 `invokeMethod` 统一路由，使用 Dart 的规范操作符名作为 `name` 参数（如 `+`、`-`、`[]`、`[]=`、`==`、`<`、`>`、`unary-`）。命名与 Kernel `InstanceInvocation.name.text` 一致，无需转换。BridgeGenerator 扫描 `ProcedureKind.Operator` 的方法时，按相同命名注册到 HostClassWrapper 分发表。
 
@@ -113,7 +114,7 @@ DarticProxy 为没有预生成 Bridge 的解释器对象提供在 VM 侧的表�
 
 | 方法 | 实现 | 说明 |
 |------|------|------|
-| `operator ==` | `identical(target, other.target)` | 基于目标对象身份比较 |
+| `operator ==` | `other is DarticProxy && identical(target, other.target)` | 基于目标对象身份比较，非 DarticProxy 返回 false |
 | `hashCode` | `identityHashCode(target)` | 与 `==` 一致 |
 | `toString()` | `_runtime.invokeMethod(target, 'toString', [])` | 委托给解释器的 toString() 方法 |
 
@@ -215,9 +216,9 @@ package:dartic_bridges_flutter/
 ### 解释器 -> VM 调用流程（外调）
 
 1. 编译器将宿主方法调用编译为 `CALL_HOST A, Bx` 指令，Bx 为 .darticb 绑定名称表中的本地索引
-2. 运行时加载 .darticb 时，通过 `HostBindings.lookupByName` 将符号名解析为运行时 ID（详见 Ch5）
+2. 运行时加载 .darticb 时，通过 `HostBindings.lookupByName` 将符号名解析为运行时 ID（绑定名称表由编译器生成，详见 Ch5；加载时解析流程详见 Ch3 模块加载）
 3. 分发循环执行 `CALL_HOST` 时，从引用栈取参数，调用 `HostBindings.invoke(runtimeId, args)`
-4. 返回值（VM 原生对象）直接存入引用栈，后续通过 HostClassWrapper 路由访问
+4. 返回值按类型分流：基本类型（int/double/bool）存入值栈，引用类型（VM 原生对象）存入引用栈。后续对 VM 对象的属性/方法访问通过 HostClassWrapper 路由
 
 ### VM -> 解释器回调流程（内调）
 
@@ -296,13 +297,39 @@ Bridge 的创建需要与 VM 超类构造函数协调——Dart 要求 `super()`
 | 基本类型（int/double/String/bool） | 直接传值，不经过 DarticProxyManager | 不可变值类型，Dart 小整数缓存 + String 驻留 |
 | null | 直接传值 | Dart 语言保证 `identical(null, null)` |
 | VM 原生集合（List/Map/Set） | 直接存引用栈，不包装 | `CREATE_LIST` 等指令创建的是 VM 原生对象（详见 Ch2） |
-| Record | 直接传值（VM 原生对象） | `CREATE_RECORD` 创建 VM 原生 Record（详见 Ch1） |
+| Record | 直接传值（VM 原生对象） | `CREATE_RECORD`（Ch1）创建 VM 原生 Record |
 | 常量（Constant 物化后） | 直接传值（VM 原生对象） | 常量池物化为 VM 对象后直接引用（详见 Ch3 常量池物化策略） |
 | VM 原生对象（其他） | 直接存引用栈，不包装 | 对象本身即 VM 实例 |
 
 Expando 内部使用 ephemeron 语义——键不可达时值也被 GC，不会内存泄漏。
 
 **DarticClosure 身份说明**：DarticCallbackProxy 每次 `proxyN()` 调用创建新的 Dart 闭包，不保证身份一致性（同一 DarticClosure 两次包装产生不同的 Dart Function）。实际影响有限——VM 侧对回调做 `identical` 比较的场景极少（如 `removeListener` 需要传入同一 Function 实例），此类场景需要用户侧缓存 proxy 结果。
+
+## 跨边界泛型
+
+### 类型映射设计
+
+跨边界传递对象时，运行时需要为 VM 侧获取对象的 DarticType（用于泛型类型检查，详见 Ch6）。获取路径按对象类型分三条：
+
+| 对象类型 | DarticType 获取方式 |
+|---------|-------------------|
+| DarticObject | 直接读取 `DarticObject.runtimeType`（Ch2 定义的泛型化类型实例） |
+| Bridge 实例 | 从 Bridge 关联的 DarticObject 获取已有的 DarticType |
+| VM 原生对象 | 通过泛型辅助函数 `T captureType<T>(T obj) => T` 利用 Dart reified generics 捕获类型参数 |
+
+**设计约束**：Dart 的 `Type` 对象不提供结构化访问 API（无法编程提取类型参数），因此 VM 原生对象的类型提取依赖泛型辅助函数——利用 Dart reified generics 在泛型函数签名中捕获类型参数。
+
+### 集合类型的跨边界限制
+
+解释器通过 `CREATE_LIST` / `CREATE_MAP` / `CREATE_SET` 创建的是 VM 原生集合（详见 Ch2），创建时的泛型参数为 `dynamic`（因为解释器无法在运行时创建参数化的 VM 集合类型）。这些集合跨边界传递到 VM 侧后，`is List<int>` 等精确泛型类型检查会失败（运行时类型为 `List<dynamic>`），但功能不受影响。
+
+**Phase 1 规避**：业务代码中避免对跨边界集合做精确泛型类型检查。
+
+> **Phase 2**：为高频泛型组合预生成类型化创建路径。BridgeGenerator 分析解释器代码中的集合创建点，为 `List<int>`、`List<String>`、`Map<String, dynamic>` 等常见组合生成专用工厂，确保跨边界后 `is` 检查正确。触发条件：业务代码需要跨边界传递参数化集合并做类型检查。
+
+### 泛型 Bridge 类
+
+泛型宿主类（如 `State<T>`）的 Bridge 需要保留类型参数。BridgeGenerator 为泛型宿主类生成参数化 Bridge（如 `class $State$bridge<T> extends State<T> with $BridgeMixin`）。BridgeFactory 创建实例时，从 DarticObject 的 DarticType 中提取已实化的类型参数，传递给 Bridge 的泛型参数。CFE 生成的 forwarding stub（协变检查）在 Bridge 上天然生效——前提是 Bridge 以正确的泛型参数实例化（详见 Ch6 协变覆盖检查）。
 
 ## 关键约束与边界条件
 
@@ -317,6 +344,7 @@ Expando 内部使用 ephemeron 语义——键不可达时值也被 GC，不会�
 | 操作符命名 | 使用 Dart 规范名（`+`、`[]`、`==` 等），与 Kernel `Name.text` 一致 | HostClassWrapper / HostBindings / BridgeGenerator 统一约定 |
 | Super 转发器命名 | `$super$<方法名>` + HostBindings 符号格式 `"库URI::类名::$super$方法名#N"` | BridgeGenerator 生成，编译器引用 |
 | Bridge 构造函数变体 | 每个可用的 VM 超类构造函数对应一个 BridgeFactory | BridgeGenerator 按超类构造函数签名生成 |
+| 跨边界集合泛型 | 解释器创建的集合为 `List<dynamic>` 等，VM 侧精确泛型 `is` 检查失败 | Phase 1 限制，详见"跨边界泛型"节 |
 
 ## 已知局限与演进路径
 
@@ -328,7 +356,7 @@ Expando 内部使用 ephemeron 语义——键不可达时值也被 GC，不会�
 
 > **Phase 2**：跨边界异常类型保留。研究将解释器异常包装为 VM 可识别类型的方案，使 `on MyException catch (e)` 在 VM 侧可匹配。触发条件：跨边界异常处理成为实际开发痛点。
 
-> **Phase 2**：DarticProxy 操作符转发。为 DarticProxy 预生成常用操作符重载（`+`、`-`、`[]`、`[]=` 等），内部委托给 `_runtime.invokeMethod(target, 'operator+', args)`。触发条件：VM 侧需要对 DarticProxy 执行算术或索引操作。
+> **Phase 2**：DarticProxy 操作符转发。为 DarticProxy 预生成常用操作符重载（`+`、`-`、`[]`、`[]=` 等），内部委托给 `_runtime.invokeMethod(target, '+', args)`（使用 Dart 规范操作符名，与 HostClassWrapper 操作符路由命名一致）。触发条件：VM 侧需要对 DarticProxy 执行算术或索引操作。
 
 > **Phase 2**：Bridge noSuchMethod 兜底。Bridge 预生成的方法覆盖有限，VM 侧调用未预生成的方法时当前会报 `NoSuchMethodError`。可在 `$BridgeMixin` 中添加 `noSuchMethod` 重写，将未知方法转发给解释器的方法表查找。触发条件：Bridge 覆盖不全导致运行时错误。
 
@@ -349,7 +377,10 @@ Object wrapForVM(Object obj) {
     _proxyToInterp[proxy] = obj;
     return proxy;
   }
-  return obj;  // Bridge 实例或基本类型直接返回
+  // 注：DarticClosure 不是 DarticObject（详见 Ch2），
+  // 其包装由 HostClassWrapper 在转发回调参数时通过
+  // DarticCallbackProxy 单独处理（详见 DarticCallbackProxy 节）。
+  return obj;  // Bridge 实例、基本类型、VM 原生对象直接返回
 }
 ```
 

@@ -11,8 +11,8 @@
 | 输入来源 | Ch5 编译器 | 编译器输出的 `.darticb` 字节码文件是验证器的检查对象 |
 | 输入来源 | Ch1 ISA | 验证器依据 ISA 定义的操作码合法性、编码格式、WIDE 规则进行检查 |
 | 输出去向 | Ch3 执行引擎 | 验证通过的模块交给执行引擎执行，运行时不再做边界检查 |
-| 复用机制 | Ch3 执行引擎 | fuel 计数和调用深度限制由 Ch3 分发循环实现，本章仅定义安全语义（详见 Ch3） |
-| 复用机制 | Ch4 Bridge | Bridge 注册表天然形成 API 边界，控制解释器可访问的宿主 API 范围 |
+| 复用机制 | Ch3 执行引擎 | fuel 计数和调用深度限制由 Ch3 分发循环实现，本章仅定义安全语义（详见 Ch3 "分发循环"节和"关键约束与边界条件"节） |
+| 复用机制 | Ch4 Bridge | Bridge 注册表（HostBindings）天然形成 API 边界，控制解释器可访问的宿主 API 范围（详见 Ch4） |
 
 ## 设计决策
 
@@ -23,7 +23,50 @@
 | 资源限制 | fuel 计数 + 调用栈深度 | 显式超时器：定时器精度依赖平台，且需额外线程 | 复用运行时分发循环已有机制，防无限循环和无限递归 |
 | 内存保护 | 不实现显式内存上限 | 分配计数器：增加每次分配的开销，且宿主 GC 已提供背压 | 栈空间预分配固定大小，堆对象由宿主 VM GC 管理 |
 
-## 核心概念
+## 威胁模型
+
+### 信任边界
+
+dartic 的安全边界划分为：
+
+```
+  受信代码                          不受信代码
+┌──────────────────────┐       ┌──────────────────────┐
+│  宿主应用 + Bridge    │       │  .darticb 字节码      │
+│  dartic 运行时本身    │       │  （可能格式错误或恶意） │
+└──────────────────────┘       └──────────────────────┘
+         │                              │
+         │     加载时验证 ◄──────────────┘
+         │     运行时资源限制
+         ▼
+  安全执行（宿主应用不崩溃）
+```
+
+**受信侧**：宿主应用代码、Bridge 注册表、dartic 运行时自身。这些代码由应用开发者控制，不在防护范围内。
+
+**不受信侧**：`.darticb` 字节码文件。可能来源于热更新下发、第三方插件，内容可能格式错误（编译器 bug、传输损坏）或经过恶意篡改。
+
+### 威胁与对策
+
+| 威胁 | 攻击面 | 对策 | 防护层 |
+|------|--------|------|--------|
+| 格式错误的字节码导致宿主崩溃 | 非法操作码、越界索引、畸形结构 | DarticVerifier 加载时验证 | 加载时 |
+| 无限循环卡死宿主事件循环 | while(true){}、无终止条件的递归循环 | fuel 计数，耗尽后 Timer.run 让出（Ch3 分发循环） | 运行时 |
+| 无限递归耗尽宿主栈/内存 | 无终止条件的递归调用 | 调用深度限制 maxCallDepth = 512（Ch3 执行引擎） | 运行时 |
+| 越界寄存器/常量池访问导致内存损坏 | 伪造的操作数指向栈外/常量池外地址 | 加载时校验所有索引边界 | 加载时 |
+| 跳转到非法地址执行垃圾数据 | 伪造的跳转偏移量 | 加载时校验跳转目标在 `[0, codeLength)` 范围内 | 加载时 |
+| 回调重入中的无限循环 | CALL_HOST -> DarticCallbackProxy -> 解释器循环 | 回调共享当前回合 fuel，不分配独立预算（Ch3 fuel 共享不变式） | 运行时 |
+
+### 不在防护范围内
+
+| 威胁 | 原因 |
+|------|------|
+| 解释器调用任意宿主 API | 由 Bridge 注册表（HostBindings）控制暴露范围，非沙箱职责 |
+| OS 级文件/网络隔离 | 需 isolate 级沙箱，超出解释器层能力 |
+| 侧信道攻击（timing 等） | 不在当前目标场景内 |
+| 字节码传输篡改 | 属于分发管线职责，由上层应用自行实现签名验证 |
+
+## 安全目标与错误分类
 
 ### 安全目标
 
@@ -32,55 +75,53 @@ dartic 的安全目标是**保护宿主应用不因解释器代码的错误而�
 | 保障项 | 机制 | 说明 |
 |--------|------|------|
 | 不因格式错误的字节码崩溃 | 加载时验证 | 所有字节码结构在执行前校验合法性 |
-| 不因无限循环卡死 | fuel 计数 | fuel 耗尽时让出控制权（详见 Ch3） |
-| 不因无限递归栈溢出 | 调用深度限制 | 超过 `maxCallDepth` 抛出异常（详见 Ch3） |
+| 不因无限循环卡死 | fuel 计数 | fuel 耗尽时让出控制权（详见 Ch3 "分发循环"节） |
+| 不因无限递归栈溢出 | 调用深度限制 | 超过 `maxCallDepth` 抛出异常（详见 Ch3 "关键约束与边界条件"节） |
 | 不因越界访问内存损坏 | 加载时验证 | 常量池、寄存器索引在加载时验证边界 |
-
-**不在目标内**：阻止解释器调用任意宿主 API（由 Bridge 注册表控制）、OS 级文件/网络隔离（需 isolate 级沙箱）、防御侧信道攻击。
 
 ### 错误分类
 
 | 错误类型 | 触发条件 | 处理方式 |
 |----------|----------|----------|
 | DarticLoadError | 字节码格式/验证失败（magic 错误、校验和不匹配、越界引用） | 拒绝加载，宿主应用 `catch` 后继续运行 |
-| DarticError | 运行时可恢复错误（栈溢出、fuel 耗尽、未捕获异常） | 终止当前解释器执行，宿主应用 `catch` 后继续运行 |
-| DarticInternalError | 解释器自身实现 bug（不应发生） | 记录并上报，表示解释器内部逻辑错误 |
+| DarticError | 运行时可恢复错误（栈溢出、fuel 耗尽、未捕获异常） | 终止当前解释器执行，宿主应用 `catch` 后继续运行（详见 Ch3 "错误恢复"节） |
+| DarticInternalError | 解释器自身实现 bug（不应发生） | 记录并上报，运行时实例应被丢弃并重新创建（详见 Ch3 "错误恢复"节） |
 
-宿主应用通过 `try/catch` 隔离所有解释器错误，确保解释器的任何异常不会导致宿主崩溃。
+**不变式**：DarticError 后运行时可继续使用；DarticInternalError 后运行时实例应被丢弃。宿主应用通过 `try/catch` 隔离所有解释器错误，确保解释器的任何异常不会导致宿主崩溃。
 
-## 工作流程
+## 加载时验证
 
-### 验证→加载→执行 流水线
+### 验证 -> 加载 -> 执行流水线
 
 ```
                     字节码文件 (.darticb)
-                          │
-                          ▼
-              ┌───────────────────────┐
-              │  ① 反序列化          │
-              │  bytes → DarticModule │
-              └───────────┬───────────┘
-                          │
-                          ▼
-              ┌───────────────────────┐
-              │  ② DarticVerifier   │
-              │  静态验证（见下表）    │──── 失败 → DarticLoadError
-              └───────────┬───────────┘
-                          │ 通过
-                          ▼
-              ┌───────────────────────┐
-              │  ③ Bridge 依赖检查    │
-              │  确认所需宿主 API 已注册│──── 缺失 → DarticLoadError
-              └───────────┬───────────┘
-                          │ 通过
-                          ▼
-              ┌───────────────────────┐
-              │  ④ 返回已验证模块      │
-              │  运行时零安全开销执行  │
-              └───────────────────────┘
+                          |
+                          v
+              +-------------------------+
+              |  (1) 反序列化           |
+              |  bytes -> DarticModule  |
+              +-----------+-------------+
+                          |
+                          v
+              +-------------------------+
+              |  (2) DarticVerifier     |
+              |  静态验证（见下表）       |---- 失败 -> DarticLoadError
+              +-----------+-------------+
+                          | 通过
+                          v
+              +-------------------------+
+              |  (3) Bridge 依赖检查     |
+              |  确认所需宿主 API 已注册  |---- 缺失 -> DarticLoadError
+              +-----------+-------------+
+                          | 通过
+                          v
+              +-------------------------+
+              |  (4) 返回已验证模块       |
+              |  运行时零安全开销执行     |
+              +-------------------------+
 ```
 
-验证通过后，运行时的分发循环**不执行任何边界检查**——所有安全保证由加载时验证提供。
+验证通过后，运行时的分发循环**不执行任何边界检查**——所有安全保证由加载时验证提供（设计不变式，详见 Ch0 "关键设计不变式"第 5 条）。
 
 ### DarticVerifier 验证项
 
@@ -88,32 +129,38 @@ dartic 的安全目标是**保护宿主应用不因解释器代码的错误而�
 
 | 检查项 | 内容 | 违规后果 |
 |--------|------|----------|
-| 文件头 | magic number = `0xDART1B00`，版本号 ≤ 当前版本，CRC32 校验和匹配 | 加载拒绝 |
-| 常量池边界 | 常量池内部引用不越界 | 运行时读取非法内存 |
-| 操作码合法性 | 每条指令的 opcode 在 ISA 定义范围内（详见 Ch1） | 分发循环跳转到非法地址 |
-| 跳转目标 | 跳转偏移量在函数字节码范围 `[0, codeLength)` 内 | 执行越界指令 |
-| 寄存器索引 | A/B/C 操作数 < 函数声明的 `regCount`，按指令编码格式（ABC/ABx/AsBx/Ax）分别校验 | 栈越界访问 |
-| 常量池索引 | 引用常量池的指令，索引 < 对应分区长度 | 读取非法常量 |
-| WIDE 前缀 | WIDE 不在字节码末尾，后跟指令兼容 WIDE 扩展（详见 Ch1 WIDE 规则） | 解码错误 |
-| 函数/方法引用 | `CALL` 类指令的函数 ID 在函数表范围内（或为已注册的宿主绑定） | 调用不存在的函数 |
-| 异常处理器表 | `[startPC, endPC)` 范围合法且非空，`handlerPC` 在范围内，栈深度 ≥ 0 | 异常分发失败 |
-| 类表 | 超类 ID 在类表范围内，方法引用指向合法函数 | 继承链断裂或虚方法分发失败 |
-| 入口点 | 模块声明的入口函数存在且合法 | 无法启动执行 |
+| 文件头 | magic number = `0xDART1B00`，版本号 <= 当前版本，CRC32 校验和匹配 | 加载拒绝 |
+| 常量池边界 | 常量池各分区（refs/ints/doubles/names）内部引用不越界（详见 Ch1 "四分区常量池"节） | 运行时读取非法内存 |
+| 操作码合法性 | 每条指令的 opcode 在 ISA 定义的 0x00-0xFF 范围内且非预留编号（详见 Ch1 "操作码总览"节） | 分发循环跳转到非法地址 |
+| 跳转目标 | 跳转偏移量（JUMP/JUMP_IF_TRUE/JUMP_IF_FALSE/JUMP_IF_NULL/JUMP_IF_NNULL/JUMP_AX）计算后在函数字节码范围 `[0, codeLength)` 内 | 执行越界指令 |
+| 寄存器索引 | A/B/C 操作数 < 函数声明的 `regCount`，按指令编码格式（ABC/ABx/AsBx/Ax）分别校验（详见 Ch1 "指令编码格式"节） | 栈越界访问 |
+| 常量池索引 | 引用常量池的指令（LOAD_CONST/LOAD_CONST_INT/LOAD_CONST_DBL 等），索引 < 对应分区长度 | 读取非法常量 |
+| WIDE 前缀 | WIDE 不在字节码末尾 2 个位置内，后跟指令兼容 WIDE 扩展，不可嵌套（详见 Ch1 "WIDE 前缀"节 WIDE 约束规则） | 解码错误 |
+| 函数/方法引用 | CALL_STATIC 的 Bx 在函数表范围内；CALL_HOST 的 Bx 在宿主绑定表（HostBindings）范围内；CALL_VIRTUAL 的 IC 索引在 IC 表范围内 | 调用不存在的函数 |
+| 异常处理器表 | `[startPC, endPC)` 范围合法、非空且 endPC <= codeLength；`handlerPC` 在函数字节码范围 `[0, codeLength)` 内；`valStackDP` >= 0 且 <= 函数 regCount；`refStackDP` >= 0 且 <= 函数 regCount；`exceptionReg` 在引用栈寄存器范围内（详见 Ch3 "异常处理器表"字段定义） | 异常分发失败或栈越界 |
+| 上值描述符 | 闭包的 upvalueDescriptors 中，isLocal 引用的索引 < 外层函数 regCount，非 isLocal 引用的索引 < 外层闭包的上值数量 | 上值访问越界 |
+| 类表 | 超类 ID 在类表范围内，方法引用指向合法函数，字段数量与布局描述一致 | 继承链断裂或虚方法分发失败 |
+| 入口点 | 模块声明的入口函数 ID 存在且在函数表范围内 | 无法启动执行 |
 
 ## 运行时资源限制
 
 ### Fuel 计数（防无限循环）
 
-fuel 机制由 Ch3 分发循环实现（详见 Ch3）。本章定义其安全语义：
+fuel 机制由 Ch3 分发循环实现（详见 Ch3 "分发循环"节）。本章定义其安全语义：
 
-- 每回合分配固定 fuel 预算（`_fuelBudget`），每执行一条指令消耗 1 fuel
+- 每回合分配固定 fuel 预算（`_fuelBudget`，默认 50,000 条指令），每执行一条指令消耗 1 fuel
 - fuel 耗尽时通过 `Timer.run` 让出控制权，防止宿主事件循环饿死
-- 回调重入（`CALL_HOST` → DarticCallbackProxy → 解释器）**共享当前回合的 fuel**，不分配独立预算
+- fuel 只计量解释器字节码指令，不计量 `CALL_HOST` 调用的宿主函数执行时间（整条 `CALL_HOST` 含宿主函数执行消耗 1 fuel，详见 Ch3 "fuel 计量范围"说明）
+- 回调重入（`CALL_HOST` -> DarticCallbackProxy -> 解释器）**共享当前回合的 fuel**，不分配独立预算（详见 Ch3 "fuel 共享不变式"）
 - 回调中的无限循环同样受 fuel 保护
 
 ### 调用深度限制（防栈溢出）
 
-调用深度限制由 Ch3 执行引擎实现（详见 Ch3）。安全语义：超过 `maxCallDepth`（512）时抛出 `DarticError`。该值足以覆盖正常递归场景，同时防止无限递归耗尽宿主内存。
+调用深度限制由 Ch3 执行引擎实现（详见 Ch3 "关键约束与边界条件"节）。安全语义：
+
+- 超过 `maxCallDepth`（512）时抛出 `DarticError`
+- 该值足以覆盖正常递归场景（Dart 常规代码极少超过 100 层），同时防止无限递归耗尽宿主内存
+- HOST_BOUNDARY 哨兵帧计入此限制，交替调用（解释器 <-> VM）每层消耗约 3-5 个 VM 帧（详见 Ch2 HOST_BOUNDARY 定义、Ch3 相关说明）
 
 ### 执行超时（可选）
 
@@ -126,22 +173,23 @@ fuel 机制由 Ch3 分发循环实现（详见 Ch3）。本章定义其安全语
 
 ### Bridge 注册表作为 API 边界
 
-Bridge 注册表天然形成 API 边界（详见 Ch4）——解释器代码只能访问已注册的宿主 API。宿主开发者通过选择性注册控制暴露范围：不注册 `dart:io` Bridge，解释器即无法访问文件/网络。这不是安全沙箱（已注册 API 可能间接暴露 IO），但提供了基本的 API 表面控制。
+Bridge 注册表（HostBindings）天然形成 API 边界（详见 Ch4）——解释器代码只能访问已注册的宿主 API。宿主开发者通过选择性注册控制暴露范围：不注册 `dart:io` Bridge，解释器即无法访问文件/网络。这不是安全沙箱（已注册 API 可能间接暴露 IO），但提供了基本的 API 表面控制。
 
 ### 内存保护
 
-不实现显式内存上限。栈空间（ValueStack、RefStack、CallStack）在初始化时预分配固定大小，不会无限增长。堆对象（DarticObject）由宿主 Dart VM GC 管理，共享内存压力。如需限制，宿主可通过 Dart VM 参数（如 `--old-gen-heap-size`）控制。
+不实现显式内存上限。栈空间（ValueStack、RefStack、CallStack，结构定义详见 Ch2 "三栈内存模型"节）在初始化时预分配固定大小，不会无限增长。堆对象（DarticObject）由宿主 Dart VM GC 管理，共享内存压力（详见 Ch3 "GC 集成"节）。如需限制，宿主可通过 Dart VM 参数（如 `--old-gen-heap-size`）控制。
 
 ## 关键约束与边界条件
 
 | 约束 | 值 | 来源 |
 |------|-----|------|
-| fuel 预算（每回合） | 50000 条指令 | Ch3 分发循环，基于 ~200us Timer.run 开销和 ~10ms 目标回合时间 |
-| 最大调用深度 | 512 | Ch3 执行引擎，覆盖正常递归场景 |
+| fuel 预算（每回合） | 50,000 条指令 | Ch3 分发循环，基于 ~200us Timer.run 开销和 ~10ms 目标回合时间 |
+| 最大调用深度 | 512 帧 | Ch3 执行引擎，覆盖正常递归场景（Dart 常规代码极少超过 100 层） |
 | magic number | 0xDART1B00 | 字节码文件格式定义 |
 | 校验和算法 | CRC32 | 文件头验证 |
-| 栈空间 | 预分配固定大小 | ValueStack / RefStack / CallStack 初始化时确定 |
+| 栈空间 | 预分配固定大小 | ValueStack / RefStack / CallStack 初始化时确定（详见 Ch2） |
 | 内存上限 | 不限制（依赖宿主 VM GC） | 设计决策 |
+| WIDE 安全位置 | 不在字节码末尾 2 个位置内 | Ch1 WIDE 约束规则 |
 
 ## 已知局限与演进路径
 
@@ -181,6 +229,64 @@ class DarticVerifier {
     _verifyClassTable(module);
     _verifyEntryPoint(module);
     return errors.isEmpty;
+  }
+
+  void _verifyFunction(DarticFuncProto func, DarticModule module) {
+    final codeLength = func.code.length;
+    for (var pc = 0; pc < codeLength; pc++) {
+      final instr = func.code[pc];
+      final op = instr & 0xFF;
+
+      // 操作码合法性
+      if (!_isValidOpcode(op)) {
+        errors.add('Invalid opcode 0x${op.toRadixString(16)} at pc=$pc');
+        continue;
+      }
+
+      // 寄存器索引边界（按指令编码格式分别校验）
+      _verifyOperandBounds(op, instr, func.regCount, module, pc);
+
+      // WIDE 前缀约束
+      if (op == 0xFE) {
+        if (pc + 2 >= codeLength) {
+          errors.add('WIDE at pc=$pc too close to end of code');
+        }
+        pc += 2; // 跳过扩展字和原指令
+        continue;
+      }
+
+      // 跳转目标范围
+      if (_isJumpOp(op)) {
+        final target = _computeJumpTarget(op, instr, pc);
+        if (target < 0 || target >= codeLength) {
+          errors.add('Jump target $target out of range at pc=$pc');
+        }
+      }
+    }
+
+    // 异常处理器表验证
+    for (final handler in func.exceptionTable) {
+      if (handler.startPC >= handler.endPC ||
+          handler.endPC > codeLength) {
+        errors.add('Invalid handler range [${handler.startPC}, ${handler.endPC})');
+      }
+      if (handler.handlerPC < 0 || handler.handlerPC >= codeLength) {
+        errors.add('Handler PC ${handler.handlerPC} out of code range');
+      }
+      if (handler.valStackDP < 0 || handler.refStackDP < 0) {
+        errors.add('Negative stack depth in handler');
+      }
+      if (handler.exceptionReg >= func.regCount) {
+        errors.add('Exception register ${handler.exceptionReg} out of range');
+      }
+    }
+
+    // 上值描述符验证
+    for (final desc in func.upvalueDescriptors) {
+      if (desc.isLocal && desc.index >= func.regCount) {
+        errors.add('Upvalue local index ${desc.index} out of range');
+      }
+    }
   }
 }
 

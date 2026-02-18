@@ -13,7 +13,7 @@ dartic 编译器是一个**离线 CLI 工具**，运行在开发机或 CI 环境
 | 输出目标 | Ch1 ISA | 生成符合 Ch1 编码格式的 `Uint32List` 字节码 |
 | 输出产物 | Ch2 对象模型 | `.darticb` 中的类表和栈帧布局信息以 Ch2 数据结构为目标 |
 | 输出产物 | Ch3 执行引擎 | `.darticb` 文件由执行引擎加载，包含字节码、常量池、绑定名称表 |
-| 类型系统 | Ch6 泛型 | 编译器传递 ITA/FTA 描述符，运行时按需实化 |
+| 类型系统 | Ch6 泛型 | 编译器生成 TypeTemplate 和 SuperTypeMap 写入 .darticb 常量池，传递 ITA/FTA 描述符，运行时按需实化 |
 | 异步编译 | Ch7 异步 | 编译器标记 async 函数，生成帧快照所需的寄存器元数据 |
 | 安全验证 | Ch8 沙箱 | `.darticb` 结构需通过加载时验证（操作码合法性、操作数范围） |
 
@@ -93,7 +93,7 @@ dartic_compiler CLI
 | 绑定类型 | 含义 | 生成的指令 |
 |----------|------|-----------|
 | local | 当前函数的局部变量 | 直接寄存器访问 |
-| upvalue | 被闭包捕获的外层变量 | `GET_UPVALUE` / `SET_UPVALUE` |
+| upvalue | 被闭包捕获的外层变量 | `LOAD_UPVALUE` / `STORE_UPVALUE` |
 | global | 全局变量或静态字段 | `LOAD_GLOBAL` / `STORE_GLOBAL` |
 
 每个绑定记录：寄存器槽位（或上值/全局索引）、是否可变、是否被捕获、StackKind。
@@ -231,8 +231,8 @@ Kernel 中属性访问统一为 `InstanceGet` / `InstanceSet` 节点。编译器
 
 | Kernel 节点 | 编译策略 |
 |------------|----------|
-| `VariableGet` | 根据作用域分析绑定类型：local → 寄存器读取，upvalue → `GET_UPVALUE`，global → `LOAD_GLOBAL` |
-| `VariableSet` | local → 寄存器写入，upvalue → `SET_UPVALUE`，global → `STORE_GLOBAL` |
+| `VariableGet` | 根据作用域分析绑定类型：local → 寄存器读取，upvalue → `LOAD_UPVALUE`，global → `LOAD_GLOBAL` |
+| `VariableSet` | local → 寄存器写入，upvalue → `STORE_UPVALUE`，global → `STORE_GLOBAL` |
 | `StaticGet` | 静态字段/顶层变量 → `LOAD_GLOBAL`（详见静态字段与顶层变量）。静态方法引用 → 等价于 `StaticTearOff` |
 | `StaticSet` | 静态字段/顶层变量 → `STORE_GLOBAL` |
 
@@ -243,9 +243,9 @@ Kernel 中属性访问统一为 `InstanceGet` / `InstanceSet` 节点。编译器
 | `StaticInvocation` | 编译参数 → `CALL_STATIC`（解释器函数）或 `CALL_HOST`（Bridge 绑定） |
 | `InstanceInvocation` | 编译 receiver + 参数 → `CALL_VIRTUAL`（IC 快路径） |
 | `ConstructorInvocation` | `NEW_INSTANCE` → 编译参数 → `CALL_STATIC`（详见构造函数编译） |
-| `LocalFunctionInvocation` | 局部函数引用已在寄存器中 → `CALL_REF` |
-| `FunctionInvocation` | 函数类型 `call()` → `CALL_REF` |
-| `InstanceGetterInvocation` | `CALL_VIRTUAL`（getter）→ 结果存入临时寄存器 → `CALL_REF`（调用返回值） |
+| `LocalFunctionInvocation` | 局部函数引用已在寄存器中 → `CALL` |
+| `FunctionInvocation` | 函数类型 `call()` → `CALL` |
+| `InstanceGetterInvocation` | `CALL_VIRTUAL`（getter）→ 结果存入临时寄存器 → `CALL`（调用返回值） |
 | `EqualsNull` | `JUMP_IF_NULL` / `JUMP_IF_NNULL`（CFE 优化节点，避免 `==` 虚分发） |
 | `EqualsCall` | 编译左右操作数 → `CALL_VIRTUAL`（调用 `==` 方法） |
 
@@ -294,30 +294,30 @@ Super 分发通过 `interfaceTarget` 确定目标方法在父类方法表中的�
 
 | Kernel 节点 | 编译策略 |
 |------------|----------|
-| `IntLiteral` | `LOAD_CONST_INT A, Bx`（值栈 intView） |
-| `DoubleLiteral` | `LOAD_CONST_DOUBLE A, Bx`（值栈 doubleView） |
-| `BoolLiteral` | `LOAD_INT A, Bx`（0 或 1，值栈 intView） |
+| `IntLiteral` | 小整数（-32767 ~ +32768）：`LOAD_INT A, sBx`（立即数，零常量池访问）；大整数：`LOAD_CONST_INT A, Bx`（值栈 intView） |
+| `DoubleLiteral` | `LOAD_CONST_DBL A, Bx`（值栈 doubleView） |
+| `BoolLiteral` | `LOAD_TRUE A` / `LOAD_FALSE A`（值栈 intView，Ch1 提供专用指令） |
 | `NullLiteral` | `LOAD_NULL A`（引用栈） |
-| `StringLiteral` | `LOAD_CONST_REF A, Bx`（字符串常量池索引） |
-| `SymbolLiteral` | `LOAD_CONST_REF A, Bx`（Symbol 常量池索引） |
-| `TypeLiteral` | `LOAD_CONST_REF A, Bx`（TypeTemplate 常量池索引） |
-| `ThisExpression` | 引用栈 R(0)——this 始终在第一个引用栈寄存器 |
-| `ConstantExpression` | `LOAD_CONST_REF A, Bx`（详见 Const 对象规范化） |
+| `StringLiteral` | `LOAD_CONST A, Bx`（字符串常量池索引） |
+| `SymbolLiteral` | `LOAD_CONST A, Bx`（Symbol 常量池索引） |
+| `TypeLiteral` | `LOAD_CONST A, Bx`（TypeTemplate 常量池索引） |
+| `ThisExpression` | 引用栈 R(rsp+2)——this/receiver 在帧引用栈第三个槽位（rsp+0 为 ITA，rsp+1 为 FTA；详见 Ch2 引用栈前三槽约定） |
+| `ConstantExpression` | `LOAD_CONST A, Bx`（详见 Const 对象规范化） |
 
 #### 集合字面量
 
 | Kernel 节点 | 编译策略 |
 |------------|----------|
-| `ListLiteral` | 非 const：`CALL_HOST`（List 构造）→ 逐元素编译 → `CALL_HOST`（add）。const → 常量池 |
-| `SetLiteral` | 非 const：`CALL_HOST`（Set 构造）→ 逐元素 `CALL_HOST`（add）。const → 常量池 |
-| `MapLiteral` | 非 const：`CALL_HOST`（Map 构造）→ 逐键值对 `CALL_HOST`（`[]=`）。const → 常量池 |
-| `StringConcatenation` | 逐部分编译求值 → `CALL_HOST`（字符串拼接） |
+| `ListLiteral` | 非 const：逐元素编译到连续寄存器 → `CREATE_LIST A, B, C`（A=目标, B=typeArgs, C=元素数量；Ch1 集合操作）。const → 常量池 |
+| `SetLiteral` | 非 const：逐元素编译到连续寄存器 → `CREATE_SET A, B, C`（A=目标, B=typeArgs, C=元素数量）。const → 常量池 |
+| `MapLiteral` | 非 const：逐键值对编译 → `CREATE_MAP A, B, C`（A=目标, B=typeArgs, C=键值对数量）。const → 常量池 |
+| `StringConcatenation` | 逐部分编译求值 → `STRING_INTERP A, B`（A=目标, B=部分数量；Ch1 字符串操作） |
 
 #### Record 操作
 
 | Kernel 节点 | 编译策略 |
 |------------|----------|
-| `RecordLiteral` | 编译各字段表达式 → `CALL_HOST`（Record 构造，携带字段名元数据） |
+| `RecordLiteral` | 编译各字段表达式到连续寄存器 → `CREATE_RECORD A, Bx`（A=目标, Bx=常量池中 RecordShape 描述符索引；Ch1 集合操作） |
 | `RecordIndexGet` | 编译 receiver → `GET_FIELD_REF`/`GET_FIELD_VAL`（按位置索引访问 Record 字段） |
 | `RecordNameGet` | 编译 receiver → `GET_FIELD_DYN`（按名称查找 Record 字段） |
 
@@ -328,7 +328,7 @@ Super 分发通过 `interfaceTarget` 确定目标方法在父类方法表中的�
 | `FunctionExpression` | 与闭包编译策略相同 → `CLOSURE A, Bx` |
 | `BlockExpression` | 编译 body（Statement 列表）→ 编译 value（Expression），结果为 value 的值 |
 | `Instantiation` | 编译函数操作数 → 将类型参数编译为 TypeTemplate → 生成实例化包装闭包（详见 Ch6） |
-| `InstanceCreation` | const 上下文对象创建 → `LOAD_CONST_REF`（常量池中的 InstanceConstant） |
+| `InstanceCreation` | const 上下文对象创建 → `LOAD_CONST`（常量池中的 InstanceConstant） |
 | `Let` | 编译 variable 赋值 → 编译 body 表达式，结果为 body 的值 |
 | `AwaitExpression` | 详见 Ch7 异步 |
 | `InvalidExpression` | 编译为 `THROW`（CFE 编译错误占位，正常代码中不应出现） |
@@ -428,16 +428,16 @@ Dart 3 的 extension type 是编译期零成本抽象，在 Kernel AST 中已被
 | Super parameters (`super.x`) | 构造函数参数转发 |
 | Named arguments anywhere | 参数已重排至正确位置 |
 | Spread collections (`...list`) | 命令式 `add`/`addAll` 调用 |
-| List literal (`<int>[1,2,3]`) | `StaticInvocation(_GrowableList._literal3(1, 2, 3))` |
+| List literal (`<int>[1,2,3]`) | `ListLiteral` 节点（dartic 使用 `dart compile kernel` 产出的 linked-platform `.dill`，不经过 VM 后端 `_GrowableList._literalN` 变换） |
 | Control flow collections (`if`/`for` in `[]`) | 命令式展开 |
 | Enhanced enums | 普通 `Class` + `Procedure` |
 | Wildcards (`_`) | 解析层处理，Kernel 中无痕迹 |
 | ++/-- | `VariableSet(x, MethodInvocation(x, '+', 1))` |
 | 复合赋值 (+=, ??= 等) | 展开为读取 + 运算 + 写入 |
 | Type aliases (typedef) | 展开为底层类型引用 |
-| `StringConcatenation` | 编译器直接处理：生成各部分求值 + 字符串拼接指令序列 |
+| `StringConcatenation` | 编译器直接处理：生成各部分求值 + `STRING_INTERP` 指令 |
 | `Let` | CFE 内部绑定表达式，编译为临时变量赋值 + 体表达式求值 |
-| `RecordLiteral` / `RecordType` | Dart 3 记录类型，编译为记录对象创建指令 |
+| `RecordLiteral` / `RecordType` | Dart 3 记录类型，编译为 `CREATE_RECORD` 指令 |
 | `ListConcatenation` / `SetConcatenation` / `MapConcatenation` | const 上下文中的集合合并，编译期在常量池中完成拼接 |
 | `LoadLibrary` / `CheckLibraryIsLoaded` | dartic 不支持延迟加载，编译器遇到 `deferred as` 导入时报错 |
 
@@ -459,8 +459,10 @@ DarticB 文件格式
 │   字节码中 CALL_HOST 的 Bx 操作数  │
 │   是此表的本地索引（16-bit）     │
 ├─────────────────────────────────┤
-│ 常量池                           │
+│ 常量池（四分区，详见 Ch1）          │
 │   refs: [length, data...]        │
+│     (String, TypeTemplate,       │
+│      FuncProto ref, 复合常量等)   │
 │   ints: [length, data...]        │
 │   doubles: [length, data...]     │
 │   names: [length, data...]       │
@@ -468,7 +470,8 @@ DarticB 文件格式
 │ 函数表                           │
 │   [funcCount, DarticFuncProto...]      │
 │   每个 DarticFuncProto:                │
-│     name, paramCount, regCount   │
+│     name, paramCount             │
+│     valueRegCount, refRegCount   │
 │     bytecode: Uint32[]           │
 │     exceptionTable               │
 │     icSlotCount                  │
@@ -488,9 +491,23 @@ DarticB 文件格式
 │     name, initializerFuncId      │
 │     (惰性初始化函数引用，-1=无)     │
 ├─────────────────────────────────┤
+│ SuperTypeMap（超类型参数映射表）     │
+│   编译器预计算的类继承关系中类型     │
+│   参数映射，供 Ch6 子类型判定使用   │
+│   [classCount]                   │
+│   每个条目:                       │
+│     (subClassId, superClassId,   │
+│      typeArgMapping[])           │
+├─────────────────────────────────┤
 │ 入口点: funcId                   │
 └─────────────────────────────────┘
 ```
+
+**二进制编码约定**：
+- 字节序：小端（Little-Endian），与 Dart `ByteData` 默认字节序一致
+- 整数编码：UInt32 定宽（4 字节），字符串编码为 UTF-8 前缀长度（UInt32 长度 + 字节数据）
+- 各 Section 按上述顺序紧密排列，Section 间无填充字节
+- 校验和（CRC32）覆盖文件头之后的全部数据，加载时由 Ch8 验证器校验
 
 **序列化与运行时命名映射**：`.darticb` 的序列化字段名与 Ch2 对象模型类的字段名存在对应关系：`methodTable` → `DarticClassInfo.methods`，`refFieldCount`/`valueFieldCount` → `DarticClassInfo.refFieldCount`/`DarticClassInfo.valueFieldCount`，`typeParamCount` → `DarticClassInfo.typeParamCount`。序列化存储紧凑形式（计数值、偏移量），运行时反序列化为结构化对象。
 

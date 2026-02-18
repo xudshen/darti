@@ -47,11 +47,11 @@ DarticFrame 的完整字段定义（21 个字段，三组分类）见 Ch2。本�
 
 DarticFrame 的挂起存在两种深度，按场景选择以平衡正确性与性能：
 
-| | 浅保存（fuel 让出） | 深保存（AWAIT / YIELD 挂起） |
+| | 浅保存（fuel 让出） | 深保存（AWAIT / YIELD / sync\* YIELD 挂起） |
 |---|---|---|
-| 触发 | fuel 耗尽，`Timer.run` 调度下一回合 | AWAIT 遇到 Future / YIELD 遇到 Stream paused |
+| 触发 | fuel 耗尽，`Timer.run` 调度下一回合 | AWAIT 遇到 Future / async\* YIELD 遇到 Stream paused / sync\* YIELD 返回值给 moveNext 调用者 |
 | 保存内容 | pc、savedVBase、savedRBase（几个 int） | pc + 栈数据完整快照（savedValueSlots / savedRefSlots） |
-| 栈空间 | 保留占用——帧仍在 `_runQueue` 中，栈区间不释放 | 释放——帧从 `_runQueue` 移除，原栈位置可被其他帧复用 |
+| 栈空间 | 保留占用——帧仍在 `_runQueue` 中，栈区间不释放 | 释放——帧从 `_runQueue` 移除（async/async\*）或从 drive() 返回（sync\*），原栈位置可被其他帧复用 |
 | 恢复位置 | 原位继续（下回合 `_driveInterpreter` 取同一帧） | 栈顶重新分配（恢复不变式） |
 | 代价 | ≈0（几次 int 赋值） | <1μs（memcpy 80-400 字节 + 引用栈置 null） |
 
@@ -78,14 +78,14 @@ Kernel 的 `FunctionNode` 携带 `emittedValueType` 字段（`DartType?`），�
 ┌──────┐   INIT_ASYNC   ┌──────┐   执行字节码    ┌──────┐    │
 │ 创建 │───────────────►│ 运行 │──────────────►│ 完成 │    │
 └──────┘                └──┬───┘               └──────┘    │
-                           │                       ▲        │
-                      AWAIT│遇到                   │ASYNC_  │
-                      Future                       │RETURN  │
-                           │                       │        │
-                           ▼                       │        │
-                      ┌──────┐   Future 完成   ┌──────┐    │
-                      │ 挂起 │────────────────►│ 恢复 │────┘
-                      └──────┘  scheduleMicro  └──────┘
+                           │                    ▲    ▲       │
+                      AWAIT│遇到          ASYNC_│    │ASYNC_ │
+                      Future              RETURN│    │THROW  │
+                           │                    │    │       │
+                           ▼                    │    │       │
+                      ┌──────┐   Future 完成 ┌──────┐       │
+                      │ 挂起 │──────────────►│ 恢复 │───────┘
+                      └──────┘ scheduleMicro └──────┘
                                    task
 ```
 
@@ -93,7 +93,8 @@ Kernel 的 `FunctionNode` 携带 `emittedValueType` 字段（`DartType?`），�
 - **运行**：正常执行字节码，与同步帧无异
 - **挂起**：AWAIT 遇到 Future → 快照栈数据到帧对象，注册回调
 - **恢复**：Future 完成 → scheduleMicrotask → 在栈顶分配新空间、拷回数据、写入恢复值
-- **完成**：ASYNC_RETURN 完成 Completer，帧生命周期结束
+- **正常完成**：ASYNC_RETURN 完成 `completer.complete(result)`，帧生命周期结束
+- **异常完成**：未捕获异常到达帧顶层 → ASYNC_THROW 执行 `completer.completeError(error, stackTrace)`，帧生命周期结束
 
 ### 栈恢复不变式
 
@@ -109,7 +110,7 @@ Kernel 的 `FunctionNode` 携带 `emittedValueType` 字段（`DartType?`），�
 
 | 模式 | 发起方 | 机制 | 结果 |
 |------|--------|------|------|
-| VM → 解释器 async | VM | 调用 `callInterpreterAsync<T>()`，创建帧 + Completer | 返回 VM 原生 `Future<T>`，VM 可直接 await |
+| VM → 解释器 async | VM | 调用运行时 API `callInterpreterAsync<T>()`，创建帧 + Completer | 返回 VM 原生 `Future<T>`，VM 可直接 await |
 | 解释器 await VM Future | 解释器 | AWAIT 指令遇到 VM 原生 Future → 注册 then/error 回调 | Future 完成时 scheduleMicrotask 恢复帧 |
 | VM await 解释器 Future | VM | 模式 1 的延续，VM await `Completer.future` | Completer 完成时 VM 自然恢复 |
 | 双向链 | 双方 | VM async A → await 解释器 B → B await VM C | 通过 Completer 链自然串联，C→B→A 依次恢复 |
@@ -128,7 +129,7 @@ VM Future 异常 → errorCallback 触发
   → 无 catch → completer.completeError() → VM 的 await 收到异常
 ```
 
-异常栈追踪拼接：errorCallback 中将 VM 栈追踪与解释器帧的异步栈追踪合并为 CombinedStackTrace。
+异常栈追踪拼接：errorCallback 中将 VM 栈追踪与解释器帧的异步栈追踪合并为 CombinedStackTrace（详见 Ch4 栈追踪拼接）。
 
 ## 工作流程
 
@@ -138,9 +139,10 @@ VM Future 异常 → errorCallback 触发
 
 ```
 case OpCode.AWAIT:
-  executeAwait(frame, decodeA(instr), decodeBx(instr));
-  _runQueue.removeFirst();
-  break innerLoop;  // 总是挂起，等待 microtask 恢复
+  _suspendFrame(frame);                              // 深保存：快照栈数据到帧对象
+  executeAwait(frame, decodeA(instr), decodeBx(instr)); // 注册回调
+  _runQueue.removeFirst();                           // 帧移出就绪队列
+  break innerLoop;                                   // 总是挂起，等待 microtask 恢复
 ```
 
 大多数 async 函数在无 await 时同步完成——INIT_ASYNC 仅创建一个 Completer，ASYNC_RETURN 同步完成它，全程不挂起。
@@ -210,7 +212,7 @@ Future 完成后，通过 `scheduleMicrotask` 触发：
 
 ### try/catch 与 await 的交互
 
-异常处理器表跨越 await 点。恢复帧后根据当前 PC 线性扫描 `handlerTable`，找到 `startPC <= pc < endPC` 的处理器。finally 中的 await 正常工作——finally 块的字节码序列包含 AWAIT 指令，挂起/恢复机制与普通 await 一致。
+异常处理器表（`funcProto.exceptionTable`，详见 Ch3）跨越 await 点。恢复帧后根据当前 PC 线性扫描 `exceptionTable`，找到 `startPC <= pc < endPC` 的处理器。finally 中的 await 正常工作——finally 块的字节码序列包含 AWAIT 指令，挂起/恢复机制与普通 await 一致。
 
 ### async* 生成器
 
@@ -240,7 +242,7 @@ Future 完成后，通过 `scheduleMicrotask` 触发：
 
 **未捕获异常**：async\* 函数体抛出未被 catch 的异常时：
 
-1. 异常分发器查找 `handlerTable` 无匹配处理器
+1. 异常分发器查找 `exceptionTable`（详见 Ch3）无匹配处理器
 2. 执行 `controller.addError(error, stackTrace)` 将错误发送到 Stream
 3. 执行 `controller.close()` 关闭 Stream
 4. 帧从 `_runQueue` 移除
@@ -250,17 +252,19 @@ Future 完成后，通过 `scheduleMicrotask` 触发：
 1. `onCancel` 回调设置 `frame.cancelled = true`
 2. 若帧正在 yield 点挂起 → 恢复帧执行
 3. 帧恢复后，运行时在下一个 yield 点（或立即）检测 `cancelled` 标志
-4. 检测到取消 → 跳转到当前 PC 覆盖的 finally 处理器执行清理
+4. 检测到取消 → 在 `funcProto.exceptionTable` 中查找当前 PC 覆盖的 finally 处理器（详见 Ch3 异常分发），跳转执行清理
 5. finally 执行完毕后 `controller.close()`，帧生命周期结束
 6. 若无 finally 块 → 直接 `controller.close()`
 
-**await for 编译**：`await for` 是 async\* Stream 的消费端，与 YIELD 的生产端对称。编译器将 `await for (var item in stream)` 编译为 `stream.listen` + AWAIT_STREAM_NEXT 序列：
+**async\* 中的 await**：async\* 函数体内可以使用 `await` 表达式（如 `yield await fetchData()`）。await 在 async\* 中的行为与在普通 async 函数中完全一致——AWAIT 指令触发帧深保存，Future 完成后通过 `scheduleMicrotask` 恢复帧继续执行。区别仅在于帧最终通过 `controller.close()` 而非 `completer.complete()` 结束。
+
+**await for 编译**：`await for` 是 async\* Stream 的消费端，与 YIELD 的生产端对称。编译器将 `await for (var item in stream)` 编译为 `stream.listen` + AWAIT_STREAM_NEXT 序列。注意 Stream 和 StreamSubscription 是 VM 原生对象，其方法调用通过 `CALL_HOST` 路由到 HostClassWrapper（详见 Ch4）：
 
 ```
-CALL_VIRTUAL  rSubscription, rStream, 'listen'
-  // onData:  frame.resumeValue = value; resume
-  // onDone:  frame.resumeValue = SENTINEL_DONE; resume
-  // onError: frame.resumeException = e; resume
+CALL_HOST     rSubscription, <listen binding ID>   // stream.listen(...)
+  // onData:  frame.resumeValue = value; scheduleMicrotask 恢复
+  // onDone:  frame.resumeValue = SENTINEL_DONE; scheduleMicrotask 恢复
+  // onError: frame.resumeException = e; scheduleMicrotask 恢复
 LOOP_HEAD:
   AWAIT_STREAM_NEXT  rResult, LOOP_HEAD   // 挂起等待 stream 事件
   EQ_REF      rCmp, rResult, rDone
@@ -268,8 +272,8 @@ LOOP_HEAD:
   // ... 循环体 ...
   JUMP LOOP_HEAD
 LOOP_EXIT:
-  CALL_VIRTUAL  rFuture, rSubscription, 'cancel'
-  AWAIT         rFuture                    // await subscription.cancel()
+  CALL_HOST     rFuture, <cancel binding ID>       // subscription.cancel()
+  AWAIT         rFuture                             // await subscription.cancel()
 ```
 
 ### sync* 生成器
@@ -296,13 +300,13 @@ LOOP_EXIT:
    - 委托 iterator.moveNext() 返回 true → `current = iterator.current`，返回 true
    - 返回 false → 置 `delegateIterator = null`，继续执行原函数体
 3. 若 frame 尚未创建（首次调用）→ 从函数原型创建 DarticFrame
-4. **同步执行帧**直到遇到 YIELD、YIELD_STAR 或 RETURN：
-   - YIELD → `current = refStack[A]`，保存恢复点（Bx），返回 true
+4. **同步执行帧**（通过 `drive()` 驱动），直到遇到 YIELD、YIELD_STAR 或 RETURN：
+   - YIELD → `current = refStack[A]`，深保存帧状态（快照栈数据到帧对象，保存恢复点 Bx），退出 `drive()`，返回 true
    - YIELD_STAR → 获取 `refStack[A].iterator`，存入 `delegateIterator`，跳到步骤 2
    - RETURN / 函数体结束 → `isDone = true`，返回 false
    - 异常 → 沿调用栈传播给 moveNext 的调用者
 
-**帧与栈的交互**：sync\* 帧在 moveNext 执行期间**占用全局栈空间**（与同步调用帧一样），moveNext 返回时**不释放栈空间**（浅保存——仅保存 pc 和基址指针）。因为 moveNext 是同步调用，返回后调用者的帧在其上方活跃，直到下一次 moveNext 时 sync\* 帧从栈上原位恢复。这与 async 帧的深保存（快照+释放）不同——sync\* 不存在并发帧争用栈空间的问题。
+**帧与栈的交互**：sync\* 帧在 moveNext 执行期间**占用全局栈空间**（与同步调用帧一样）。当遇到 YIELD 时，执行**深保存**——将栈数据快照到帧对象（savedValueSlots / savedRefSlots），释放栈空间，然后从 `drive()` 返回，`moveNext()` 向调用者返回 true。下一次 `moveNext()` 调用时，重新进入 `drive()`，在栈顶分配新空间并从快照恢复帧数据（与 async 帧恢复流程相同）。必须使用深保存的原因是：moveNext 返回后调用者继续执行，其同步调用链会占用栈空间；若不快照释放，sync\* 帧的栈区间可能被调用者的后续帧覆盖。
 
 **已知限制**：sync\* 两个 yield 之间的计算如果耗时很长，会阻塞事件循环。这是 sync\* 的同步语义决定的，不做 fuel 限制处理。
 
@@ -310,7 +314,7 @@ LOOP_EXIT:
 
 ```
 INIT_ASYNC      A, Bx    创建 Completer<T>，refStack[A] = completer.future
-                          T 从 type 常量池 [Bx] 获取
+                          T 从常量池 refs[Bx] 取 TypeTemplate，实化后传入（详见 Ch6）
                           frame.resultCompleter = completer
 
 AWAIT           A, Bx    弹出 refStack[A] 作为待 await 的值

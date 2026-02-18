@@ -26,14 +26,16 @@
 
 ## 核心概念
 
-### 双栈模型
+### ISA 可见的双栈
 
-ISA 操作两个独立的栈：
+ISA 指令直接操作两个栈（完整的三栈模型——含 CallStack——详见 Ch2）：
 
 | 栈 | 底层结构 | 存储内容 | 寻址方式 |
 |----|---------|---------|---------|
 | 值栈（ValueStack） | 共享 `ByteBuffer`，叠加 `Int64List` (intView) 和 `Float64List` (doubleView) 两个视图 | int、double、bool（bool 编码为 0/1） | `valueStack[slot]` / `doubleView[slot]` |
 | 引用栈（RefStack） | `List<Object?>` | String、对象实例、闭包、null 等引用类型 | `refStack[slot]` |
+
+> 注意：运行时实际使用三栈模型（ValueStack + RefStack + CallStack）。CallStack 存储帧元数据（returnPC、savedFP 等），由执行引擎的 CALL/RETURN 逻辑隐式管理，ISA 指令不直接寻址 CallStack。
 
 **双视图安全约束**：intView 和 doubleView 共享底层 ByteBuffer，编译器必须保证——**同一值栈槽位在其活跃区间内只通过一种视图访问**。违反此不变式会导致位模式误读。编译器通过 `StackKind` 分类确保正确性：`int`/`bool` 变量只生成 intView 访问指令，`double` 变量只生成 doubleView 访问指令，同一槽位不会在不同类型间复用。
 
@@ -62,20 +64,21 @@ ISA 操作两个独立的栈：
 | cachedClassId | int | 单态缓存的类 ID（-1 = 未缓存） |
 | cachedMethodOffset | int | 缓存的方法入口偏移 |
 
-`CALL_VIRTUAL` 的操作数 C 编码 IC 表索引。IC 分发流程详见 Ch3 执行引擎。
+`CALL_VIRTUAL A, B, C` 的操作数 C 编码 IC 表索引（`funcProto.icTable[C]`）。IC 分发流程详见 Ch3 执行引擎。
 
 ## 指令编码格式
 
-所有指令固定 32 位，`Uint32List` 存储。8 位操作码 + 24 位操作数空间，支持四种编码格式：
+所有指令固定 32 位，`Uint32List` 存储。8 位操作码 + 24 位操作数空间，支持五种编码格式：
 
 ```
 ABC    [op:8][A:8][B:8][C:8]      三操作数：R(A) = R(B) op R(C)
 ABx    [op:8][A:8][Bx:16]         寄存器 + 无符号 16 位立即数
-AsBx   [op:8][A:8][sBx:16]        寄存器 + 有符号 16 位偏移（excess-K 编码）
-Ax     [op:8][Ax:24]              24 位无符号立即数（大范围跳转/常量索引）
+AsBx   [op:8][A:8][sBx:16]        寄存器 + 有符号 16 位偏移（excess-K 编码，K = 0x7FFF）
+Ax     [op:8][Ax:24]              24 位无符号立即数（常量索引等）
+sAx    [op:8][sAx:24]             24 位有符号立即数（大范围跳转，excess-K 编码，K = 0x7FFFFF）
 ```
 
-**编解码方式**：操作码通过 `instr & 0xFF` 提取；操作数通过位移和掩码提取（如 `A = (instr >> 8) & 0xFF`）。有符号偏移 sBx 使用 excess-K 编码（实际值 = 编码值 - 0x7FFF）。
+**编解码方式**：操作码通过 `instr & 0xFF` 提取；操作数通过位移和掩码提取（如 `A = (instr >> 8) & 0xFF`）。有符号偏移 sBx 使用 excess-K 编码（实际值 = 编码值 - 0x7FFF）；有符号偏移 sAx 同理（实际值 = 编码值 - 0x7FFFFF）。
 
 ### WIDE 前缀
 
@@ -94,7 +97,7 @@ WIDE    [0xFE][padding:24]            ← 前缀
 | ABC | `[_:8][extA:8][extB:8][extC:8]` | A/B/C 各 16 位 |
 | ABx | `[_:8][extA:8][extBx:16]` | A 16 位, Bx 32 位 |
 | AsBx | `[_:8][extA:8][extSBx:16]` | A 16 位, sBx 32 位有符号 |
-| Ax | `[_:8][extAx:24]` | Ax 48 位 |
+| Ax / sAx | `[_:8][extAx:24]` | Ax/sAx 48 位 |
 
 **WIDE 约束规则**：
 
@@ -123,7 +126,7 @@ WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不
 遇到 `WIDE`（0xFE）时的扩展解码流程：
 
 1. 识别 `op == 0xFE`，读取 `code[pc+1]`（扩展字）和 `code[pc+2]`（原指令）
-2. 从原指令提取操作码，确定编码格式（ABC / ABx / AsBx / Ax）
+2. 从原指令提取操作码，确定编码格式（ABC / ABx / AsBx / Ax / sAx）
 3. 从扩展字和原指令中分别提取高位和低位操作数
 4. 组合为完整操作数（高位左移 + 低位拼接）
 5. 执行语义操作
@@ -223,19 +226,21 @@ WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不
 0x38  GE_DBL        A, B, C
 0x39  EQ_DBL        A, B, C
 0x3A  EQ_REF        A, B, C       valueStack[A] = identical(refStack[B], refStack[C]) ? 1 : 0
-0x3B  EQ_GENERIC    A, B, C       valueStack[A] = refStack[B] == refStack[C] ? 1 : 0
+0x3B  EQ_GENERIC    A, B, C       valueStack[A] = refStack[B] == refStack[C] ? 1 : 0 (调用 operator==)
 0x3C-0x3F 预留
 ```
+
+`EQ_REF` 执行引用相等性检查（`identical()`），不调用任何方法。`EQ_GENERIC` 调用接收者的 `operator==`，支持用户自定义相等性语义。编译器根据静态类型选择：已知基本类型用 `EQ_INT`/`EQ_DBL`/`EQ_REF`，其他用 `EQ_GENERIC`。
 
 ### 控制流 (0x40-0x4F)
 
 ```
-0x40  JUMP          sBx           PC += sBx (AsBx 格式，A 未使用)
+0x40  JUMP          sBx           PC += sBx (AsBx 格式，A 未使用，固定为 0)
 0x41  JUMP_IF_TRUE  A, sBx        if valueStack[A] != 0 then PC += sBx
 0x42  JUMP_IF_FALSE A, sBx        if valueStack[A] == 0 then PC += sBx
 0x43  JUMP_IF_NULL  A, sBx        if refStack[A] == null then PC += sBx
 0x44  JUMP_IF_NNULL A, sBx        if refStack[A] != null then PC += sBx
-0x45  JUMP_AX       Ax            PC += Ax (大范围跳转，Ax 格式)
+0x45  JUMP_AX       sAx           PC += sAx (大范围跳转，Ax 格式，有符号 24 位，excess-K 编码，K = 0x7FFFFF)
 0x46-0x4F 预留
 ```
 
@@ -245,7 +250,7 @@ WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不
 0x50  CALL          A, B, C       refStack[A] = call refStack[B] with C args
 0x51  CALL_STATIC   A, Bx         refStack[A] = call staticFunc[Bx]
 0x52  CALL_HOST     A, Bx         refStack[A] = hostBindings.invoke(Bx, args)
-0x53  CALL_VIRTUAL  A, B, C       refStack[A] = refStack[B].method(IC)(args)
+0x53  CALL_VIRTUAL  A, B, C       refStack[A] = refStack[B].method(IC[C])(args)
 0x54  CALL_SUPER    A, Bx         refStack[A] = super.method[Bx](args)
 0x55  RETURN_REF    A             return refStack[A]
 0x56  RETURN_VAL    A             return valueStack[A] (需装箱)
@@ -253,20 +258,33 @@ WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不
 0x58-0x5F 预留
 ```
 
+**调用约定**：
+
+参数传递采用**调用者预布局**策略——编译器在调用者帧的栈顶预先将参数放置在被调用者帧的对应寄存器位置（值参数放值栈、引用参数放引用栈）。被调用者入口时直接使用这些寄存器，无需额外的参数复制。具体的帧布局详见 Ch2 栈帧布局节。
+
+- `CALL A, B, C`：B 为 refStack 中的 DarticClosure 或 DarticFuncProto 引用，C 为参数个数（编译器已将参数预布局到被调用者帧位置），返回值写入 refStack[A]
+- `CALL_VIRTUAL A, B, C`：B 为接收者在 refStack 中的寄存器，C 为 IC 表索引（IC 条目包含方法名和缓存的 classId/方法偏移）。参数个数由 DarticFuncProto 的元数据提供（IC 命中后从缓存的 funcProto 读取）
+- `CALL_STATIC A, Bx`：Bx 为函数表索引，参数个数由目标 DarticFuncProto 的元数据提供
+- `CALL_HOST A, Bx`：Bx 为宿主绑定表索引，参数通过引用栈传递（跨边界参数均需装箱）
+- `CALL_SUPER A, Bx`：Bx 为编译期解析的超类方法函数索引（Kernel 的 interfaceTarget 已确定具体方法）
+- `RETURN_REF A` / `RETURN_VAL A` / `RETURN_NULL`：将返回值写入调用者帧的 resultReg 寄存器（CallStack 中保存的目标位置），然后弹帧恢复调用者状态
+
 ### 对象操作 (0x60-0x6F)
 
 ```
-0x60  GET_FIELD_REF A, B, C       refStack[A] = refStack[B].field[C] (引用字段)
-0x61  SET_FIELD_REF A, B, C       refStack[A].field[C] = refStack[B]
-0x62  GET_FIELD_VAL A, B, C       valueStack[A] = refStack[B].valueField[C] (值字段)
-0x63  SET_FIELD_VAL A, B, C       refStack[A].valueField[C] = valueStack[B]
-0x64  NEW_INSTANCE  A, Bx         refStack[A] = allocate class[Bx]
-0x65  INSTANCEOF    A, B, Cx      valueStack[A] = refStack[B] is type[Cx] ? 1 : 0
-0x66  CAST          A, B, Cx      refStack[A] = refStack[B] as type[Cx]; throw if fail
-0x67  GET_FIELD_DYN A, B, Cx      refStack[A] = refStack[B].getProperty(names[Cx])
-0x68  SET_FIELD_DYN A, B, Cx      refStack[A].setProperty(names[Cx], refStack[B])
+0x60  GET_FIELD_REF A, B, C       refStack[A] = refStack[B].refFields[C] (引用字段，C 为编译期确定的字段偏移)
+0x61  SET_FIELD_REF A, B, C       refStack[A].refFields[C] = refStack[B]
+0x62  GET_FIELD_VAL A, B, C       valueStack[A] = refStack[B].valueFields[C] (值字段)
+0x63  SET_FIELD_VAL A, B, C       refStack[A].valueFields[C] = valueStack[B]
+0x64  NEW_INSTANCE  A, Bx         refStack[A] = allocate class[Bx] (ABx 格式)
+0x65  INSTANCEOF    A, B, C       valueStack[A] = refStack[B] is type[C] ? 1 : 0 (C 为类型常量池索引)
+0x66  CAST          A, B, C       refStack[A] = refStack[B] as type[C]; throw if fail (C 为类型常量池索引)
+0x67  GET_FIELD_DYN A, B, C       refStack[A] = refStack[B].getProperty(names[C]) (C 为 names 常量池索引)
+0x68  SET_FIELD_DYN A, B, C       refStack[A].setProperty(names[C], refStack[B])
 0x69-0x6F 预留
 ```
+
+> 注意：`INSTANCEOF`/`CAST`/`GET_FIELD_DYN`/`SET_FIELD_DYN` 的 C 操作数在 ABC 格式下仅 8 位（0-255）。当类型常量池或 names 常量池索引超过 255 时，需使用 WIDE 前缀扩展。
 
 ### 闭包 (0x70-0x77)
 
@@ -368,6 +386,7 @@ WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不
 | WIDE 扩展后寄存器上限 | 65536（16 位） | WIDE 前缀组合 |
 | 标准 Bx 范围 | 0-65535（16 位无符号） | ABx 编码格式 |
 | 标准 sBx 范围 | -32767 ~ +32768 | AsBx excess-K 编码（0 − 0x7FFF = −32767, 0xFFFF − 0x7FFF = +32768） |
+| 标准 sAx 范围 | -8388607 ~ +8388608 | sAx excess-K 编码（0 − 0x7FFFFF = −8388607, 0xFFFFFF − 0x7FFFFF = +8388608） |
 | WIDE 指令宽度 | 3 个字（前缀 + 扩展字 + 原指令） | WIDE 规范 |
 
 ## 已知局限与演进路径
@@ -396,6 +415,9 @@ int encodeAsBx(int op, int a, int sbx) =>
 int encodeAx(int op, int ax) =>
     op | (ax << 8);
 
+int encodesAx(int op, int sax) =>
+    op | ((sax + 0x7FFFFF) << 8);
+
 // 解码
 int decodeOp(int instr) => instr & 0xFF;
 int decodeA(int instr) => (instr >> 8) & 0xFF;
@@ -404,6 +426,7 @@ int decodeC(int instr) => (instr >> 24) & 0xFF;
 int decodeBx(int instr) => (instr >> 16) & 0xFFFF;
 int decodesBx(int instr) => decodeBx(instr) - 0x7FFF;
 int decodeAx(int instr) => (instr >> 8) & 0xFFFFFF;
+int decodesAx(int instr) => decodeAx(instr) - 0x7FFFFF;
 ```
 
 </details>

@@ -2,7 +2,7 @@
 
 ## 模块定位
 
-泛型系统负责在运行时表示、传递和检查参数化类型。它将 Kernel AST 中的类型信息编译为紧凑的 TypeTemplate，在运行时按需实例化为驻留的 DarticType，并提供 `is`/`as` 所需的子类型判定。泛型系统位于对象模型（Ch2）之上、编译器（Ch5）之下，为 Bridge 层（Ch4）的跨边界类型保真提供基础。
+泛型系统负责在运行时表示、传递和检查参数化类型。它消费编译器（Ch5）离线生成的 TypeTemplate 和 SuperTypeMap，在运行时按需实例化为驻留的 DarticType，并提供 `is`/`as` 所需的子类型判定。在架构分层中，泛型系统位于执行引擎（Ch3）和对象模型（Ch2）之上，同时为 Bridge 层（Ch4）的跨边界类型保真提供基础。
 
 ## 与其他模块的关系
 
@@ -81,32 +81,49 @@ CFE 已完成所有类型推断，解释器无需重做。Kernel 的 `DartType` 
 
 ### DarticType（驻留类型实例）
 
-运行时所有类型信息的统一表示。经 TypeRegistry 驻留后，结构相同的类型共享唯一实例。
+运行时所有类型信息的统一表示。经 TypeRegistry 驻留后，结构相同的类型共享唯一实例。DarticType 是一个密封类型家族，包含两个具体子类型：
+
+**DarticInterfaceType**（接口类型，含特殊类型 dynamic/void/Never/Null/FutureOr）：
 
 | 属性 | 类型 | 说明 |
 |------|------|------|
-| classId | int | 类的编译期 ID（与 DarticObject.classId 一致） |
+| classId | int | 类的编译期 ID（与 DarticObject.classId 一致；特殊类型使用预留 classId） |
 | typeArgs | `List<DarticType>` | 类型参数列表（驻留后的子类型引用，不可变） |
 | nullability | Nullability | nonNullable / nullable / undetermined 三态 |
 | _canonicalHash | int | 驻留时计算的结构哈希，用于桶定位 |
 
+**DarticFunctionType**（函数类型，结构化类型，无 classId）：
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| typeParamBounds | `List<DarticType>` | 泛型参数的上界（已驻留） |
+| requiredParamCount | int | 必需位置参数数量 |
+| positionalParams | `List<DarticType>` | 所有位置参数类型（已驻留） |
+| namedParams | `List<(String, DarticType, bool)>` | 命名参数三元组 (name, type, isRequired)，按 name 字典序 |
+| returnType | DarticType | 返回类型（已驻留） |
+| nullability | Nullability | 函数类型自身的可空性 |
+| _canonicalHash | int | 驻留时计算的结构哈希，用于桶定位 |
+
+两者共享 `nullability` 和 `_canonicalHash` 字段。isSubtypeOf 通过类型判断（`is DarticFunctionType`）分发到不同的检查路径。
+
 **Nullability 映射**：Kernel 的 `Nullability` 枚举有三个值——`nonNullable`、`nullable`、`undetermined`。`undetermined` 出现在类型参数边界中（如 `T extends Object?` 时 `T` 的可空性取决于实例化），运行时 resolveType 将类型参数替换为实际类型后，`undetermined` 不再出现。对于尚未解析的 TypeParameterTemplate，保留 `undetermined` 标记，resolveType 时由实际类型参数的 nullability 替代。
 
-**不变式**：驻留后 typeArgs 中的每个元素本身也已驻留，因此子类型比较可用 `identical()` 代替 `==`。
+**不变式**：驻留后所有嵌套的 DarticType 引用（typeArgs、positionalParams、namedParams 中的 type、returnType、typeParamBounds）本身也已驻留，因此子类型比较可用 `identical()` 代替 `==`。
 
 ### TypeTemplate（编译期类型描述）
 
-编译器将 Kernel 类型节点编码为 TypeTemplate，存入 .darticb 常量池 refs 分区。三种变体：
+编译器将 Kernel 类型节点编码为 TypeTemplate，存入 .darticb 常量池 refs 分区。四种变体：
 
 | 变体 | 含义 | resolveType 行为 |
 |------|------|-----------------|
 | ConcreteTypeTemplate | 不含类型参数引用的具体类型（如 `int`, `String`） | 直接返回预驻留的 DarticType |
 | TypeParameterTemplate | 对作用域内类型参数的引用（de Bruijn 索引） | 按 isClassTypeParam 标志从 ITA 或 FTA 中按 index 查找 |
-| GenericTypeTemplate | 含类型参数引用的参数化类型（如 `List<T>`） | 递归 resolveType 每个 typeArgTemplate，然后 intern 结果 |
+| GenericTypeTemplate | 含类型参数引用的参数化接口类型（如 `List<T>`） | 递归 resolveType 每个 typeArgTemplate，然后 intern 为 DarticInterfaceType |
+| FunctionTypeTemplate | 函数类型（如 `void Function(T)`），保留完整参数签名 | 递归 resolveType 所有内嵌 TypeTemplate，然后 intern 为 DarticFunctionType |
 
 #### FunctionTypeTemplate 编码
 
-FunctionType 的 TypeTemplate 需保留完整的参数签名信息，用于运行时函数子类型检查：
+FunctionTypeTemplate 需保留完整的参数签名信息，用于运行时函数子类型检查：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -117,11 +134,11 @@ FunctionType 的 TypeTemplate 需保留完整的参数签名信息，用于运�
 | returnType | TypeTemplate | 返回类型 |
 | nullability | Nullability | 函数类型自身的可空性 |
 
-resolveType 处理 FunctionTypeTemplate 时，递归解析所有内嵌 TypeTemplate（参数类型、返回类型、边界），然后 intern 为 DarticFunctionType。
+resolveType 处理 FunctionTypeTemplate 时，递归解析所有内嵌 TypeTemplate（参数类型、返回类型、边界），然后通过 `TypeRegistry.internFunction(...)` 驻留为 DarticFunctionType（详见上方 DarticFunctionType 字段定义）。
 
 ### TypeRegistry（驻留表）
 
-采用 bucket-hash 方案：以 `_structuralHash(classId, typeArgs, nullability)` 为键分桶，桶内线性扫描。碰撞率低（典型程序的类型组合有限），查找接近 O(1)。
+采用 bucket-hash 方案，桶内线性扫描。TypeRegistry 提供两个驻留入口：`intern(classId, typeArgs, nullability)` 驻留接口类型（DarticInterfaceType），`internFunction(...)` 驻留函数类型（DarticFunctionType）。两者共享同一哈希桶空间，以 `_structuralHash(...)` 为键分桶。碰撞率低（典型程序的类型组合有限），查找接近 O(1)。
 
 **三个不变式**：
 
@@ -129,7 +146,7 @@ resolveType 处理 FunctionTypeTemplate 时，递归解析所有内嵌 TypeTempl
 2. **`hashCode` 使用 `identityHashCode`**：子类型已驻留，哈希计算无需递归遍历类型树
 3. **SubtypeTestCache 键比较极快**：缓存键为 `(DarticType, DarticType)` 对，两次 `identical()` 即可判等
 
-预注册的常用类型（启动时即驻留）：`int`, `double`, `String`, `bool`, `dynamic`, `Object?`, `Never`。
+预注册的常用类型（启动时即驻留）：`int`, `double`, `String`, `bool`, `Null`（= `Never?`）, `Object`, `Object?`, `dynamic`, `void`, `Never`。
 
 ### SuperTypeMap（超类型参数映射表）
 
@@ -147,7 +164,7 @@ resolveType 处理 FunctionTypeTemplate 时，递归解析所有内嵌 TypeTempl
 
 ### 类型参数传递（ITA / FTA）
 
-每个栈帧预留两个引用栈槽位传递类型参数：
+每个栈帧预留两个引用栈槽位传递类型参数（栈帧布局定义详见 Ch2）：
 
 ```
 引用栈帧布局：
@@ -166,17 +183,18 @@ resolveType 处理 FunctionTypeTemplate 时，递归解析所有内嵌 TypeTempl
 
 **嵌套泛型函数的 FTA 连接**：多层泛型函数嵌套时，FTA 是所有封闭泛型函数类型参数的连接向量。编译器在编译内层函数时确定 FTA 布局（如 `[B, C]`），TypeParameterType 的 de Bruijn 索引直接映射到 FTA 偏移。
 
-**闭包中的类型参数捕获**：闭包在泛型上下文中创建时，捕获当前的 ITA 和 FTA（作为 capturedITA / capturedFTA 存储在闭包对象中）。闭包执行时恢复到新帧的对应槽位。
+**闭包中的类型参数捕获**：闭包在泛型上下文中创建时，需捕获当前的 ITA 和 FTA。编译器将 ITA/FTA 作为额外的上值（upvalue）捕获到 DarticClosure 的 upvalues 列表中（复用 Ch2 定义的 Upvalue 机制，不引入额外字段）。闭包执行时，从 upvalues 中恢复 ITA/FTA 到新帧的 rsp+0 / rsp+1 槽位。
 
 ### resolveType：类型模板解析
 
 `INSTANCEOF` / `CAST` 指令的目标类型编码为 TypeTemplate（可能含 TypeParameterTemplate），运行时必须在调用 isSubtypeOf 之前解析为具体 DarticType。
 
-**解析三分支**：
+**解析四分支**：
 
 1. **ConcreteTypeTemplate** → 直接返回预驻留的 DarticType（O(1)）
 2. **TypeParameterTemplate** → 读取 isClassTypeParam 标志，从当前帧的 ITA（类类型参数）或 FTA（函数类型参数）中按 index 取值（O(1)）
-3. **GenericTypeTemplate** → 对每个 typeArgTemplate 递归调用 resolveType，收集解析后的类型参数列表，调用 `TypeRegistry.intern(classId, resolvedArgs, nullability)` 驻留并返回
+3. **GenericTypeTemplate** → 对每个 typeArgTemplate 递归调用 resolveType，收集解析后的类型参数列表，调用 `TypeRegistry.intern(classId, resolvedArgs, nullability)` 驻留并返回 DarticInterfaceType
+4. **FunctionTypeTemplate** → 递归 resolveType 所有内嵌 TypeTemplate（参数类型、返回类型、类型参数边界），调用 `TypeRegistry.internFunction(...)` 驻留并返回 DarticFunctionType
 
 **INSTANCEOF 指令执行流**（以 `value is T` 为例）：
 
@@ -192,8 +210,8 @@ Kernel 的 `Instantiation` 节点表示泛型函数的类型实例化（如 `ide
 
 1. 编译器为 `Instantiation` 生成包装闭包的 `DarticFuncProto`，其参数签名与原函数一致（去掉类型参数部分）
 2. 将实例化的类型参数编译为 TypeTemplate 列表，存入常量池
-3. 运行时创建包装闭包时，resolveType 解析类型参数列表为具体 DarticType，存入闭包的 capturedFTA
-4. 调用包装闭包时，capturedFTA 恢复到新帧的 FTA 槽位，然后转发调用原函数
+3. 运行时创建包装闭包时，resolveType 解析类型参数列表为具体 DarticType，作为上值捕获到闭包中（复用 Upvalue 机制）
+4. 调用包装闭包时，从上值中恢复类型参数到新帧的 FTA 槽位（rsp+1），然后转发调用原函数
 
 `InstantiationConstant`（常量池中的泛型函数实例化）在编译期即完成类型参数绑定，运行时直接使用预计算的闭包常量。
 
@@ -210,15 +228,15 @@ Kernel 的 `Instantiation` 节点表示泛型函数的类型实例化（如 `ide
 | 3 | 底类型 | sub 为 `Never` | true |
 | 4 | 可空性拒绝 | sub 为 nullable 且 sup 为 nonNullable | false |
 | 5 | Null 类型 | sub.classId 为 Null | sup 为 nullable 则 true，否则 false |
-| 6 | 非空到可空提升 | sup 为 nullable，构造 sup 的 nonNullable 版本 supBase，递归 `isSubtypeOf(sub, supBase)` | 递归结果 |
+| 6 | 可空超类型分解 | sup 为 nullable，构造 supBase = sup.nonNullable，subBase = sub.nonNullable，递归 `isSubtypeOf(subBase, supBase)` | 递归结果 |
 | 7 | FutureOr 作为超类型 | sup.classId 为 FutureOr | `sub <: Future<T> \|\| sub <: T` |
 | 8 | FutureOr 作为子类型 | sub.classId 为 FutureOr | `Future<T> <: sup && T <: sup` |
 | 9 | 函数类型分发 | sub 或 sup 为 FunctionType | 详见下方分发逻辑 |
 | 10 | Record 类型分发 | sub 或 sup 为 RecordType | 详见下方分发逻辑（Phase 2） |
-| 11 | 超类型参数查找 | 查 SuperTypeMap 获取 sub 在 sup 类层级中的映射 | 无映射 → false |
-| 12 | 类型参数递归检查 | 用 sub 的 typeArgs 实例化超类型映射，逐参数递归 isSubtypeOf | 全部通过 → true |
+| 11 | 超类型参数查找 | 查 `SuperTypeMap[sub.classId][sup.classId]` 获取 `List<TypeArgTemplate>` | 无映射 → false |
+| 12 | 类型参数递归检查 | 解析每个 TypeArgTemplate（Concrete → 对应 DarticType，TypeParam(i) → sub.typeArgs[i]），得到 sub 视角下的超类型参数列表，逐参数与 sup.typeArgs 递归 isSubtypeOf | 全部通过 → true |
 
-**规则 6 说明**：旧版将非空到可空提升简化为 classId + typeArgs 匹配，但这无法处理继承关系（如 `int <: num?`）。正确做法是剥离 sup 的可空性后递归，由后续规则处理类层级关系。
+**规则 6 说明**：当 sup 为 nullable 时，同时剥离 sub 和 sup 的可空性后递归。这样做的正确性基于：到达规则 6 时，如果 sub 为 nullable，则 sup 也必为 nullable（否则规则 4 已拒绝）。`T? <: S?` 等价于 `T <: S`（因为 Null <: S? 已由规则 5 单独处理）。如果 sub 已经是 nonNullable，则剥离操作是无操作（幂等），不影响结果。示例：`int? <: num?` → 剥离后递归 `isSubtypeOf(int, num)` → 规则 11-12 通过 SuperTypeMap 检查 → true。
 
 **规则 9 函数类型分发逻辑**：
 
@@ -236,6 +254,11 @@ Kernel 的 `Instantiation` 节点表示泛型函数的类型实例化（如 `ide
 | RecordType | RecordType | 调用 `isRecordSubtype(sub, sup)`——形状匹配 + 字段类型协变递归检查 |
 | RecordType | `Record` 类 / `Object` | true |
 | 非 RecordType | RecordType | false |
+
+**规则 11-12 示例**：判定 `List<int> <: Iterable<num>`。
+1. 规则 11：查 `SuperTypeMap[List][Iterable]`，得到 `[TypeParam(0)]`（List 的第一个类型参数传递给 Iterable）
+2. 规则 12：解析 `TypeParam(0)` → `sub.typeArgs[0]` = `int`。比较 `isSubtypeOf(int, num)` → true
+3. 结果：true
 
 初期使用直接递归计算。调用点缓存和全局 SubtypeTestCache 留待 profiling 后添加。
 
@@ -291,9 +314,17 @@ TypeRegistry 在驻留时执行以下规范化规则，确保等价类型共享�
 
 > **Phase 2**：为高频泛型组合预生成类型化创建路径。Bridge 生成器分析解释器代码中的集合创建点，为 `List<int>`、`List<String>`、`Map<String, dynamic>` 等常见组合生成专用工厂，确保跨边界后 `is` 检查正确。触发条件：业务代码需要跨边界传递参数化集合并做类型检查。
 
-### VM → 解释器
+### extractType：运行时类型提取
 
-VM 对象进入解释器时，通过类型提取器（extractType）获取 DarticType。提取流程按以下优先级依次匹配：
+INSTANCEOF/CAST 指令需要从对象提取运行时类型（DarticType）。extractType 按接收者类型分两条路径：
+
+**解释器对象路径**（接收者为 DarticObject）：
+
+直接返回 `DarticObject.runtimeType`（O(1)）。DarticObject 的 runtimeType 在对象创建时（`NEW_INSTANCE` / `ALLOC_GENERIC`）由构造流程设置，包含完整的泛型类型参数。
+
+**宿主对象路径**（接收者为 VM 原生对象）：
+
+VM 对象进入解释器时，按以下优先级依次匹配：
 
 1. **基本类型**：`int` / `double` / `String` / `bool` / `Null` → 返回 TypeRegistry 中预注册的 DarticType（O(1)）
 2. **集合类型**：`List<E>` / `Map<K,V>` / `Set<E>` → 利用 Dart reified generics 通过泛型辅助函数提取元素类型参数（如 `_extractListElementType<E>(List<E> list)`），递归 extractType 每个类型参数后 intern
@@ -310,7 +341,7 @@ CFE 生成的 forwarding stub（`AsExpression`）在字节码中表现为 `CHECK
 
 | 约束 | 值 | 来源 |
 |------|-----|------|
-| ITA/FTA 栈帧开销 | 每次泛型调用额外 1-2 个引用槽位（8-16 字节） | 引用栈帧布局（rsp+0, rsp+1） |
+| ITA/FTA 栈帧开销 | 所有帧均预留 rsp+0（ITA）和 rsp+1（FTA）两个引用槽位，非泛型时为 null | 引用栈帧布局（详见 Ch2） |
 | TypeArgs 传递方式 | 指针传递（DarticType 已驻留） | 驻留设计保证 |
 | TypeRegistry 桶内扫描 | 线性 O(k)，k 为桶内碰撞数（典型 k < 3） | bucket-hash 方案 |
 | SuperTypeMap 查找 | O(1) 两级 Map 查找 | 编译器预计算 |
@@ -333,22 +364,30 @@ CFE 生成的 forwarding stub（`AsExpression`）在字节码中表现为 `CHECK
 <summary>附录：参考实现</summary>
 
 ```dart
-// TypeRegistry.intern —— bucket-hash 驻留核心逻辑
-DarticType intern(int classId, List<DarticType> typeArgs, Nullability nullability) {
+// TypeRegistry.intern —— bucket-hash 驻留核心逻辑（接口类型）
+DarticInterfaceType intern(int classId, List<DarticType> typeArgs, Nullability nullability) {
   final hash = _structuralHash(classId, typeArgs, nullability);
-  final bucket = _buckets[hash];
+  final bucketIndex = hash & _bucketMask; // _bucketMask = _buckets.length - 1（2 的幂）
+  final bucket = _buckets[bucketIndex];
   if (bucket != null) {
     for (final existing in bucket) {
-      if (_structuralEquals(existing, classId, typeArgs, nullability)) {
+      if (existing is DarticInterfaceType &&
+          _structuralEquals(existing, classId, typeArgs, nullability)) {
         return existing;
       }
     }
   }
-  final type = DarticType._(classId: classId, typeArgs: List.unmodifiable(typeArgs), nullability: nullability);
+  final type = DarticInterfaceType._(
+    classId: classId,
+    typeArgs: List.unmodifiable(typeArgs),
+    nullability: nullability,
+  );
   type._canonicalHash = hash;
-  (_buckets[hash] ??= []).add(type);
+  (_buckets[bucketIndex] ??= []).add(type);
   return type;
 }
+
+// TypeRegistry.internFunction —— 函数类型驻留（省略，结构类似）
 ```
 
 </details>
