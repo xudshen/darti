@@ -38,10 +38,14 @@ class DarticFuncProto {
     required this.valueRegCount,
     required this.refRegCount,
     required this.paramCount,
+    this.name = '',
     this.icTable = const [],
     this.exceptionTable = const [],
     this.upvalueDescriptors = const [],
   });
+
+  /// Human-readable function name (for debugging and serialization).
+  final String name;
 
   /// Unique function identifier, used for CallStack frame records
   /// and global function table indexing.
@@ -69,7 +73,7 @@ class DarticFuncProto {
   final List<UpvalueDescriptor> upvalueDescriptors;
 
   @override
-  String toString() => 'FuncProto(#$funcId, '
+  String toString() => 'FuncProto($name#$funcId, '
       'vRegs=$valueRegCount, rRegs=$refRegCount, '
       'params=$paramCount, codeLen=${bytecode.length})';
 }

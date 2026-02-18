@@ -141,17 +141,19 @@ feat(compiler): add minimal Kernel-to-bytecode compiler
 
 ## 核心发现
 
-> _(执行时填写：Kernel AST 中算术运算的实际节点类型、寄存器分配策略选择、CFE 输出的意外结构等)_
+- **Kernel AST 中算术运算节点类型**：`a + b` 表示为 `InstanceInvocation(receiver=a, name='+', arguments=[b])`，且 `int` 继承 `num`，所以 `interfaceTarget.enclosingClass` 是 `num` 而非 `int`。需要同时检查 `numClass` 和 `intClass`，并通过 `_inferExprType` 推断 receiver 实际类型来决定是否特化为 int 指令。
+- **调用约定与寄存器分配冲突**：VM 的 `CALL_STATIC` 设置 `callee.vBase = caller.vBase + caller.valueRegCount`，即 outgoing args 必须放在 `valueRegCount` 之后。但 `valueRegCount` 在函数编译完成前未知。checkpoint/restore 方案对嵌套调用（如 `add(square(2), square(3))`）失败。**解决方案：post-patching** — 编译 arg 表达式到 frame 内的临时寄存器，emit 占位 MOVE 指令，函数编译完成后用已知的 `valueRegCount` 回填目标寄存器。
+- **CFE 输出结构**：`int f() => 42;` 在 Kernel 中表示为 `ReturnStatement(IntLiteral(42))`，而非裸 expression。`void` 函数的 body 是 `Block` 包含 `ExpressionStatement` + `ReturnStatement(null)`。
 
 ## Batch 完成检查
 
-- [ ] 1.4.1 Kernel AST 遍历骨架
-- [ ] 1.4.2 编译字面量表达式
-- [ ] 1.4.3 编译算术表达式
-- [ ] 1.4.4 编译语句
-- [ ] 1.4.5 编译函数（寄存器分配）
-- [ ] 1.4.6 端到端测试
-- [ ] `fvm dart analyze` 零警告
-- [ ] `fvm dart test` 全部通过
+- [x] 1.4.1 Kernel AST 遍历骨架
+- [x] 1.4.2 编译字面量表达式
+- [x] 1.4.3 编译算术表达式
+- [x] 1.4.4 编译语句
+- [x] 1.4.5 编译函数（寄存器分配）
+- [x] 1.4.6 端到端测试
+- [x] `fvm dart analyze` 零警告（仅剩 pubspec path dependency 预存警告）
+- [x] `fvm dart test` 全部通过（350 tests）
 - [ ] commit 已提交
 - [ ] overview.md 已更新
