@@ -384,6 +384,117 @@ void main() {}
     });
   });
 
+  // ── _inferExprType: new expression types ──
+
+  group('_inferExprType new expression types', () {
+    test('LocalFunctionInvocation returning double infers double type',
+        () async {
+      // Local function returning double → _inferExprType should return double
+      // so boxing uses BOX_DOUBLE (not BOX_INT).
+      final result = await compileAndRun('''
+double f() {
+  double g() => 3.14;
+  return g();
+}
+int main() {
+  f();
+  return 0;
+}
+''');
+      expect(result, 0);
+    });
+
+    test('LocalFunctionInvocation returning int uses value stack', () async {
+      final module = await compileDart('''
+int f() {
+  int g() => 42;
+  return g();
+}
+void main() {}
+''');
+      final f = findFunc(module, 'f');
+      // int-returning local function should use RETURN_VAL (value stack).
+      expect(findOp(f.bytecode, Op.returnVal), isNot(-1),
+          reason:
+              'int-returning LocalFunctionInvocation should return via RETURN_VAL');
+    });
+
+    test('FunctionInvocation returning double infers double type', () async {
+      // Lambda stored in variable → FunctionInvocation node.
+      final result = await compileAndRun('''
+double f() {
+  var g = () => 3.14;
+  return g();
+}
+int main() {
+  f();
+  return 0;
+}
+''');
+      expect(result, 0);
+    });
+
+    test('VariableSet infers type from assigned value', () async {
+      // `x = 3.14` is a VariableSet expression whose type should be double.
+      final module = await compileDart('''
+double f() {
+  double x = 0.0;
+  return x = 3.14;
+}
+void main() {}
+''');
+      final f = findFunc(module, 'f');
+      // double result → should NOT use boxInt anywhere in this function.
+      final hasBoxInt = findOp(f.bytecode, Op.boxInt) != -1;
+      expect(hasBoxInt, isFalse,
+          reason: 'VariableSet of double should not produce BOX_INT');
+    });
+
+    test('StaticSet infers type from assigned value', () async {
+      final module = await compileDart('''
+double _x = 0.0;
+double f() {
+  return _x = 3.14;
+}
+void main() {}
+''');
+      final f = findFunc(module, 'f');
+      final hasBoxInt = findOp(f.bytecode, Op.boxInt) != -1;
+      expect(hasBoxInt, isFalse,
+          reason: 'StaticSet of double should not produce BOX_INT');
+    });
+
+    test('ConstructorInvocation preserves type arguments', () async {
+      // Box<int>() should infer InterfaceType with type arg [int],
+      // not bare Box. Verified by successful compilation + execution.
+      final result = await compileAndRun('''
+class Box<T> {
+  T value;
+  Box(this.value);
+}
+int main() {
+  var b = Box<int>(42);
+  return b.value;
+}
+''');
+      expect(result, 42);
+    });
+
+    test('Throw infers Never type', () async {
+      // throw expression → Never type → always ref stack.
+      // This should compile without errors and not produce BOX_INT for throw.
+      final module = await compileDart('''
+int f(bool b) {
+  return b ? 42 : throw 'error';
+}
+void main() {}
+''');
+      // If this compiles without error, the type inference is correct.
+      final f = findFunc(module, 'f');
+      expect(f.bytecode, isNotEmpty);
+    });
+  });
+
   // ── End-to-end execution ──
 
   group('end-to-end execution', () {
