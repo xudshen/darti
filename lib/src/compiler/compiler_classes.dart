@@ -375,6 +375,13 @@ extension on DarticCompiler {
             _inferExprType(arguments.positional[i]),
           );
           argLoc = ResultLoc.ref;
+        } else if (paramKind.isValue && argLoc == ResultLoc.ref) {
+          final unboxOp = paramKind == StackKind.doubleVal
+              ? Op.unboxDouble : Op.unboxInt;
+          final valReg = _allocValueReg();
+          _emitter.emit(encodeABC(unboxOp, valReg, argReg, 0));
+          argReg = valReg;
+          argLoc = ResultLoc.value;
         }
       }
       argTemps.add((argReg, argLoc));

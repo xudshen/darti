@@ -223,6 +223,124 @@ int main() {
     });
   });
 
+  group('generic field ref/value coercion', () {
+    // A. Bool conditions
+
+    test('if (Box<bool>.value) — condition unbox', () async {
+      final result = await compileAndRun('''
+class Box<T> {
+  T value;
+  Box(this.value);
+}
+int main() {
+  Box<bool> b = Box<bool>(true);
+  if (b.value) return 1;
+  return 0;
+}
+''');
+      expect(result, 1);
+    });
+
+    test('!Box<bool>.value — Not unbox', () async {
+      final result = await compileAndRun('''
+class Box<T> {
+  T value;
+  Box(this.value);
+}
+int main() {
+  Box<bool> b = Box<bool>(false);
+  if (!b.value) return 1;
+  return 0;
+}
+''');
+      expect(result, 1);
+    });
+
+    test('Box<bool>.value && true — LogicalExpression unbox', () async {
+      final result = await compileAndRun('''
+class Box<T> {
+  T value;
+  Box(this.value);
+}
+int main() {
+  Box<bool> b = Box<bool>(true);
+  if (b.value && true) return 1;
+  return 0;
+}
+''');
+      expect(result, 1);
+    });
+
+    test('Box<bool>.value ? 1 : 0 — ConditionalExpression condition unbox',
+        () async {
+      final result = await compileAndRun('''
+class Box<T> {
+  T value;
+  Box(this.value);
+}
+int main() {
+  Box<bool> b = Box<bool>(true);
+  return b.value ? 1 : 0;
+}
+''');
+      expect(result, 1);
+    });
+
+    // B. Function arguments
+
+    test('add(Box<int>.value, 5) — StaticInvocation ref→value arg', () async {
+      final result = await compileAndRun('''
+class Box<T> {
+  T value;
+  Box(this.value);
+}
+int add(int a, int b) => a + b;
+int main() {
+  Box<int> b = Box<int>(10);
+  return add(b.value, 5);
+}
+''');
+      expect(result, 15);
+    });
+
+    test('obj.method(Box<int>.value) — VirtualCall ref→value arg', () async {
+      final result = await compileAndRun('''
+class Box<T> {
+  T value;
+  Box(this.value);
+}
+class Adder {
+  int add(int x) => x + 100;
+}
+int main() {
+  Box<int> b = Box<int>(7);
+  Adder a = Adder();
+  return a.add(b.value);
+}
+''');
+      expect(result, 107);
+    });
+
+    // C. Variable reassignment
+
+    test('int v = 0; v = Box<int>.value; return v; — VariableSet ref→value',
+        () async {
+      final result = await compileAndRun('''
+class Box<T> {
+  T value;
+  Box(this.value);
+}
+int main() {
+  Box<int> b = Box<int>(42);
+  int v = 0;
+  v = b.value;
+  return v;
+}
+''');
+      expect(result, 42);
+    });
+  });
+
   group('generic class inheritance', () {
     test('non-generic child extends generic parent: IntBox extends Box<int>',
         () async {

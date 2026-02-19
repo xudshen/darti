@@ -275,7 +275,10 @@ class DarticInterpreter {
         case Op.unboxInt: // UNBOX_INT A, B — valueStack[A] = refStack[B] as int
           final a = (instr >> 8) & 0xFF;
           final b = (instr >> 16) & 0xFF;
-          vs.writeInt(vBase + a, rs.read(rBase + b) as int);
+          final ubVal = rs.read(rBase + b);
+          // Bool values from generic fields are stored as Dart bool on the ref
+          // stack but share int (0/1) representation on the value stack.
+          vs.writeInt(vBase + a, ubVal is bool ? (ubVal ? 1 : 0) : ubVal as int);
 
         case Op.unboxDouble: // UNBOX_DOUBLE A, B — doubleView[A] = refStack[B] as double
           final a = (instr >> 8) & 0xFF;

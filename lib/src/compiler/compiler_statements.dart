@@ -77,7 +77,8 @@ extension on DarticCompiler {
 
   void _compileIfStatement(ir.IfStatement stmt) {
     // 1. Compile the condition expression -> result on value stack.
-    final (condReg, _) = _compileExpression(stmt.condition);
+    var (condReg, condLoc) = _compileExpression(stmt.condition);
+    condReg = _ensureBoolValue(condReg, condLoc);
 
     // 2. JUMP_IF_FALSE condReg -> else/end (placeholder).
     final jumpToElse = _emitter.emitPlaceholder();
@@ -122,7 +123,8 @@ extension on DarticCompiler {
     final loopStartPC = _emitter.currentPC;
 
     // 1. Compile condition.
-    final (condReg, _) = _compileExpression(stmt.condition);
+    var (condReg, condLoc) = _compileExpression(stmt.condition);
+    condReg = _ensureBoolValue(condReg, condLoc);
 
     // 2. JUMP_IF_FALSE -> exit (placeholder).
     final jumpToExit = _emitter.emitPlaceholder();
@@ -163,7 +165,8 @@ extension on DarticCompiler {
     int? condReg;
     int? jumpToExit;
     if (stmt.condition != null) {
-      final (reg, _) = _compileExpression(stmt.condition!);
+      var (reg, regLoc) = _compileExpression(stmt.condition!);
+      reg = _ensureBoolValue(reg, regLoc);
       condReg = reg;
       jumpToExit = _emitter.emitPlaceholder();
     }
@@ -202,7 +205,8 @@ extension on DarticCompiler {
     _compileStatement(stmt.body);
 
     // 3. Compile condition.
-    final (condReg, _) = _compileExpression(stmt.condition);
+    var (condReg, condLoc) = _compileExpression(stmt.condition);
+    condReg = _ensureBoolValue(condReg, condLoc);
 
     // 4. JUMP_IF_TRUE backward to loop start.
     final jumpPC = _emitter.currentPC;
@@ -458,7 +462,8 @@ extension on DarticCompiler {
 
   void _compileAssertStatement(ir.AssertStatement stmt) {
     // Compile the condition expression.
-    final (condReg, _) = _compileExpression(stmt.condition);
+    var (condReg, condLoc) = _compileExpression(stmt.condition);
+    condReg = _ensureBoolValue(condReg, condLoc);
 
     // Determine message constant pool index.
     // 0xFFFF = sentinel for "no message".

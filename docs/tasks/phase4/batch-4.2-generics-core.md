@@ -199,6 +199,7 @@ feat(generics): add reified generics with DarticType residency
 - **`_classToClassId` vs `_typeClassIdLookup` 分离**：避免 core type classIds 污染编译器的 EqualsCall dispatch 和 constructor resolution 等决策
 - **TypeParameterType 解析**：`_currentClassTypeParams` (ITA) 和 `_currentFunctionTypeParams` (FTA) 必须同时传递给 `dartTypeToTemplate`，否则 `is T` 中的 T 会退化为 DynamicTemplate（is dynamic 始终为 true）
 - **泛型类字段的 operator dispatch** ~~局限~~（已修复）：`_inferExprType` 对 InstanceGet 改用 `expr.resultType`（Kernel 已替换类型参数），对 InstanceInvocation fallback 改用 `expr.functionType.returnType`。同时 `_emitBinaryOp`/`_emitUnaryOp`/`_compileEqualsCall` 等消费端增加 ref-stack 操作数 unbox
+- **泛型字段 ref/value 消费端遗留**（二次修复）：三类消费端在泛型字段 ref-stack 值被类型推断为 int/double/bool 后仍假设 value-stack：(A) Bool 条件（if/while/for/do/assert/not/logical/conditional）需 `_ensureBoolValue` unbox；(B) 函数参数需反向 `else if (paramKind.isValue && argLoc == ResultLoc.ref)` unbox；(C) `_compileVariableSet` 需检查 binding loc vs src loc 做 coerce。另外 `UNBOX_INT` 解释器端需兼容 Dart `bool` → `int`（0/1）转换
 - **SubtypeChecker 实现范围**：Phase 1 实现规则 1-3, 11-12（identical 快速路径、顶类型、底类型、SuperTypeMap + 类型参数递归），规则 4-10 留 Batch 4.3
 
 ## Batch 完成检查

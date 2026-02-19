@@ -604,6 +604,18 @@ class DarticCompiler {
     return (resultReg, ResultLoc.value);
   }
 
+  /// Ensures a boolean expression result is on the value stack.
+  /// Bool values from generic fields may be on the ref stack; this
+  /// unboxes them so JUMP_IF_FALSE/JUMP_IF_TRUE/BIT_XOR can use them.
+  int _ensureBoolValue(int reg, ResultLoc loc) {
+    if (loc == ResultLoc.ref) {
+      final valReg = _allocValueReg();
+      _emitter.emit(encodeABC(Op.unboxInt, valReg, reg, 0));
+      return valReg;
+    }
+    return reg;
+  }
+
   /// Returns true if [op] is a double binary opcode (arithmetic or comparison).
   bool _isDoubleBinaryOp(int op) =>
       (op >= Op.addDbl && op <= Op.divDbl) ||
