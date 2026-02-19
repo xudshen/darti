@@ -71,6 +71,30 @@
 
 ---
 
-## Phase 4-6: 待规划
+## Phase 4: 高级 OOP + 泛型
+
+**目标：** 实现泛型运行时系统（Ch6）、mixin/接口/类修饰符、完整子类型检查，通过 co19 harness v2 验证
+
+**Task 目录：** [`docs/tasks/phase4/`](phase4/README.md)
+
+| Batch | 描述 | Task 数 | 状态 |
+|-------|------|---------|------|
+| [4.1](phase4/batch-4.1-mixin-interface.md) | Mixin 与接口 | 3 | |
+| [4.2](phase4/batch-4.2-generics-core.md) | 泛型核心 (Ch6) | 6 | |
+| [4.3](phase4/batch-4.3-type-system.md) | 类型系统 | 3 | |
+| [4.4](phase4/batch-4.4-co19-harness-v2.md) | co19 Harness v2 | 4 | |
+
+**里程碑：**
+- [ ] co19 `Language/Generics` 通过率 > 50%
+- [ ] co19 `Language/Mixins` 通过率 > 50%
+- [ ] co19 `Language/Interfaces` 通过率 > 50%
+- [ ] co19 `TypeSystem/subtyping` 核心子集通过率 > 30%
+- [ ] co19 `LanguageFeatures/Class-modifiers` 通过率 > 30%（约 60% 为负面测试）
+- [ ] Phase 2-3 类别零回归（或回归已修复）
+- [ ] Phase 2-3 类别通过率较上期有提升（泛型解锁大量之前的类型相关测试）
+
+---
+
+## Phase 5-6: 待规划
 
 详见 [`docs/plans/development-roadmap.md`](../plans/development-roadmap.md)

@@ -417,7 +417,7 @@ int main() => add(1, 2); // => 3
 
 ### Batch 4.2: 泛型核心 (Ch6)
 
-- [ ] 4.2.1 DarticType 数据结构 + 驻留表 → `lib/src/runtime/type.dart`
+- [ ] 4.2.1 DarticType 数据结构 + 驻留表 → `lib/src/runtime/dartic_type.dart`, `lib/src/runtime/type_registry.dart`
 - [ ] 4.2.2 ITA/FTA 槽位 + PUSH_ITA/PUSH_FTA → Ch6 指令实现
 - [ ] 4.2.3 INSTANTIATE_TYPE + 类型参数传递 → Ch6 指令实现
 - [ ] 4.2.4 INSTANCEOF/CAST 子类型检查 → `Language/Generics/`
@@ -432,8 +432,8 @@ int main() => add(1, 2); // => 3
 ### Batch 4.3: 类型系统
 
 - [ ] 4.3.1 子类型检查算法实现 → `TypeSystem/subtyping/` 核心子集
-- [ ] 4.3.2 空安全类型检查（T? / T / Null） → `LanguageFeatures/nnbd/`
-- [ ] 4.3.3 Flow analysis 类型提升（type promotion） → `TypeSystem/flow-analysis/`
+- [ ] 4.3.2 空安全类型检查（T? / T / Null） → 实现空安全运行时支持（`LanguageFeatures/nnbd/` 作为后续验证参考，不纳入 Phase 4 co19 主验证范围）
+- [ ] 4.3.3 Flow analysis 类型提升（type promotion） → 编译 CFE 类型提升节点（`TypeSystem/flow-analysis/` 作为后续验证参考，不纳入 Phase 4 co19 主验证范围）
 
 **commit:** `feat: support subtype checking, null safety, and type promotion`
 
@@ -446,7 +446,7 @@ int main() => add(1, 2); // => 3
 
 - [ ] 4.4.1 `// SharedOptions=--enable-experiment=...` 解析与传递 → 扩展 co19_runner
 - [ ] 4.4.2 类型错误负面测试完善（`@compile-error` 类型相关子集） → 扩展 co19_runner
-- [ ] 4.4.3 验证：跑 Language/Generics + Mixins + TypeSystem/subtyping（新增类别） → 测试报告
+- [ ] 4.4.3 验证：跑 Language/Generics + Mixins + Interfaces + TypeSystem/subtyping + LanguageFeatures/Class-modifiers（新增类别） → 测试报告
 - [ ] 4.4.4 回归跑：重跑 Phase 2-3 全部类别，diff 快照，确认零回归 → 回归报告
 
 **commit:** `feat: co19 harness v2 — experiment flags and type error tests`
@@ -681,4 +681,5 @@ review 发现的问题直接修复，修复后重新 review 直到通过。
 - [x] 执行 Phase 2（Batch 2.1 → 2.4，共 21 个 Task）— co19 总计 53.2% (1373/2581)
 - [x] ~~为 Phase 3 编写 Task 文件~~ → 已完成，见 [`docs/tasks/phase3/`](../tasks/phase3/README.md)
 - [x] 执行 Phase 3（Batch 3.1 → 3.6，共 24 个 Task）— co19 六类累计 64.4% (2686/4167)，0 回归
-- [ ] 为 Phase 4 编写 Task 文件
+- [x] ~~为 Phase 4 编写 Task 文件~~ → 已完成，见 [`docs/tasks/phase4/`](../tasks/phase4/README.md)
+- [ ] 执行 Phase 4（Batch 4.1 → 4.4，共 16 个 Task）
