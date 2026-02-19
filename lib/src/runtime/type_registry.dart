@@ -165,24 +165,24 @@ class TypeRegistry {
         return _internInterface(_futureClassId, [typeArg], outerNullability);
       }
 
-      // FutureOr<dynamic> → dynamic
+      // FutureOr<dynamic> → dynamic (dynamic is a top type; nullability irrelevant)
       if (cid == SpecialClassId.dynamic_) {
         return _internInterface(
             SpecialClassId.dynamic_, const [], Nullability.nonNullable);
       }
 
-      // FutureOr<void> → void
+      // FutureOr<void> → void (void is a top type; nullability irrelevant)
       if (cid == SpecialClassId.void_) {
         return _internInterface(
             SpecialClassId.void_, const [], Nullability.nonNullable);
       }
 
-      // FutureOr<Object?> → Object?
+      // FutureOr<Object?> → Object? (Object? is a top type; nullability irrelevant)
       if (cid == _objectClassId && n == Nullability.nullable) {
         return _internInterface(_objectClassId, const [], Nullability.nullable);
       }
 
-      // FutureOr<Object> → Object
+      // FutureOr<Object> → Object (preserves outer nullability for FutureOr<Object>?)
       if (cid == _objectClassId && n == Nullability.nonNullable) {
         return _internInterface(
             _objectClassId, const [], outerNullability);
@@ -202,6 +202,21 @@ class TypeRegistry {
         return _internInterface(
             _futureOrClassId, [innerBase], Nullability.nullable);
       }
+    }
+
+    // FutureOr<FnType?> → FutureOr<FnType>? (function type with nullable)
+    if (typeArg is DarticFunctionType &&
+        typeArg.nullability == Nullability.nullable) {
+      final innerBase = _internFunction(
+        typeArg.typeParamBounds,
+        typeArg.requiredParamCount,
+        typeArg.positionalParams,
+        typeArg.namedParams,
+        typeArg.returnType,
+        Nullability.nonNullable,
+      );
+      return _internInterface(
+          _futureOrClassId, [innerBase], Nullability.nullable);
     }
 
     // No normalization rule applies — intern as-is.

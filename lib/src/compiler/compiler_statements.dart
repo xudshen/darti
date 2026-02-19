@@ -495,13 +495,10 @@ extension on DarticCompiler {
       // value type (int?, bool?, double?).  The caller expects RETURN_REF.
       // E.g. `int? f() => 42;` — literal 42 is on the value stack but the
       // return type int? requires the ref stack.
-      final refReg = _allocRefReg();
+      // Use _emitBoxToRef which correctly handles bool (JUMP_IF_FALSE pattern)
+      // in addition to int (BOX_INT) and double (BOX_DOUBLE).
       final exprType = _inferExprType(expr);
-      if (exprType != null && _isDoubleType(exprType)) {
-        _emitter.emit(encodeABC(Op.boxDouble, refReg, reg, 0));
-      } else {
-        _emitter.emit(encodeABC(Op.boxInt, refReg, reg, 0));
-      }
+      final refReg = _emitBoxToRef(reg, exprType);
       _emitter.emit(encodeABC(Op.returnRef, refReg, 0, 0));
     } else {
       switch (loc) {

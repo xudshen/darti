@@ -153,6 +153,7 @@ class SubtypeChecker {
 
   /// Strips nullability from a type, returning the non-nullable equivalent.
   DarticType _stripNullable(DarticType type) {
+    if (type.nullability == Nullability.nonNullable) return type;
     if (type is DarticInterfaceType) {
       return registry.intern(type.classId, type.typeArgs);
     } else if (type is DarticFunctionType) {
