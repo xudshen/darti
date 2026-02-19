@@ -26,6 +26,7 @@ dartic 编译器是一个**离线 CLI 工具**，运行在开发机或 CI 环境
 | 寄存器分配 | 作用域级回收（Phase 1） | LSRA：需先构建 CFG + 活跃区间，Phase 1 复杂度不值得 | 以极低复杂度覆盖主要场景；Dart 函数通常局部变量 <50，8 位寄存器上限 256 |
 | Bridge 生成 | 预生成库（独立 package） | 运行时反射生成：Dart 无法运行时创建类 | 常用框架类通过 build_runner 预生成，作为 package 发布 |
 | 优化遍 | Phase 2 实施 | Phase 1 全量开启：无 profiling 数据指导 | 各优化遍根据 profiling 数据确定优先级 |
+| AST 派发机制 | Kernel Visitor 独立类放 part file | DarticCompiler 自身 mixin Visitor：compiler.dart 膨胀 ~130 行 visitXxx；if-is 链：无穷举检查 | visitor 类与 `_compileXxx` 实现同文件，compiler.dart 仅加字段；IDE 可列出未 override 的 visitXxx → 未处理节点类型 |
 | .darb 符号解析 | 加载时按名称解析 | 编译时绑定固定 ID：编译产物与 Bridge 库版本耦合 | 只要符号名存在，ID 如何分配无关紧要 |
 
 ## 核心概念
@@ -77,6 +78,22 @@ dartic_compiler CLI
                               ▼
                        .darb 序列化
 ```
+
+### AST 派发机制
+
+编译器使用 `package:kernel` 的 `ExpressionVisitorDefaultMixin` 和 `StatementVisitorDefaultMixin` 进行 AST 节点派发，取代原有的 `if-is` 类型检查链。
+
+**架构**：独立 visitor 类放在 part file 中，`DarticCompiler` 仅持有 visitor 字段：
+
+| Visitor 类 | 所在文件 | 返回类型 | `defaultXxx` 行为 |
+|------------|---------|----------|------------------|
+| `_ExprCompileVisitor` | `compiler_expressions.dart` | `(int, ResultLoc)` | throw UnsupportedError |
+| `_StmtCompileVisitor` | `compiler_statements.dart` | `void` | throw UnsupportedError |
+| `_ExprTypeInferVisitor` | `compiler_types.dart` | `DartType?` | return null（未知类型是正常降级） |
+
+每个 `visitXxx` 通过 `_c._compileXxx(node)` 显式 receiver 委托给同 library 的 extension 方法——unnamed extension 方法在同一 library 内可通过静态类型匹配的 receiver 调用。跨 part file 的方法（如 `_compileFunctionExpression` 在 `compiler_closures.dart`）同样可调用。
+
+**穷举检查**：未 override 的 `visitXxx` 方法 fall through 到 `defaultExpression`/`defaultStatement`。IDE 可列出所有委托到 default 的方法，即为当前未处理的节点类型。
 
 ### Kernel 加载
 
