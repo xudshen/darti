@@ -128,16 +128,22 @@ feat: support optional params, closures, and first-class functions
 
 ## 核心发现
 
-_(执行时填写)_
+1. **Open/closed upvalue semantics** — open upvalues 指向 ref stack 的活跃槽位实现变量共享突变；`CLOSE_UPVALUE` 将值拷贝到堆上实现作用域逃逸
+2. **Transitive upvalue resolution** — 嵌套闭包（h 在 g 内, g 在 f 内）需要 `isLocal=false` 描述符指向外层闭包的 upvalue 索引，而非祖父帧的寄存器
+3. **值类型 boxing** — int/bool/double 被闭包捕获时必须通过 BOX 指令提升到 ref stack，因为 upvalue 数组是 `List<Object?>`
+4. **StaticTearOff 优化** — 直接复用目标函数的 funcProto，无需生成 thunk 包装器；前提是 CALL 与 CALL_STATIC 的帧建立语义相同
+5. **CLOSE_UPVALUE 在返回前必须执行** — 否则 RETURN 的 `rs.clearRange()` 会将 open upvalue 指向的栈槽清空，导致返回的闭包调用时崩溃
+6. **CFE 双重表示** — StaticTearOff 有时为 `StaticTearOff` AST 节点，有时为 `ConstantExpression(StaticTearOffConstant)`，两条路径都需处理
+7. **已知限制** — CLOSE_UPVALUE 目前只在函数返回前发射，尚未在块作用域退出时发射（TODO phase3）；闭包的可选命名参数默认值暂不支持（使用 null 代替声明的默认值）
 
 ## Batch 完成检查
 
-- [ ] 3.1.1 可选位置参数与命名参数
-- [ ] 3.1.2 默认参数值
-- [ ] 3.1.3 闭包
-- [ ] 3.1.4 函数作为一等公民
-- [ ] `fvm dart analyze` 零警告
-- [ ] `fvm dart test` 全部通过
-- [ ] commit 已提交
-- [ ] overview.md 已更新
-- [ ] code review 已完成
+- [x] 3.1.1 可选位置参数与命名参数
+- [x] 3.1.2 默认参数值
+- [x] 3.1.3 闭包
+- [x] 3.1.4 函数作为一等公民
+- [x] `fvm dart analyze` 零警告
+- [x] `fvm dart test` 全部通过（924 tests）
+- [x] commit 已提交（7de5e1a）
+- [x] overview.md 已更新
+- [x] code review 已完成

@@ -94,6 +94,23 @@ class Scope {
     return _bindings[decl] ?? parent?.lookup(decl);
   }
 
+  /// Returns true if [decl] is declared directly in THIS scope (not
+  /// inherited from a parent scope).
+  bool containsLocal(ir.VariableDeclaration decl) =>
+      _bindings.containsKey(decl);
+
+  /// Re-declares a variable as a ref-stack binding (used when promoting
+  /// a value-stack variable to ref stack for closure capture).
+  ///
+  /// Overwrites the existing binding in whichever scope contains [decl].
+  void redeclareAsRef(ir.VariableDeclaration decl, int refReg) {
+    if (_bindings.containsKey(decl)) {
+      _bindings[decl] = VarBinding(reg: refReg, kind: StackKind.ref);
+    } else {
+      parent?.redeclareAsRef(decl, refReg);
+    }
+  }
+
   /// Releases all registers allocated in this scope back to their pools.
   void release() {
     valueAlloc.freeAll(_valueRegs);

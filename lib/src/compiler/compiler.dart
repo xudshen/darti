@@ -88,6 +88,27 @@ class DarticCompiler {
   int _catchExceptionReg = -1;
   int _catchStackTraceReg = -1;
 
+  // ── Closure compilation state ──
+
+  /// Upvalue descriptors being built for the current inner function.
+  /// Populated during inner function compilation when a variable lookup
+  /// crosses a function boundary.
+  List<UpvalueDescriptor> _upvalueDescriptors = [];
+
+  /// Maps a captured VariableDeclaration to its upvalue index within the
+  /// current inner function's upvalue table.
+  Map<ir.VariableDeclaration, int> _upvalueIndices = {};
+
+  /// Stack of saved compilation contexts. Each entry saves the state of
+  /// the enclosing function being compiled when we enter a nested function.
+  final List<_CompilationContext> _contextStack = [];
+
+  /// Maps variables that are captured by inner closures to their ref-stack
+  /// register in the enclosing function. When a value-type variable is
+  /// captured, it is "promoted" (boxed) to the ref stack, and all subsequent
+  /// reads/writes in the enclosing function use this ref register.
+  Map<ir.VariableDeclaration, int> _capturedVarRefRegs = {};
+
   /// Compiles the component and returns a [DarticModule].
   ///
   /// Two-pass strategy:
@@ -199,6 +220,16 @@ class DarticCompiler {
       _scope.declareWithReg(param, kind, reg);
     }
 
+    // Register named parameters — they occupy slots after positional params.
+    // CFE sorts named parameters alphabetically by name in FunctionNode.
+    for (final param in fn.namedParameters) {
+      final kind = _classifyStackKind(param.type);
+      final reg = kind.isValue
+          ? _valueAlloc.alloc()
+          : _refAlloc.alloc();
+      _scope.declareWithReg(param, kind, reg);
+    }
+
     // Compile function body.
     final body = fn.body;
     if (body != null) {
@@ -209,6 +240,7 @@ class DarticCompiler {
     if (_isEntryFunction) {
       _emitter.emit(encodeAx(Op.halt, 0));
     } else {
+      _emitCloseUpvaluesIfNeeded();
       _emitter.emit(encodeABC(Op.returnNull, 0, 0, 0));
     }
 
@@ -222,9 +254,8 @@ class DarticCompiler {
       bytecode: _emitter.toUint32List(),
       valueRegCount: valRegCount,
       refRegCount: refRegCount,
-      paramCount: fn.positionalParameters.length,
+      paramCount: fn.positionalParameters.length + fn.namedParameters.length,
       exceptionTable: List.of(_exceptionHandlers),
-      // TODO(Phase 2+): Handle namedParameters.
     );
   }
 
@@ -410,6 +441,8 @@ class DarticCompiler {
       _compileTryFinally(stmt);
     } else if (stmt is ir.AssertStatement) {
       _compileAssertStatement(stmt);
+    } else if (stmt is ir.FunctionDeclaration) {
+      _compileFunctionDeclaration(stmt);
     } else if (stmt is ir.EmptyStatement) {
       // No-op.
     } else {
@@ -431,6 +464,11 @@ class DarticCompiler {
     for (final s in block.statements) {
       _compileStatement(s);
     }
+
+    // TODO(phase3): Emit CLOSE_UPVALUE here for captured variables going out of
+    // scope. Currently only emitted before function returns. Block-scoped
+    // closures that outlive their declaring block may read stale data if the
+    // register is reused. See batch 3.1 code review I1.
 
     // Release block-local registers and restore outer scope.
     _scope.release();
@@ -896,16 +934,27 @@ class DarticCompiler {
     }
 
     if (expr == null) {
+      _emitCloseUpvaluesIfNeeded();
       _emitter.emit(encodeABC(Op.returnNull, 0, 0, 0));
       return;
     }
 
     final (reg, loc) = _compileExpression(expr);
+    _emitCloseUpvaluesIfNeeded();
     switch (loc) {
       case ResultLoc.value:
         _emitter.emit(encodeABC(Op.returnVal, reg, 0, 0));
       case ResultLoc.ref:
         _emitter.emit(encodeABC(Op.returnRef, reg, 0, 0));
+    }
+  }
+
+  /// Emits CLOSE_UPVALUE 0 if there are any captured variables in the current
+  /// function. This must be called before RETURN to ensure open upvalues are
+  /// closed before the frame is deallocated.
+  void _emitCloseUpvaluesIfNeeded() {
+    if (_capturedVarRefRegs.isNotEmpty) {
+      _emitter.emit(encodeABC(Op.closeUpvalue, 0, 0, 0));
     }
   }
 
@@ -990,6 +1039,18 @@ class DarticCompiler {
     if (expr is ir.AsExpression) return _compileAsExpression(expr);
     if (expr is ir.Throw) return _compileThrow(expr);
     if (expr is ir.Rethrow) return _compileRethrow(expr);
+    if (expr is ir.LocalFunctionInvocation) {
+      return _compileLocalFunctionInvocation(expr);
+    }
+    if (expr is ir.FunctionExpression) {
+      return _compileFunctionExpression(expr);
+    }
+    if (expr is ir.FunctionInvocation) {
+      return _compileFunctionInvocation(expr);
+    }
+    if (expr is ir.StaticTearOff) {
+      return _compileStaticTearOff(expr);
+    }
     throw UnsupportedError(
       'Unsupported expression: ${expr.runtimeType}',
     );
@@ -1062,6 +1123,9 @@ class DarticCompiler {
     if (constant is ir.BoolConstant) return _loadBool(constant.value);
     if (constant is ir.StringConstant) return _loadString(constant.value);
     if (constant is ir.NullConstant) return _loadNull();
+    if (constant is ir.StaticTearOffConstant) {
+      return _compileStaticTearOffConstant(constant);
+    }
     throw UnsupportedError(
       'Unsupported constant type: ${constant.runtimeType}',
     );
@@ -1264,15 +1328,121 @@ class DarticCompiler {
       binding.kind.isValue ? ResultLoc.value : ResultLoc.ref;
 
   (int, ResultLoc) _compileVariableGet(ir.VariableGet expr) {
+    // Check if this is an upvalue access (variable from outer function scope).
+    if (_contextStack.isNotEmpty && _isUpvalueAccess(expr.variable)) {
+      final uvIdx = _resolveUpvalue(expr.variable);
+      final refReg = _allocRefReg();
+      _emitter.emit(encodeABx(Op.loadUpvalue, refReg, uvIdx));
+
+      // Unbox if the variable's declared type is a value type.
+      // Upvalues always store boxed values on the ref stack, but downstream
+      // code (e.g., ADD_INT) expects value-stack operands for int/double/bool.
+      return _unboxCapturedIfNeeded(refReg, expr.variable.type);
+    }
+
+    // Check if this variable has been captured (promoted to ref stack)
+    // in the current enclosing function. If so, we need to unbox for
+    // value-type reads because the variable is now stored as a boxed ref.
+    if (_capturedVarRefRegs.containsKey(expr.variable)) {
+      final refReg = _capturedVarRefRegs[expr.variable]!;
+      return _unboxCapturedIfNeeded(refReg, expr.variable.type);
+    }
+
     final binding = _lookupVar(expr.variable);
     return (binding.reg, _locOf(binding));
   }
 
+  /// For a value that was loaded from an upvalue (or a captured variable's
+  /// ref register), unboxes it to the value stack if its declared type is
+  /// a value type. Otherwise returns the ref register as-is.
+  (int, ResultLoc) _unboxCapturedIfNeeded(int refReg, ir.DartType varType) {
+    final kind = _classifyStackKind(varType);
+    if (kind.isValue) {
+      final unboxOp =
+          kind == StackKind.doubleVal ? Op.unboxDouble : Op.unboxInt;
+      final valReg = _allocValueReg();
+      _emitter.emit(encodeABC(unboxOp, valReg, refReg, 0));
+      return (valReg, ResultLoc.value);
+    }
+    return (refReg, ResultLoc.ref);
+  }
+
   (int, ResultLoc) _compileVariableSet(ir.VariableSet expr) {
+    // Check if this is an upvalue access (variable from outer function scope).
+    if (_contextStack.isNotEmpty && _isUpvalueAccess(expr.variable)) {
+      final uvIdx = _resolveUpvalue(expr.variable);
+      var (srcReg, srcLoc) = _compileExpression(expr.value);
+      // Ensure the value is on the ref stack (upvalues always use ref stack).
+      if (srcLoc == ResultLoc.value) {
+        srcReg = _emitBoxToRef(srcReg, _inferExprType(expr.value));
+      }
+      _emitter.emit(encodeABx(Op.storeUpvalue, srcReg, uvIdx));
+      return (srcReg, ResultLoc.ref);
+    }
+
+    // Check if this variable has been captured (promoted to ref stack)
+    // in the current enclosing function. If so, box and write to the
+    // ref register.
+    if (_capturedVarRefRegs.containsKey(expr.variable)) {
+      final refReg = _capturedVarRefRegs[expr.variable]!;
+      var (srcReg, srcLoc) = _compileExpression(expr.value);
+      if (srcLoc == ResultLoc.value) {
+        srcReg = _emitBoxToRef(srcReg, _inferExprType(expr.value));
+      }
+      _emitMove(refReg, srcReg, ResultLoc.ref);
+      return (refReg, ResultLoc.ref);
+    }
+
     final binding = _lookupVar(expr.variable);
     final (srcReg, _) = _compileExpression(expr.value);
     _emitMove(binding.reg, srcReg, _locOf(binding));
     return (binding.reg, _locOf(binding));
+  }
+
+  /// Returns true if [varDecl] is not declared in the current function's
+  /// local scopes but is available via an outer function's scope (i.e.,
+  /// it needs upvalue access).
+  bool _isUpvalueAccess(ir.VariableDeclaration varDecl) {
+    // Walk up from the current scope but only within the current function's
+    // scopes. If the variable is found, it's local. If not found in local
+    // scopes but found in a parent (outer function) scope, it's an upvalue.
+    //
+    // The current function's scopes have _scope as their root; the outer
+    // function scope is the parent of the root scope. We check if the
+    // variable is found only in outer scopes.
+    final localBinding = _scope.lookup(varDecl);
+    if (localBinding == null) return false; // Not found at all
+
+    // Check if the variable is in the enclosing context's scope
+    // (which means it's from an outer function).
+    if (_contextStack.isNotEmpty) {
+      final enclosingScope = _contextStack.last.scope;
+      final enclosingBinding = enclosingScope.lookup(varDecl);
+      if (enclosingBinding != null) {
+        // The variable is found in the outer function's scope.
+        // Check if it's ALSO in the current function's own declarations
+        // (i.e., as a parameter or local variable of the inner function).
+        // If it is, it's not an upvalue — it shadows the outer one.
+        return !_isDeclaredInCurrentFunction(varDecl);
+      }
+    }
+    return false;
+  }
+
+  /// Checks if [varDecl] is declared directly within the current function's
+  /// scopes (not inherited from an outer function scope).
+  bool _isDeclaredInCurrentFunction(ir.VariableDeclaration varDecl) {
+    // Walk up scope chain until we hit the function boundary
+    // (the outer function's scope). If we find the var before crossing
+    // the boundary, it's local.
+    Scope? s = _scope;
+    final outerScope =
+        _contextStack.isNotEmpty ? _contextStack.last.scope : null;
+    while (s != null && s != outerScope) {
+      if (s.containsLocal(varDecl)) return true;
+      s = s.parent;
+    }
+    return false;
   }
 
   // ── Static field access ──
@@ -1342,25 +1512,67 @@ class DarticCompiler {
     // Compile each argument expression to a temp register within the frame.
     // These are "source" registers — the actual outgoing placement happens
     // via MOVE instructions patched after compilation (see _compileProcedure).
-    final args = expr.arguments.positional;
-    final params = target.function.positionalParameters;
+    final positionalArgs = expr.arguments.positional;
+    final namedArgs = expr.arguments.named;
+    final positionalParams = target.function.positionalParameters;
+    final namedParams = target.function.namedParameters;
     final argTemps = <(int, ResultLoc)>[];
-    for (var i = 0; i < args.length; i++) {
-      var (argReg, argLoc) = _compileExpression(args[i]);
+
+    // 1. Compile provided positional arguments.
+    for (var i = 0; i < positionalArgs.length; i++) {
+      var (argReg, argLoc) = _compileExpression(positionalArgs[i]);
 
       // Box value-stack args when the callee parameter expects ref stack.
-      // This handles cases like passing `42` (int, value stack) to an
-      // `Object` parameter (ref stack).
-      if (i < params.length) {
-        final paramKind = _classifyStackKind(params[i].type);
+      if (i < positionalParams.length) {
+        final paramKind = _classifyStackKind(positionalParams[i].type);
         if (paramKind == StackKind.ref && argLoc == ResultLoc.value) {
-          final argType = _inferExprType(args[i]);
+          final argType = _inferExprType(positionalArgs[i]);
           argReg = _emitBoxToRef(argReg, argType);
           argLoc = ResultLoc.ref;
         }
       }
 
       argTemps.add((argReg, argLoc));
+    }
+
+    // 2. Fill in missing optional positional arguments with default values.
+    for (var i = positionalArgs.length; i < positionalParams.length; i++) {
+      final param = positionalParams[i];
+      final (argReg, argLoc) = _compileDefaultValue(param);
+      argTemps.add((argReg, argLoc));
+    }
+
+    // 3. Handle named arguments.
+    // CFE sorts namedParameters alphabetically by name in FunctionNode.
+    // Build a map from param name → index in the namedParams list, then
+    // for each named param slot either compile the provided arg or the default.
+    if (namedParams.isNotEmpty) {
+      // Build lookup from name → provided NamedExpression.
+      final providedNamed = <String, ir.NamedExpression>{};
+      for (final namedArg in namedArgs) {
+        providedNamed[namedArg.name] = namedArg;
+      }
+
+      // Emit args in the order of the callee's named param declaration
+      // (alphabetical by name, matching _compileProcedure's registration).
+      for (final param in namedParams) {
+        final provided = providedNamed[param.name!];
+        if (provided != null) {
+          var (argReg, argLoc) = _compileExpression(provided.value);
+          // Box if needed.
+          final paramKind = _classifyStackKind(param.type);
+          if (paramKind == StackKind.ref && argLoc == ResultLoc.value) {
+            final argType = _inferExprType(provided.value);
+            argReg = _emitBoxToRef(argReg, argType);
+            argLoc = ResultLoc.ref;
+          }
+          argTemps.add((argReg, argLoc));
+        } else {
+          // Not provided — use default value.
+          final (argReg, argLoc) = _compileDefaultValue(param);
+          argTemps.add((argReg, argLoc));
+        }
+      }
     }
 
     // Emit placeholder MOVE instructions for each arg. The destination
@@ -1386,6 +1598,19 @@ class DarticCompiler {
     _emitter.emit(encodeABx(Op.callStatic, resultReg, funcId));
 
     return (resultReg, retLoc);
+  }
+
+  /// Compiles the default value for a parameter declaration.
+  ///
+  /// If the parameter has an initializer expression, compiles it.
+  /// Otherwise emits LOAD_NULL (the Dart language default for omitted params).
+  (int, ResultLoc) _compileDefaultValue(ir.VariableDeclaration param) {
+    final init = param.initializer;
+    if (init != null) {
+      return _compileExpression(init);
+    }
+    // No explicit default — Dart defaults to null.
+    return _loadNull();
   }
 
   (int, ResultLoc) _compileInstanceInvocation(ir.InstanceInvocation expr) {
@@ -1718,4 +1943,616 @@ class DarticCompiler {
 
   static final _haltBytecode =
       Uint32List.fromList([encodeAx(Op.halt, 0)]);
+
+  // ── Closure compilation ──
+
+  /// Saves the current per-function compilation state to [_contextStack]
+  /// and initializes fresh state for compiling a nested function.
+  void _pushContext() {
+    _contextStack.add(_CompilationContext(
+      emitter: _emitter,
+      valueAlloc: _valueAlloc,
+      refAlloc: _refAlloc,
+      scope: _scope,
+      isEntryFunction: _isEntryFunction,
+      pendingArgMoves: List.of(_pendingArgMoves),
+      labelBreakJumps: Map.of(_labelBreakJumps),
+      exceptionHandlers: List.of(_exceptionHandlers),
+      catchExceptionReg: _catchExceptionReg,
+      catchStackTraceReg: _catchStackTraceReg,
+      upvalueDescriptors: _upvalueDescriptors,
+      upvalueIndices: _upvalueIndices,
+      capturedVarRefRegs: _capturedVarRefRegs,
+    ));
+
+    _emitter = BytecodeEmitter();
+    _valueAlloc = RegisterAllocator();
+    _refAlloc = RegisterAllocator();
+    _isEntryFunction = false;
+    _pendingArgMoves.clear();
+    _labelBreakJumps.clear();
+    _exceptionHandlers.clear();
+    _catchExceptionReg = -1;
+    _catchStackTraceReg = -1;
+    _upvalueDescriptors = [];
+    _upvalueIndices = {};
+    _capturedVarRefRegs = {};
+  }
+
+  /// Restores the previous compilation context from [_contextStack].
+  void _popContext() {
+    final ctx = _contextStack.removeLast();
+    _emitter = ctx.emitter;
+    _valueAlloc = ctx.valueAlloc;
+    _refAlloc = ctx.refAlloc;
+    _scope = ctx.scope;
+    _isEntryFunction = ctx.isEntryFunction;
+    _pendingArgMoves
+      ..clear()
+      ..addAll(ctx.pendingArgMoves);
+    _labelBreakJumps
+      ..clear()
+      ..addAll(ctx.labelBreakJumps);
+    _exceptionHandlers
+      ..clear()
+      ..addAll(ctx.exceptionHandlers);
+    _catchExceptionReg = ctx.catchExceptionReg;
+    _catchStackTraceReg = ctx.catchStackTraceReg;
+    _upvalueDescriptors = ctx.upvalueDescriptors;
+    _upvalueIndices = ctx.upvalueIndices;
+    _capturedVarRefRegs = ctx.capturedVarRefRegs;
+  }
+
+  /// Shared logic for compiling an inner function (closure) body.
+  ///
+  /// Handles the common steps shared by [_compileFunctionDeclaration] and
+  /// [_compileFunctionExpression]:
+  /// 1. Reserve a placeholder in the function table
+  /// 2. Pre-analyze captured variables (upvalues)
+  /// 3. Promote/resolve captured variables for the enclosing function
+  /// 4. Push a new compilation context
+  /// 5. Register both positional AND named parameters
+  /// 6. Compile the function body
+  /// 7. Emit implicit RETURN_NULL, patch arg moves
+  /// 8. Create the DarticFuncProto
+  /// 9. Pop context and emit CLOSURE instruction
+  ///
+  /// Returns `(closureReg, innerFuncId)` so callers can handle their
+  /// unique part (binding vs returning).
+  (int closureReg, int innerFuncId) _compileInnerFunction(
+    ir.FunctionNode fn,
+    String? name,
+  ) {
+    final innerFuncId = _functions.length;
+
+    // Reserve a placeholder in the function table.
+    _functions.add(DarticFuncProto(
+      funcId: innerFuncId,
+      bytecode: _haltBytecode,
+      valueRegCount: 0,
+      refRegCount: 0,
+      paramCount: 0,
+    ));
+
+    // Step 1: Pre-analyze which outer variables the inner function captures.
+    final capturedVars = _analyzeCapturedVars(fn, _scope);
+
+    // Step 2: For each captured variable, ensure it's accessible from the
+    // current function. Variables local to this function get promoted (boxed)
+    // to the ref stack. Variables that are themselves upvalues in this function
+    // need to be resolved as upvalues first (so the nested function can
+    // capture them transitively).
+    for (final varDecl in capturedVars) {
+      if (_contextStack.isNotEmpty && _isUpvalueAccess(varDecl)) {
+        // This variable is itself an upvalue in the current function.
+        // Ensure it's resolved so the nested function can capture it
+        // transitively.
+        _resolveUpvalue(varDecl);
+      } else {
+        // This variable is local to the current function.
+        _promoteToRefIfNeeded(varDecl);
+      }
+    }
+
+    // Step 3: Save the enclosing function scope (need it for upvalue resolution).
+    final outerScope = _scope;
+
+    // Step 4: Compile the inner function.
+    _pushContext();
+
+    // Create a new scope for the inner function. Its parent is the
+    // outer scope so that upvalue resolution can walk up.
+    _scope = Scope(
+      valueAlloc: _valueAlloc,
+      refAlloc: _refAlloc,
+      parent: outerScope,
+    );
+
+    // Register positional parameters.
+    for (final param in fn.positionalParameters) {
+      final kind = _classifyStackKind(param.type);
+      final reg = kind.isValue ? _valueAlloc.alloc() : _refAlloc.alloc();
+      _scope.declareWithReg(param, kind, reg);
+    }
+
+    // Register named parameters — they occupy slots after positional params.
+    // CFE sorts named parameters alphabetically by name in FunctionNode.
+    for (final param in fn.namedParameters) {
+      final kind = _classifyStackKind(param.type);
+      final reg = kind.isValue ? _valueAlloc.alloc() : _refAlloc.alloc();
+      _scope.declareWithReg(param, kind, reg);
+    }
+
+    // Compile function body.
+    final body = fn.body;
+    if (body != null) {
+      _compileStatement(body);
+    }
+
+    // Safety net: emit implicit RETURN_NULL if no explicit return.
+    _emitCloseUpvaluesIfNeeded();
+    _emitter.emit(encodeABC(Op.returnNull, 0, 0, 0));
+
+    _patchPendingArgMoves();
+
+    final valRegCount = _valueAlloc.maxUsed;
+    final refRegCount = _refAlloc.maxUsed;
+    final upvalueDescs = List<UpvalueDescriptor>.of(_upvalueDescriptors);
+
+    _functions[innerFuncId] = DarticFuncProto(
+      funcId: innerFuncId,
+      name: name ?? '<anonymous>',
+      bytecode: _emitter.toUint32List(),
+      valueRegCount: valRegCount,
+      refRegCount: refRegCount,
+      paramCount:
+          fn.positionalParameters.length + fn.namedParameters.length,
+      exceptionTable: List.of(_exceptionHandlers),
+      upvalueDescriptors: upvalueDescs,
+    );
+
+    // Restore enclosing context.
+    _popContext();
+
+    // Emit CLOSURE instruction in the enclosing function.
+    final closureReg = _allocRefReg();
+    _emitter.emit(encodeABx(Op.closure, closureReg, innerFuncId));
+
+    return (closureReg, innerFuncId);
+  }
+
+  /// Compiles a [FunctionDeclaration] as a closure.
+  ///
+  /// Delegates to [_compileInnerFunction] for the shared compilation logic,
+  /// then binds the resulting closure to the declaration's variable.
+  void _compileFunctionDeclaration(ir.FunctionDeclaration decl) {
+    final (closureReg, _) =
+        _compileInnerFunction(decl.function, decl.variable.name);
+
+    // Bind the FunctionDeclaration's variable to the closure register.
+    _scope.declareWithReg(decl.variable, StackKind.ref, closureReg);
+  }
+
+  /// Compiles a [LocalFunctionInvocation] as a CALL on the closure.
+  (int, ResultLoc) _compileLocalFunctionInvocation(
+    ir.LocalFunctionInvocation expr,
+  ) {
+    // Look up the closure variable.
+    final binding = _lookupVar(expr.variable);
+    final closureReg = binding.reg;
+
+    // Determine return type for the result register.
+    final retType = expr.variable.type;
+    // LocalFunctionInvocation's return type: use the function's return type
+    final funcType = retType is ir.FunctionType ? retType.returnType : retType;
+    final retLoc = _classifyType(funcType);
+    final resultReg =
+        retLoc == ResultLoc.ref ? _allocRefReg() : _allocValueReg();
+
+    // Compile positional arguments.
+    final args = expr.arguments.positional;
+    final argTemps = <(int, ResultLoc)>[];
+    for (var i = 0; i < args.length; i++) {
+      final (argReg, argLoc) = _compileExpression(args[i]);
+      argTemps.add((argReg, argLoc));
+    }
+
+    // Handle named arguments.
+    // The variable's type is ir.FunctionType which has namedParameters
+    // (list of ir.NamedType, sorted alphabetically by CFE).
+    final varFuncType = expr.variable.type;
+    if (varFuncType is ir.FunctionType &&
+        varFuncType.namedParameters.isNotEmpty) {
+      final namedParams = varFuncType.namedParameters;
+      final namedArgs = expr.arguments.named;
+
+      // Build lookup from name -> provided NamedExpression.
+      final providedNamed = <String, ir.NamedExpression>{};
+      for (final namedArg in namedArgs) {
+        providedNamed[namedArg.name] = namedArg;
+      }
+
+      // Emit args in the order of the callee's named param declaration
+      // (alphabetical by name, matching _compileInnerFunction's registration).
+      for (final param in namedParams) {
+        final provided = providedNamed[param.name];
+        if (provided != null) {
+          var (argReg, argLoc) = _compileExpression(provided.value);
+          // Box if needed.
+          final paramKind = _classifyStackKind(param.type);
+          if (paramKind == StackKind.ref && argLoc == ResultLoc.value) {
+            final argType = _inferExprType(provided.value);
+            argReg = _emitBoxToRef(argReg, argType);
+            argLoc = ResultLoc.ref;
+          }
+          argTemps.add((argReg, argLoc));
+        } else {
+          // Not provided — use null as default (actual default is handled
+          // by the callee's parameter initialization).
+          argTemps.add(_loadNull());
+        }
+      }
+    }
+
+    // Emit placeholder MOVE instructions for each arg.
+    var valArgIdx = 0;
+    var refArgIdx = 0;
+    for (var i = 0; i < argTemps.length; i++) {
+      final (srcReg, loc) = argTemps[i];
+      final movePC = _emitter.emitPlaceholder();
+      final argIdx = loc == ResultLoc.value ? valArgIdx++ : refArgIdx++;
+      _pendingArgMoves.add(
+        (pc: movePC, srcReg: srcReg, argIdx: argIdx, loc: loc),
+      );
+    }
+
+    // Emit CALL A, B, C — A=resultReg, B=closureReg
+    _emitter.emit(encodeABC(Op.call, resultReg, closureReg, 0));
+
+    return (resultReg, retLoc);
+  }
+
+  /// Compiles a [FunctionInvocation] — calling a closure stored in a variable
+  /// or returned from another expression (e.g., `g()` where `g` holds a
+  /// closure, or `maker()()`).
+  (int, ResultLoc) _compileFunctionInvocation(ir.FunctionInvocation expr) {
+    // Compile the receiver expression to get the closure ref register.
+    final (closureReg, _) = _compileExpression(expr.receiver);
+
+    // Determine return type from the function type.
+    final funcType = expr.functionType;
+    final retType = funcType?.returnType ?? const ir.DynamicType();
+    final retLoc = _classifyType(retType);
+    final resultReg =
+        retLoc == ResultLoc.ref ? _allocRefReg() : _allocValueReg();
+
+    // Compile positional arguments.
+    final args = expr.arguments.positional;
+    final argTemps = <(int, ResultLoc)>[];
+    for (var i = 0; i < args.length; i++) {
+      final (argReg, argLoc) = _compileExpression(args[i]);
+      argTemps.add((argReg, argLoc));
+    }
+
+    // Handle named arguments.
+    // The expr.functionType has the parameter info (namedParameters is a
+    // list of ir.NamedType, sorted alphabetically by CFE).
+    if (funcType != null && funcType.namedParameters.isNotEmpty) {
+      final namedParams = funcType.namedParameters;
+      final namedArgs = expr.arguments.named;
+
+      // Build lookup from name -> provided NamedExpression.
+      final providedNamed = <String, ir.NamedExpression>{};
+      for (final namedArg in namedArgs) {
+        providedNamed[namedArg.name] = namedArg;
+      }
+
+      // Emit args in the order of the callee's named param declaration
+      // (alphabetical by name, matching _compileInnerFunction's registration).
+      for (final param in namedParams) {
+        final provided = providedNamed[param.name];
+        if (provided != null) {
+          var (argReg, argLoc) = _compileExpression(provided.value);
+          // Box if needed.
+          final paramKind = _classifyStackKind(param.type);
+          if (paramKind == StackKind.ref && argLoc == ResultLoc.value) {
+            final argType = _inferExprType(provided.value);
+            argReg = _emitBoxToRef(argReg, argType);
+            argLoc = ResultLoc.ref;
+          }
+          argTemps.add((argReg, argLoc));
+        } else {
+          // Not provided — use null as default (actual default is handled
+          // by the callee's parameter initialization).
+          argTemps.add(_loadNull());
+        }
+      }
+    }
+
+    // Emit placeholder MOVE instructions for each arg.
+    var valArgIdx = 0;
+    var refArgIdx = 0;
+    for (var i = 0; i < argTemps.length; i++) {
+      final (srcReg, loc) = argTemps[i];
+      final movePC = _emitter.emitPlaceholder();
+      final argIdx = loc == ResultLoc.value ? valArgIdx++ : refArgIdx++;
+      _pendingArgMoves.add(
+        (pc: movePC, srcReg: srcReg, argIdx: argIdx, loc: loc),
+      );
+    }
+
+    // Emit CALL A, B, C — A=resultReg, B=closureReg
+    _emitter.emit(encodeABC(Op.call, resultReg, closureReg, 0));
+
+    return (resultReg, retLoc);
+  }
+
+  /// Compiles a [FunctionExpression] (anonymous function / lambda) as a
+  /// closure. Delegates to [_compileInnerFunction] for the shared compilation
+  /// logic, then returns the closure as an expression result.
+  (int, ResultLoc) _compileFunctionExpression(ir.FunctionExpression expr) {
+    final (closureReg, _) = _compileInnerFunction(expr.function, null);
+    return (closureReg, ResultLoc.ref);
+  }
+
+  // OPTIMIZATION: Reuses target function's existing funcProto directly in the
+  // closure instead of creating a thunk wrapper. This works because CALL's
+  // frame setup (extract funcProto -> push frame -> set vBase/rBase) is
+  // identical to CALL_STATIC's frame setup for the same funcProto.
+  //
+  // INVARIANT: If CALL and CALL_STATIC frame setup ever diverge (e.g.,
+  // generics ITA/FTA handling), a thunk wrapper must be generated instead.
+
+  /// Compiles a [StaticTearOff]: wraps a top-level function reference as a
+  /// [DarticClosure] so it can be used as a first-class value.
+  ///
+  /// `var f = add;` generates a `StaticTearOff(add)` in the Kernel AST.
+  /// We emit a CLOSURE instruction pointing to the target function's funcId.
+  /// Since the target is a static function (no captured variables), the
+  /// closure has no upvalues.
+  (int, ResultLoc) _compileStaticTearOff(ir.StaticTearOff expr) {
+    final funcId = _procToFuncId[expr.target.reference];
+    if (funcId == null) {
+      throw UnsupportedError(
+        'StaticTearOff: unknown function ${expr.target.name.text}',
+      );
+    }
+    final closureReg = _allocRefReg();
+    _emitter.emit(encodeABx(Op.closure, closureReg, funcId));
+    return (closureReg, ResultLoc.ref);
+  }
+
+  /// Compiles a [StaticTearOffConstant] (encountered inside a
+  /// [ConstantExpression]): wraps a top-level function as a closure, same
+  /// as [_compileStaticTearOff] but from a constant context.
+  (int, ResultLoc) _compileStaticTearOffConstant(
+    ir.StaticTearOffConstant constant,
+  ) {
+    final funcId = _procToFuncId[constant.target.reference];
+    if (funcId == null) {
+      throw UnsupportedError(
+        'StaticTearOffConstant: unknown function '
+        '${constant.target.name.text}',
+      );
+    }
+    final closureReg = _allocRefReg();
+    _emitter.emit(encodeABx(Op.closure, closureReg, funcId));
+    return (closureReg, ResultLoc.ref);
+  }
+
+  /// Pre-analyzes the function body to find all outer variables that are
+  /// referenced (captured). Returns the set of VariableDeclarations that
+  /// need to be captured as upvalues.
+  Set<ir.VariableDeclaration> _analyzeCapturedVars(
+    ir.FunctionNode fn,
+    Scope outerScope,
+  ) {
+    final captured = <ir.VariableDeclaration>{};
+    // Params of the inner function — these are NOT upvalues.
+    final localParams = <ir.VariableDeclaration>{
+      ...fn.positionalParameters,
+      ...fn.namedParameters,
+    };
+
+    fn.body?.accept(_CapturedVarVisitor(captured, localParams, outerScope));
+    return captured;
+  }
+
+  /// Promotes a value-stack variable to a ref-stack (boxed) register so it
+  /// can be shared via an upvalue cell.
+  ///
+  /// If the variable is already on the ref stack, this is a no-op.
+  /// If the variable was already promoted, this is also a no-op.
+  void _promoteToRefIfNeeded(ir.VariableDeclaration varDecl) {
+    if (_capturedVarRefRegs.containsKey(varDecl)) return;
+
+    final binding = _scope.lookup(varDecl);
+    if (binding == null) return;
+
+    if (binding.kind.isValue) {
+      // Allocate a ref register and emit BOX instruction.
+      final refReg = _allocRefReg();
+      if (binding.kind == StackKind.doubleVal) {
+        _emitter.emit(encodeABC(Op.boxDouble, refReg, binding.reg, 0));
+      } else {
+        _emitter.emit(encodeABC(Op.boxInt, refReg, binding.reg, 0));
+      }
+
+      _capturedVarRefRegs[varDecl] = refReg;
+
+      // Re-declare in scope as ref type so subsequent reads use the ref reg.
+      _scope.redeclareAsRef(varDecl, refReg);
+    } else {
+      // Already on ref stack — just record its register.
+      _capturedVarRefRegs[varDecl] = binding.reg;
+    }
+  }
+
+  /// Resolves an upvalue for the current inner function being compiled.
+  ///
+  /// If [varDecl] is in the immediately enclosing function's scope, creates
+  /// an isLocal=true upvalue descriptor. If it's in a more distant ancestor,
+  /// creates an isLocal=false (transitive) descriptor.
+  ///
+  /// Returns the upvalue index for use with LOAD_UPVALUE/STORE_UPVALUE.
+  int _resolveUpvalue(ir.VariableDeclaration varDecl) {
+    // Check if we already have an upvalue for this variable.
+    final existing = _upvalueIndices[varDecl];
+    if (existing != null) return existing;
+
+    // The enclosing context is the top of _contextStack.
+    if (_contextStack.isNotEmpty) {
+      final enclosingCtx = _contextStack.last;
+
+      // First check if the variable is already an upvalue in the enclosing
+      // function (transitive capture). This must be checked BEFORE the scope
+      // lookup because scope.lookup() walks the entire parent chain and may
+      // find the variable in a grandparent scope, incorrectly treating it as
+      // a direct capture.
+      final enclosingUpvalueIdx = enclosingCtx.upvalueIndices[varDecl];
+      if (enclosingUpvalueIdx != null) {
+        final idx = _upvalueDescriptors.length;
+        _upvalueDescriptors.add(UpvalueDescriptor(
+          isLocal: false,
+          index: enclosingUpvalueIdx,
+        ));
+        _upvalueIndices[varDecl] = idx;
+        return idx;
+      }
+
+      // Check if the variable is a local or captured variable in the
+      // enclosing function's scope. We check capturedVarRefRegs first
+      // (for value-type variables that were promoted/boxed), then the scope.
+      if (enclosingCtx.capturedVarRefRegs.containsKey(varDecl)) {
+        final refReg = enclosingCtx.capturedVarRefRegs[varDecl]!;
+        final idx = _upvalueDescriptors.length;
+        _upvalueDescriptors.add(UpvalueDescriptor(
+          isLocal: true,
+          index: refReg,
+        ));
+        _upvalueIndices[varDecl] = idx;
+        return idx;
+      }
+
+      // Check if the variable is declared locally in the enclosing function's
+      // scope (not inherited from a grandparent scope). We walk the enclosing
+      // scope chain only up to the next function boundary.
+      final enclosingBinding = _findLocalBinding(
+        enclosingCtx.scope,
+        varDecl,
+        // The boundary is the scope of the context below the enclosing one
+        // (i.e., the grandparent function's scope), or null if there is none.
+        _contextStack.length >= 2
+            ? _contextStack[_contextStack.length - 2].scope
+            : null,
+      );
+      if (enclosingBinding != null) {
+        // Direct capture from enclosing function.
+        final idx = _upvalueDescriptors.length;
+        _upvalueDescriptors.add(UpvalueDescriptor(
+          isLocal: true,
+          index: enclosingBinding.reg,
+        ));
+        _upvalueIndices[varDecl] = idx;
+        return idx;
+      }
+    }
+
+    throw StateError(
+      'Cannot resolve upvalue for variable: ${varDecl.name}',
+    );
+  }
+
+  /// Finds a [VarBinding] for [varDecl] in the scope chain starting from
+  /// [scope], but stopping before [boundary] (exclusive). Returns null if
+  /// not found within the bounded chain.
+  VarBinding? _findLocalBinding(
+    Scope scope,
+    ir.VariableDeclaration varDecl,
+    Scope? boundary,
+  ) {
+    Scope? s = scope;
+    while (s != null && s != boundary) {
+      if (s.containsLocal(varDecl)) return s.lookup(varDecl);
+      s = s.parent;
+    }
+    return null;
+  }
+}
+
+/// Saved compilation context for nested function compilation.
+class _CompilationContext {
+  _CompilationContext({
+    required this.emitter,
+    required this.valueAlloc,
+    required this.refAlloc,
+    required this.scope,
+    required this.isEntryFunction,
+    required this.pendingArgMoves,
+    required this.labelBreakJumps,
+    required this.exceptionHandlers,
+    required this.catchExceptionReg,
+    required this.catchStackTraceReg,
+    required this.upvalueDescriptors,
+    required this.upvalueIndices,
+    required this.capturedVarRefRegs,
+  });
+
+  final BytecodeEmitter emitter;
+  final RegisterAllocator valueAlloc;
+  final RegisterAllocator refAlloc;
+  final Scope scope;
+  final bool isEntryFunction;
+  final List<({int pc, int srcReg, int argIdx, ResultLoc loc})> pendingArgMoves;
+  final Map<ir.LabeledStatement, List<int>> labelBreakJumps;
+  final List<ExceptionHandler> exceptionHandlers;
+  final int catchExceptionReg;
+  final int catchStackTraceReg;
+  final List<UpvalueDescriptor> upvalueDescriptors;
+  final Map<ir.VariableDeclaration, int> upvalueIndices;
+  final Map<ir.VariableDeclaration, int> capturedVarRefRegs;
+}
+
+/// AST visitor that collects references to outer-scope variables.
+///
+/// Used by [DarticCompiler._analyzeCapturedVars] to find which variables
+/// from enclosing scopes are referenced by an inner function.
+class _CapturedVarVisitor extends ir.RecursiveVisitor {
+  _CapturedVarVisitor(this._captured, this._localParams, this._outerScope);
+
+  final Set<ir.VariableDeclaration> _captured;
+  final Set<ir.VariableDeclaration> _localParams;
+  final Scope _outerScope;
+
+  /// Variables declared locally within the inner function body.
+  final Set<ir.VariableDeclaration> _localDecls = {};
+
+  @override
+  void visitVariableDeclaration(ir.VariableDeclaration node) {
+    _localDecls.add(node);
+    super.visitVariableDeclaration(node);
+  }
+
+  @override
+  void visitVariableGet(ir.VariableGet node) {
+    _checkCaptured(node.variable);
+    super.visitVariableGet(node);
+  }
+
+  @override
+  void visitVariableSet(ir.VariableSet node) {
+    _checkCaptured(node.variable);
+    super.visitVariableSet(node);
+  }
+
+  void _checkCaptured(ir.VariableDeclaration varDecl) {
+    // Skip if it's a parameter of the inner function or a local declaration.
+    if (_localParams.contains(varDecl)) return;
+    if (_localDecls.contains(varDecl)) return;
+
+    // Check if it's defined in an outer scope.
+    if (_outerScope.lookup(varDecl) != null) {
+      _captured.add(varDecl);
+    }
+  }
 }

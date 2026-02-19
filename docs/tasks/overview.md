@@ -55,7 +55,7 @@
 
 | Batch | 描述 | Task 数 | 状态 |
 |-------|------|---------|------|
-| [3.1](phase3/batch-3.1-functions.md) | 函数进阶 | 4 | ⏳ |
+| [3.1](phase3/batch-3.1-functions.md) | 函数进阶 | 4 | ✅ |
 | [3.2](phase3/batch-3.2-class-basics.md) | 类基础 | 6 | ⏳ |
 | [3.3](phase3/batch-3.3-inheritance.md) | 继承与多态 | 4 | ⏳ |
 | [3.4](phase3/batch-3.4-scope-resolution.md) | 作用域与名称解析 | 3 | ⏳ |

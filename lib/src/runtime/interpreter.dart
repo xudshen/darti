@@ -1,6 +1,7 @@
 import '../bytecode/module.dart';
 import '../bytecode/opcodes.dart';
 import 'call_stack.dart';
+import 'closure.dart';
 import 'error.dart';
 import 'global_table.dart';
 import 'ref_stack.dart';
@@ -35,11 +36,24 @@ class DarticInterpreter {
   /// Remaining fuel — shared across initializer and main execution.
   int _fuel = 0;
 
+  /// Open upvalue tracking: maps absolute ref stack index to the open
+  /// [Upvalue] cell. When CLOSURE captures a local variable, it looks up
+  /// or creates an entry here. When CLOSE_UPVALUE fires, matching entries
+  /// are removed and their cells transition to closed state.
+  final Map<int, Upvalue> _openUpvalues = {};
+
+  /// Parallel stack of upvalue lists for each call frame. Stores the
+  /// current frame's closure upvalues (or null for non-closure calls).
+  /// Pushed on CALL/CALL_STATIC, popped on RETURN.
+  final List<List<Upvalue>?> _upvalueStack = [];
+
   /// Executes [module] starting from its entry function.
   ///
   /// Runs the dispatch loop until HALT is reached or fuel is exhausted.
   void execute(DarticModule module) {
     _fuel = fuelBudget;
+    _openUpvalues.clear();
+    _upvalueStack.clear();
 
     // Set up global table and run initializers.
     if (module.globalCount > 0) {
@@ -85,6 +99,12 @@ class DarticInterpreter {
     // Dispatch loop — hot-path locals.
     var code = entryFunc.bytecode;
     var pc = 0;
+
+    // Current frame's closure upvalues (null for top-level / CALL_STATIC).
+    List<Upvalue>? currentUpvalues;
+
+    // Push sentinel entry for the initial frame.
+    _upvalueStack.add(null);
 
     while (_fuel-- > 0) {
       final instr = code[pc++];
@@ -135,11 +155,25 @@ class DarticInterpreter {
           final b = (instr >> 16) & 0xFF;
           vs.writeInt(vBase + a, vs.readInt(vBase + b));
 
-        case Op.loadUpvalue: // LOAD_UPVALUE A, Bx — deferred (closure support)
-          throw DarticError('Unimplemented opcode: 0x0a (LOAD_UPVALUE)');
+        case Op.loadUpvalue: // LOAD_UPVALUE A, Bx — refStack[A] = upvalue[Bx]
+          final a = (instr >> 8) & 0xFF;
+          final bx = (instr >> 16) & 0xFFFF;
+          final uv = currentUpvalues![bx];
+          rs.write(
+            rBase + a,
+            uv.isOpen ? rs.read(uv.stackIndex) : uv.value,
+          );
 
-        case Op.storeUpvalue: // STORE_UPVALUE A, Bx — deferred (closure support)
-          throw DarticError('Unimplemented opcode: 0x0b (STORE_UPVALUE)');
+        case Op.storeUpvalue: // STORE_UPVALUE A, Bx — upvalue[Bx] = refStack[A]
+          final a = (instr >> 8) & 0xFF;
+          final bx = (instr >> 16) & 0xFFFF;
+          final uv = currentUpvalues![bx];
+          final val = rs.read(rBase + a);
+          if (uv.isOpen) {
+            rs.write(uv.stackIndex, val);
+          } else {
+            uv.value = val;
+          }
 
         case Op.boxInt: // BOX_INT A, B — refStack[A] = valueStack[B]
           final a = (instr >> 8) & 0xFF;
@@ -410,6 +444,45 @@ class DarticInterpreter {
 
         // ── Call/Return (0x50-0x5F) ──
 
+        case Op.call: // CALL A, B, C — call closure in refStack[B], result→reg A
+          final callA = (instr >> 8) & 0xFF;
+          final callB = (instr >> 16) & 0xFF;
+          final closure = rs.read(rBase + callB) as DarticClosure;
+          final callCallee = closure.funcProto;
+
+          // Overflow and call depth checks.
+          if (vs.sp + callCallee.valueRegCount > vs.capacity ||
+              rs.sp + callCallee.refRegCount > rs.capacity) {
+            throw DarticError('Stack overflow');
+          }
+          if (callStack.depth >= callStack.maxFrames) {
+            throw DarticError('Maximum call depth exceeded');
+          }
+
+          // Push frame — save caller state.
+          callStack.pushFrame(
+            funcId: callCallee.funcId,
+            returnPC: pc,
+            savedFP: callStack.fp,
+            savedVSP: vBase,
+            savedRSP: rBase,
+            resultReg: callA,
+          );
+
+          // Save caller's upvalues and switch to closure's upvalues.
+          _upvalueStack.add(currentUpvalues);
+          currentUpvalues = closure.upvalues;
+
+          // Advance to callee frame.
+          vBase = vs.sp;
+          rBase = rs.sp;
+          vs.sp += callCallee.valueRegCount;
+          rs.sp += callCallee.refRegCount;
+
+          // Switch to callee bytecode.
+          code = callCallee.bytecode;
+          pc = 0;
+
         case Op.callStatic: // CALL_STATIC A, Bx — call functions[Bx], result→reg A
           final a = (instr >> 8) & 0xFF;
           final bx = (instr >> 16) & 0xFFFF;
@@ -433,6 +506,10 @@ class DarticInterpreter {
             savedRSP: rBase,
             resultReg: a,
           );
+
+          // Save caller's upvalues; static calls have no closure upvalues.
+          _upvalueStack.add(currentUpvalues);
+          currentUpvalues = null;
 
           // Advance to callee frame.
           vBase = vs.sp;
@@ -482,6 +559,9 @@ class DarticInterpreter {
           callStack.popFrame();
           code = module.functions[callStack.funcId].bytecode;
           pc = retPC;
+
+          // Restore caller's upvalues.
+          currentUpvalues = _upvalueStack.removeLast();
 
           // Write return value to caller's register.
           if (op == Op.returnVal) {
@@ -604,6 +684,41 @@ class DarticInterpreter {
             }
           }
 
+        // ── Closure (0x70-0x71) ──
+
+        case Op.closure: // CLOSURE A, Bx — refStack[A] = DarticClosure(funcProto[Bx])
+          final closA = (instr >> 8) & 0xFF;
+          final closBx = (instr >> 16) & 0xFFFF;
+          final proto = module.functions[closBx];
+          final upvalues = <Upvalue>[];
+          for (final desc in proto.upvalueDescriptors) {
+            if (desc.isLocal) {
+              // Capture from current frame's ref stack slot.
+              final absIndex = rBase + desc.index;
+              upvalues.add(
+                _openUpvalues.putIfAbsent(absIndex, () => Upvalue.open(absIndex)),
+              );
+            } else {
+              // Pass through from enclosing closure's upvalues.
+              upvalues.add(currentUpvalues![desc.index]);
+            }
+          }
+          rs.write(
+            rBase + closA,
+            DarticClosure(funcProto: proto, upvalues: upvalues),
+          );
+
+        case Op.closeUpvalue: // CLOSE_UPVALUE A — close all open upvalues at rBase+A and above
+          final closeA = (instr >> 8) & 0xFF;
+          final minIndex = rBase + closeA;
+          _openUpvalues.removeWhere((stackIndex, uv) {
+            if (stackIndex >= minIndex) {
+              uv.close(rs.read(stackIndex));
+              return true;
+            }
+            return false;
+          });
+
         // ── Null Safety (0xA7) ──
 
         case Op.nullCheck: // NULL_CHECK A — if refStack[A] == null → throw
@@ -621,6 +736,7 @@ class DarticInterpreter {
           vs.sp = vBase;
           rs.sp = rBase;
           callStack.popFrame();
+          _upvalueStack.removeLast();
           return;
 
         default:
