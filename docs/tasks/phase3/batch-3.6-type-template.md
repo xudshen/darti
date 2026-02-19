@@ -93,15 +93,19 @@ feat(compiler): add TypeTemplate infrastructure for generics
 
 ## 核心发现
 
-_(执行时填写)_
+- `extractTypeParamBounds` 和 `buildSuperTypeEntries` 作为独立函数添加到 `type_converter.dart`，复用已有的 `dartTypeToTemplate` 进行 bound 和 supertype 类型参数转换。
+- Kernel 默认 bound 为 `DynamicType`（非 `Object?`），实现中直接映射为 `DynamicTemplate`。
+- `SuperTypeEntry` 数据类持有 subClassId、superClassId 和 typeArgMapping，为 Phase 4 的 isSubtypeOf 规则 11-12 提供编译期预计算数据。
+- 平台类（如 Object）不在 classIdLookup 中，`buildSuperTypeEntries` 自动跳过未知超类，避免误生成无效映射条目。
+- 自引用 bound（如 `T extends Comparable<T>`）正确编码为 `InterfaceTypeTemplate(classId, [TypeParameterTemplate(0, ITA)])`，因为 `dartTypeToTemplate` 已处理 enclosingClassTypeParams 查找。
 
 ## Batch 完成检查
 
-- [ ] 3.6.1 TypeTemplate 数据结构定义
-- [ ] 3.6.2 Kernel DartType 遍历框架
-- [ ] 3.6.3 类型参数 bounds 解析与编码
-- [ ] `fvm dart analyze` 零警告
-- [ ] `fvm dart test` 全部通过
+- [x] 3.6.1 TypeTemplate 数据结构定义
+- [x] 3.6.2 Kernel DartType 遍历框架
+- [x] 3.6.3 类型参数 bounds 解析与编码
+- [x] `fvm dart analyze` 零警告
+- [x] `fvm dart test` 全部通过
 - [ ] commit 已提交
 - [ ] overview.md 已更新
 - [ ] code review 已完成
