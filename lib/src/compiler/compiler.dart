@@ -90,6 +90,9 @@ class DarticCompiler {
   bool _isEntryFunction = false;
   ir.DartType _currentReturnType = const ir.VoidType();
 
+  /// The class currently being compiled. Null for top-level functions.
+  ir.Class? _currentEnclosingClass;
+
   /// Type parameters of the enclosing class (for resolving TypeParameterType
   /// references like `T` in `is T` checks within generic class methods).
   /// Null when compiling top-level or static functions.
@@ -466,6 +469,9 @@ class DarticCompiler {
 
     // Track enclosing class type params for generic type resolution.
     final enclosingClass = proc.enclosingClass;
+    _currentEnclosingClass = (!proc.isStatic && enclosingClass != null)
+        ? enclosingClass
+        : null;
     _currentClassTypeParams = (!proc.isStatic && enclosingClass != null)
         ? enclosingClass.typeParameters
         : null;
@@ -510,6 +516,7 @@ class DarticCompiler {
       exceptionTable: List.of(_exceptionHandlers),
       icTable: List.of(_icEntries),
     );
+    _currentEnclosingClass = null;
     _currentClassTypeParams = null;
     _currentFunctionTypeParams = null;
   }

@@ -71,7 +71,29 @@ extension on DarticCompiler {
     }
     if (expr is ir.InstanceSet) return _inferExprType(expr.value);
     if (expr is ir.SuperMethodInvocation) {
-      return expr.interfaceTarget.function.returnType;
+      var retType = expr.interfaceTarget.function.returnType;
+      // Step 1: Substitute class-level type params from the subclass context.
+      final targetClass = expr.interfaceTarget.enclosingClass!;
+      if (_currentEnclosingClass != null &&
+          targetClass.typeParameters.isNotEmpty) {
+        final typeArgs =
+            _findSuperTypeArgs(_currentEnclosingClass!, targetClass);
+        if (typeArgs != null && typeArgs.isNotEmpty) {
+          retType = type_algebra.Substitution.fromPairs(
+            targetClass.typeParameters,
+            typeArgs,
+          ).substituteType(retType);
+        }
+      }
+      // Step 2: Substitute function-level type params if generic method.
+      final funcTypeParams = expr.interfaceTarget.function.typeParameters;
+      if (funcTypeParams.isNotEmpty && expr.arguments.types.isNotEmpty) {
+        retType = type_algebra.Substitution.fromPairs(
+          funcTypeParams,
+          expr.arguments.types,
+        ).substituteType(retType);
+      }
+      return retType;
     }
     if (expr is ir.SuperPropertyGet) {
       final target = expr.interfaceTarget;
@@ -167,6 +189,36 @@ extension on DarticCompiler {
       if (cls == _coreTypes.doubleClass) return StackKind.doubleVal;
     }
     return StackKind.ref;
+  }
+
+  /// Walks the supertype chain of [from] to find [target], returning
+  /// the type arguments that [from] passes to [target].
+  /// Performs transitive substitution through intermediate classes.
+  /// Returns null if [target] is not found in the supertype chain.
+  List<ir.DartType>? _findSuperTypeArgs(ir.Class from, ir.Class target) {
+    ir.Supertype? current = from.supertype;
+    while (current != null) {
+      if (current.classNode == target) {
+        return current.typeArguments;
+      }
+      final nextSuper = current.classNode.supertype;
+      if (nextSuper == null) return null;
+      // Substitute accumulated type args into the next level's type args.
+      if (current.classNode.typeParameters.isNotEmpty &&
+          current.typeArguments.isNotEmpty) {
+        final sub = type_algebra.Substitution.fromPairs(
+          current.classNode.typeParameters,
+          current.typeArguments,
+        );
+        current = ir.Supertype(
+          nextSuper.classNode,
+          nextSuper.typeArguments.map(sub.substituteType).toList(),
+        );
+      } else {
+        current = nextSuper;
+      }
+    }
+    return null;
   }
 }
 

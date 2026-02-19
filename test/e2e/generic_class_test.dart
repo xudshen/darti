@@ -360,6 +360,42 @@ int main() {
       expect(result, 55);
     });
 
+    test('super method call on generic parent: arithmetic on return value',
+        () async {
+      final result = await compileAndRun('''
+class Box<T> {
+  T value;
+  Box(this.value);
+  T getValue() => value;
+}
+class IntBox extends Box<int> {
+  IntBox(int v) : super(v);
+  int addOne() => super.getValue() + 1;
+}
+int main() {
+  IntBox ib = IntBox(41);
+  return ib.addOne();
+}
+''');
+      expect(result, 42);
+    });
+
+    test('super generic method call with function-level type params', () async {
+      final result = await compileAndRun('''
+class Base {
+  T identity<T>(T value) => value;
+}
+class Child extends Base {
+  int foo() => super.identity<int>(41) + 1;
+}
+int main() {
+  Child c = Child();
+  return c.foo();
+}
+''');
+      expect(result, 42);
+    });
+
     test('is check on non-generic child of generic parent', () async {
       final result = await compileAndRun('''
 class Box<T> {

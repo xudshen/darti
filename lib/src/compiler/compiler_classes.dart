@@ -191,6 +191,7 @@ extension on DarticCompiler {
     final fn = ctor.function;
 
     // Track enclosing class type params for generic type resolution.
+    _currentEnclosingClass = ctor.enclosingClass;
     _currentClassTypeParams = ctor.enclosingClass.typeParameters;
 
     _resetFunctionState(
@@ -257,6 +258,7 @@ extension on DarticCompiler {
       paramCount: fn.positionalParameters.length + fn.namedParameters.length,
       icTable: List.of(_icEntries),
     );
+    _currentEnclosingClass = null;
     _currentClassTypeParams = null;
   }
 
