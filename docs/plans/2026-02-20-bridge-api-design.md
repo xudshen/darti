@@ -316,13 +316,18 @@ ScreenBuilder createHomeScreen() => HomeScreen();
 
 ## 实现路径
 
-本设计将通过 Phase 5 逐步实现：
+本设计跨 Phase 5/6/7 三个阶段逐步实现：
 
-| Batch | 内容 | 实现组件 |
-|-------|------|---------|
-| 5.1 | Bridge 基础设施 + CALL_HOST 管线 | DarticEngine 骨架、HostBindings、CALL_HOST 指令 |
-| 5.2 | dart:core 完整桥接 | DarticCorePlugin（int/String/List/Map 等）、HostClassWrapper |
-| 5.3 | 集合字面量、字符串插值与回调 | DarticCallbackProxy、DarticProxyManager |
-| 5.4 | co19 harness v3 验证 | 端到端测试、回归检测 |
-| 后续 | @DarticExport codegen | dartic_annotation + dartic_generator 包 |
-| 后续 | Flutter Bridge | dartic_bridges_flutter 包 |
+| Phase | Batch | 内容 | 实现组件 |
+|-------|-------|------|---------|
+| **5** | 5.1 | Bridge 内部基础设施 + CALL_HOST 管线 | HostBindings、CALL_HOST 指令、DarticProxy |
+| **5** | 5.2 | dart:core 手写桥接 | int/String/List/Map 等 HostClassWrapper（手写，发现模式） |
+| **5** | 5.3 | 集合字面量、字符串插值与回调 | DarticCallbackProxy、DarticProxyManager |
+| **5** | 5.4 | co19 harness v3 验证 | 端到端测试、回归检测 |
+| **6** | 6.1 | async/await（生产环境必需） | 帧快照续体、Completer 桥接 |
+| **6** | 6.4 | 沙箱（DarticConfig.maxFuel 依赖） | 字节码验证、fuel 计数、调用深度限制 |
+| **7** | 7.1 | DarticEngine 公开 API 封装 | DarticEngine、DarticConfig、DarticPlugin 接口 |
+| **7** | 7.2 | @DarticExport 代码生成 | dartic_annotation + dartic_generator（BridgeGenerator） |
+| **7** | 7.3 | Flutter Bridge + 热更新 Demo | dartic_bridges_flutter 包、端到端 demo |
+
+**设计原则**：Phase 5 手写 Bridge 发现真实模式 → Phase 6 补全 async/sandbox 运行时能力 → Phase 7 基于稳定内部实现封装公开 API + codegen。

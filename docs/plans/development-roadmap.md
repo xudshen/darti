@@ -645,6 +645,66 @@ int main() => add(1, 2); // => 3
 
 ---
 
+## Phase 7: 公开 API + 代码生成
+
+**目标：** 将内部 Bridge 基础设施封装为用户友好的嵌入式引擎 API，实现 @DarticExport 代码生成器，提供 Flutter Bridge
+
+**设计章节：** [`docs/plans/2026-02-20-bridge-api-design.md`](2026-02-20-bridge-api-design.md)（公开 API 设计）
+
+**里程碑：** 宿主应用可通过 `DarticEngine` 3 行代码加载并执行 .darb 脚本，@DarticExport 注解自动生成 Bridge，Flutter 热更新 demo 端到端运行
+
+**依赖：** Phase 5（内部 Bridge 基础设施）、Phase 6 Batch 6.1（async/await，生产环境必需）、Phase 6 Batch 6.4（沙箱，DarticConfig.maxFuel）
+
+### Batch 7.1: DarticEngine 公开 API
+
+- [ ] 7.1.1 DarticEngine / DarticConfig / DarticPlugin 接口 → `lib/src/api/engine.dart`, `lib/src/api/config.dart`, `lib/src/api/plugin.dart`
+- [ ] 7.1.2 addFunction() 快速绑定（无需 codegen 的手动注册路径） → `lib/src/api/engine.dart`
+- [ ] 7.1.3 loadBytecode() + call() 端到端管线（封装 DarticInterpreter + HostBindings） → 集成测试
+- [ ] 7.1.4 错误模型（DarticError / FuelExhaustedError / BytecodeError / BindingResolutionError） → `lib/src/api/errors.dart`
+- [ ] 7.1.5 onPrint / onError 回调机制 → 扩展 engine.dart
+
+**commit:** `feat(api): add DarticEngine public embedding API`
+
+> **核心发现：**
+> _(执行时填写：DarticEngine 对 DarticInterpreter 的封装层薄厚、addFunction 的类型推断可行性、call() 的返回值类型映射策略等)_
+
+### Batch 7.2: @DarticExport 代码生成
+
+- [ ] 7.2.1 dartic_annotation 包（@DarticExport, @DarticHide 纯注解定义） → `packages/dartic_annotation/`
+- [ ] 7.2.2 BridgeGenerator 核心 — HostClassWrapper 自动生成（package:analyzer 扫描 + 方法/属性路由代码生成） → `packages/dartic_generator/`
+- [ ] 7.2.3 BridgeGenerator — Bridge 类 + BridgeFactory 生成（可继承类的 extends 子类 + super 转发器） → `packages/dartic_generator/`
+- [ ] 7.2.4 build_runner 集成（Builder 注册、分文件输出、增量构建支持） → `packages/dartic_generator/`
+- [ ] 7.2.5 自测：用 codegen 重生成 dart:core bridges，对比 Phase 5 手写版，验证功能等价 → 集成测试
+
+**commit:** `feat(codegen): add @DarticExport annotation and BridgeGenerator`
+
+> **核心发现：**
+> _(执行时填写：codegen 与手写 Bridge 的差异、package:analyzer 解析速度、生成代码的体积、操作符/泛型/命名构造函数等边界情况处理等)_
+
+### Batch 7.3: Flutter Bridge + 热更新 Demo
+
+- [ ] 7.3.1 dartic_bridges_flutter 包骨架 → `packages/dartic_bridges_flutter/`
+- [ ] 7.3.2 Widget / StatelessWidget / StatefulWidget Bridge 生成 → 基础 widget 绑定
+- [ ] 7.3.3 BuildContext / Navigator / MaterialApp Bridge → 导航与主题绑定
+- [ ] 7.3.4 Flutter 热更新端到端 demo（服务端编译 .darb → 设备端加载执行 → 渲染 UI） → `example/flutter_hot_update/`
+
+**commit:** `feat(flutter): add Flutter widget bridges and hot update demo`
+
+> **核心发现：**
+> _(执行时填写：StatefulWidget 的 State 生命周期与 Bridge 的交互、BuildContext 跨边界传递的安全性、热更新的 .darb 体积与加载速度等)_
+
+### Phase 7 里程碑验证
+
+- [ ] DarticEngine 3 行代码可加载执行 .darb 脚本
+- [ ] @DarticExport 生成的 Bridge 与 Phase 5 手写 Bridge 功能等价
+- [ ] addFunction() 手动绑定路径可用（无需 codegen 的快速原型开发）
+- [ ] Flutter 热更新 demo 端到端运行（编译 → 传输 → 加载 → 渲染）
+- [ ] Phase 2-6 全量零回归
+
+**实际通过率：** _(执行时填写)_
+
+---
+
 ## 各 Phase 预估 co19 覆盖
 
 审查发现原预估存在偏差（Phase 5 预估超出实际测试数，Phase 4/6 通过率偏高），现提供乐观/保守双估：
@@ -657,12 +717,14 @@ int main() => add(1, 2); // => 3
 | 4 | Generics + Mixins + TypeSystem | 3,426 | 1,834 | +46 | ~4,500 | ~3,200 | 4,566 | 0 |
 | 5 | LibTest/core + 集合/字符串特性 | ~1,100 | ~600 | ~400 | ~5,500 | ~4,000 | | |
 | 6 | Async + LanguageFeatures | ~2,300 | ~1,500 | ~500 | ~7,500 | ~5,500 | | |
+| 7 | 公开 API + codegen（无新 co19 类别） | — | ~0 | ~100 | ~7,600 | ~5,600 | | |
 
 **关键修正说明：**
 - **Phase 2**：harness v0 只有自建 shim，通过率受限；大量 Expressions 测试依赖类（Phase 3 才解锁）
 - **Phase 4**：TypeSystem/subtyping 占 2,721 测试（86%），类型测试通过率通常偏低
 - **Phase 5**：LibTest/core 实际只有 ~1,124 测试（原计划 1,500 超出实际数）
 - **Phase 6**：Patterns (783 测试) 占大头且复杂度高，初始通过率可能 20-30%
+- **Phase 7**：不新增 co19 类别（聚焦 API 封装和 codegen），但 Flutter Bridge 可能解锁少量历史测试中的 toString/print 依赖
 
 **"历史提升"**：指新能力解锁的、历史类别中之前 fail 现在 pass 的测试数。例如 Phase 3 加了类后，Phase 2 的 `Language/Expressions` 中依赖类的测试预计新增 ~300 个 pass。
 
@@ -706,3 +768,7 @@ review 发现的问题直接修复，修复后重新 review 直到通过。
 - [x] 执行 Phase 4（Batch 4.1 → 4.4，共 16 个 Task）— co19 Phase 4 五类 53.5% (1834/3426)，全十一类累计 60.1% (4566/7593)，0 回归
 - [x] ~~为 Phase 5 编写 Task 文件~~ → 已完成，见 [`docs/tasks/phase5/`](../tasks/phase5/README.md)
 - [ ] 执行 Phase 5（Batch 5.1 → 5.4，共 19 个 Task）
+- [ ] 为 Phase 6 编写 Task 文件
+- [ ] 执行 Phase 6（Batch 6.1 → 6.4）
+- [ ] 为 Phase 7 编写 Task 文件 — 公开 API 设计已完成，见 [`docs/plans/2026-02-20-bridge-api-design.md`](2026-02-20-bridge-api-design.md)
+- [ ] 执行 Phase 7（Batch 7.1 → 7.3）
