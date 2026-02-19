@@ -278,24 +278,7 @@ extension on DarticCompiler {
 
     final (valReg, valLoc) = _compileExpression(value);
     const thisReg = 2; // rsp+2 on the ref stack
-
-    if (layout.kind.isValue) {
-      int srcReg = valReg;
-      if (valLoc == ResultLoc.ref) {
-        srcReg = _allocValueReg();
-        final unboxOp = layout.kind == StackKind.doubleVal
-            ? Op.unboxDouble
-            : Op.unboxInt;
-        _emitter.emit(encodeABC(unboxOp, srcReg, valReg, 0));
-      }
-      _emitter.emit(encodeABC(Op.setFieldVal, thisReg, srcReg, layout.offset));
-    } else {
-      int srcReg = valReg;
-      if (valLoc == ResultLoc.value) {
-        srcReg = _emitBoxToRef(valReg, _inferExprType(value));
-      }
-      _emitter.emit(encodeABC(Op.setFieldRef, thisReg, srcReg, layout.offset));
-    }
+    _emitSetField(thisReg, valReg, valLoc, layout, _inferExprType(value));
   }
 
   /// Compiles a [SuperInitializer] within a constructor.

@@ -1,7 +1,8 @@
 # Compiler Visitor 覆盖率报告
 
-> 生成日期：2026-02-19
+> 生成日期：2026-02-20（更新）
 > 基于 commit：`c968dcb`（完成 5 个 visitor 重构后）
+> 更新：Phase 4 按需实现的 5 个 visitor 方法已完成（`visitInstanceConstant`、`visitTypeLiteral`、`visitTypeLiteralConstant`、`visitInstantiation`、`visitInstantiationConstant`）
 
 ## 概述
 
@@ -16,7 +17,7 @@
 **文件**：`lib/src/compiler/compiler_expressions.dart`
 **Mixin**：`ExpressionVisitorDefaultMixin<(int, ResultLoc)>`
 **`defaultExpression`**：throw `UnsupportedError`
-**已实现**：36 / 69
+**已实现**：38 / 69（+2：visitTypeLiteral, visitInstantiation）
 
 ### 未实现方法
 
@@ -79,7 +80,7 @@
 **文件**：`lib/src/compiler/compiler_expressions.dart`
 **Mixin**：`ConstantVisitorDefaultMixin<(int, ResultLoc)>`
 **`defaultConstant`**：throw `UnsupportedError`
-**已实现**：6 / 19
+**已实现**：9 / 19（+3：visitInstanceConstant, visitTypeLiteralConstant, visitInstantiationConstant）
 
 ### 未实现方法
 
@@ -144,19 +145,19 @@
 > 对照 `docs/plans/development-roadmap.md`，将每个未实现方法映射到对应 Phase/Batch。
 > `_ExprTypeInferVisitor` 为安全降级（返回 null），不单独排期——在对应 Expression 编译实现时顺便补充。
 
-### Phase 4: 高级 OOP + 泛型（当前阶段）
+### Phase 4: 高级 OOP + 泛型（当前阶段）— ✅ visitor 方法已全部实现
 
-Phase 4 主要新增泛型和 mixin，**不直接要求新的 visitor 方法**。但以下方法可能在 Phase 4 co19 测试中被触发：
+Phase 4 按需实现的 5 个 visitor 方法已全部完成：
 
-| 方法 | Visitor | 关联 Batch | 说明 |
-|------|---------|-----------|------|
-| `visitInstantiation` | ExprCompile | 4.2.6 泛型方法 | 泛型函数实例化 `foo<int>`（无括号取引用），泛型方法测试可能触发 |
-| `visitInstantiationConstant` | ConstCompile | 4.2 | const 上下文中的泛型函数实例化 |
-| `visitTypeLiteral` | ExprCompile | 4.3 类型系统 | `Type` 作为值（如 `print(int)`），类型系统测试可能用到 |
-| `visitTypeLiteralConstant` | ConstCompile | 4.3 | const 上下文中的 `Type` 值 |
-| `visitInstanceConstant` | ConstCompile | 4.1-4.2 | `const MyClass()` 用户 const 对象，mixin/泛型测试很可能触发 |
+| 方法 | Visitor | 状态 | 说明 |
+|------|---------|------|------|
+| `visitInstanceConstant` | ConstCompile | ✅ | `const MyClass()` — 内联 NEW_INSTANCE + SET_FIELD 构建 const 对象 |
+| `visitTypeLiteral` | ExprCompile | ✅ | Type 作为值 — TypeTemplate → INSTANTIATE_TYPE 管线 |
+| `visitTypeLiteralConstant` | ConstCompile | ✅ | const 上下文中的 Type 值 |
+| `visitInstantiation` | ExprCompile | ✅ | 泛型函数实例化 `foo<int>` — 生成 bridge thunk 解决 value/ref 栈不匹配 |
+| `visitInstantiationConstant` | ConstCompile | ✅ | const 上下文中的泛型函数实例化 |
 
-> **建议**：Phase 4 执行中按需实现——碰到 `UnsupportedError` 时补充，不提前做。`visitInstanceConstant` 最可能先碰到。
+> **核心发现**：`visitInstantiation` 需要生成 bridge thunk 函数。原因：泛型函数参数 `T x` 在编译时分类为 ref 栈（因 T 是类型参数），但实例化后类型 `int Function(int)` 的调用者会将 `int` 参数发送到 value 栈。thunk 负责 BOX/UNBOX 转换，确保两侧调用约定匹配。
 
 ---
 
@@ -272,8 +273,8 @@ Phase 5 是 visitor 缺口的**集中消化期**，对应 Batch 5.3（集合与�
 
 | Phase | 新增 visitor 方法数 | 涉及 Visitor |
 |-------|-------------------|-------------|
-| **Phase 4** | ~5（按需） | ExprCompile, ConstCompile |
+| **Phase 4** | 5 ✅ 已完成 | ExprCompile ×2, ConstCompile ×3 |
 | **Phase 5** | ~17（集中） | ExprCompile ×10, ConstCompile ×3, StmtCompile ×1, TypeInfer ×跟随 |
 | **Phase 6** | ~15 | ExprCompile ×8, ConstCompile ×4, StmtCompile ×3 |
 | 不排期 | 8 | — |
-| **合计** | ~37 / 45 有意义方法 | — |
+| **合计** | ~37 / 45 有意义方法（已完成 5） | — |

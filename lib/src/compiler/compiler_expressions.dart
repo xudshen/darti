@@ -273,11 +273,7 @@ extension on DarticCompiler {
             type.withDeclaredNullability(ir.Nullability.nonNullable);
         final kind = _classifyStackKind(nonNullType);
         if (kind.isValue) {
-          final unboxOp =
-              kind == StackKind.doubleVal ? Op.unboxDouble : Op.unboxInt;
-          final valReg = _allocValueReg();
-          _emitter.emit(encodeABC(unboxOp, valReg, reg, 0));
-          return (valReg, ResultLoc.value);
+          return (_emitUnbox(reg, kind), ResultLoc.value);
         }
       }
     }
@@ -361,11 +357,7 @@ extension on DarticCompiler {
   (int, ResultLoc) _unboxCapturedIfNeeded(int refReg, ir.DartType varType) {
     final kind = _classifyStackKind(varType);
     if (kind.isValue) {
-      final unboxOp =
-          kind == StackKind.doubleVal ? Op.unboxDouble : Op.unboxInt;
-      final valReg = _allocValueReg();
-      _emitter.emit(encodeABC(unboxOp, valReg, refReg, 0));
-      return (valReg, ResultLoc.value);
+      return (_emitUnbox(refReg, kind), ResultLoc.value);
     }
     return (refReg, ResultLoc.ref);
   }
@@ -450,11 +442,7 @@ extension on DarticCompiler {
       // Unbox if the field type is a value type.
       final kind = _classifyStackKind(target.type);
       if (kind.isValue) {
-        final unboxOp =
-            kind == StackKind.doubleVal ? Op.unboxDouble : Op.unboxInt;
-        final valReg = _allocValueReg();
-        _emitter.emit(encodeABC(unboxOp, valReg, refReg, 0));
-        return (valReg, ResultLoc.value);
+        return (_emitUnbox(refReg, kind), ResultLoc.value);
       }
       return (refReg, ResultLoc.ref);
     }
@@ -1042,12 +1030,7 @@ extension on DarticCompiler {
       final targetKind = _classifyStackKind(expr.type);
 
       if (targetKind.isValue && operandLoc == ResultLoc.ref) {
-        // Operand is on ref stack but target type is a value type → unbox.
-        final unboxOp =
-            targetKind == StackKind.doubleVal ? Op.unboxDouble : Op.unboxInt;
-        final valReg = _allocValueReg();
-        _emitter.emit(encodeABC(unboxOp, valReg, operandReg, 0));
-        return (valReg, ResultLoc.value);
+        return (_emitUnbox(operandReg, targetKind), ResultLoc.value);
       }
 
       // Otherwise pass through as-is (no CAST needed).
@@ -1215,19 +1198,7 @@ extension on DarticCompiler {
           // SAFETY: loc discarded — field access targets object instances
           // which are always on the ref stack.
           final (recvReg, _) = _compileExpression(expr.receiver);
-          if (layout.kind.isValue) {
-            final resultReg = _allocValueReg();
-            _emitter.emit(encodeABC(
-              Op.getFieldVal, resultReg, recvReg, layout.offset,
-            ));
-            return (resultReg, ResultLoc.value);
-          } else {
-            final resultReg = _allocRefReg();
-            _emitter.emit(encodeABC(
-              Op.getFieldRef, resultReg, recvReg, layout.offset,
-            ));
-            return (resultReg, ResultLoc.ref);
-          }
+          return _emitGetField(recvReg, layout);
         }
       }
     }
@@ -1291,27 +1262,8 @@ extension on DarticCompiler {
           // which are always on the ref stack.
           final (recvReg, _) = _compileExpression(expr.receiver);
           var (valReg, valLoc) = _compileExpression(expr.value);
-
-          if (layout.kind.isValue) {
-            if (valLoc == ResultLoc.ref) {
-              final unboxed = _allocValueReg();
-              final unboxOp = layout.kind == StackKind.doubleVal
-                  ? Op.unboxDouble
-                  : Op.unboxInt;
-              _emitter.emit(encodeABC(unboxOp, unboxed, valReg, 0));
-              valReg = unboxed;
-            }
-            _emitter.emit(encodeABC(
-              Op.setFieldVal, recvReg, valReg, layout.offset,
-            ));
-          } else {
-            if (valLoc == ResultLoc.value) {
-              valReg = _emitBoxToRef(valReg, _inferExprType(expr.value));
-            }
-            _emitter.emit(encodeABC(
-              Op.setFieldRef, recvReg, valReg, layout.offset,
-            ));
-          }
+          valReg = _emitSetField(
+              recvReg, valReg, valLoc, layout, _inferExprType(expr.value));
           // InstanceSet result is the written value.
           return (valReg, valLoc);
         }
@@ -1445,19 +1397,7 @@ extension on DarticCompiler {
         final layout = layouts[target.getterReference];
         if (layout != null) {
           const thisReg = 2; // rsp+2
-          if (layout.kind.isValue) {
-            final resultReg = _allocValueReg();
-            _emitter.emit(encodeABC(
-              Op.getFieldVal, resultReg, thisReg, layout.offset,
-            ));
-            return (resultReg, ResultLoc.value);
-          } else {
-            final resultReg = _allocRefReg();
-            _emitter.emit(encodeABC(
-              Op.getFieldRef, resultReg, thisReg, layout.offset,
-            ));
-            return (resultReg, ResultLoc.ref);
-          }
+          return _emitGetField(thisReg, layout);
         }
       }
     }
@@ -1502,27 +1442,8 @@ extension on DarticCompiler {
         if (layout != null) {
           var (valReg, valLoc) = _compileExpression(expr.value);
           const thisReg = 2;
-
-          if (layout.kind.isValue) {
-            if (valLoc == ResultLoc.ref) {
-              final unboxed = _allocValueReg();
-              final unboxOp = layout.kind == StackKind.doubleVal
-                  ? Op.unboxDouble
-                  : Op.unboxInt;
-              _emitter.emit(encodeABC(unboxOp, unboxed, valReg, 0));
-              valReg = unboxed;
-            }
-            _emitter.emit(encodeABC(
-              Op.setFieldVal, thisReg, valReg, layout.offset,
-            ));
-          } else {
-            if (valLoc == ResultLoc.value) {
-              valReg = _emitBoxToRef(valReg, _inferExprType(expr.value));
-            }
-            _emitter.emit(encodeABC(
-              Op.setFieldRef, thisReg, valReg, layout.offset,
-            ));
-          }
+          valReg = _emitSetField(
+              thisReg, valReg, valLoc, layout, _inferExprType(expr.value));
           return (valReg, valLoc);
         }
       }
@@ -1560,6 +1481,357 @@ extension on DarticCompiler {
     throw UnsupportedError(
       'Unsupported SuperPropertySet target: ${target.runtimeType}',
     );
+  }
+
+  // ── InstanceConstant (const MyClass(...)) ──
+
+  /// Compiles an [ir.InstanceConstant] by emitting inline object construction:
+  /// allocate → set each field with compiled constant values.
+  (int, ResultLoc) _compileInstanceConstant(ir.InstanceConstant constant) {
+    final cls = constant.classNode;
+    final classId = _classToClassId[cls];
+    if (classId == null) {
+      throw UnsupportedError(
+        'InstanceConstant: unknown class ${cls.name}',
+      );
+    }
+
+    // 1. Allocate the object (generic or non-generic).
+    final objReg = _allocRefReg();
+    final isGeneric = constant.typeArguments.isNotEmpty;
+
+    if (isGeneric) {
+      final typeTemplate = InterfaceTypeTemplate(
+        classId: classId,
+        typeArgs: [
+          for (final arg in constant.typeArguments)
+            dartTypeToTemplate(
+              arg,
+              _typeClassIdLookup,
+              enclosingClassTypeParams: _currentClassTypeParams,
+              enclosingFunctionTypeParams: _currentFunctionTypeParams,
+            ),
+        ],
+      );
+      final templateIdx = _constantPool.addRef(typeTemplate);
+      final typeReg = _allocRefReg();
+      _emitter.emit(encodeABx(Op.instantiateType, typeReg, templateIdx));
+      _emitter.emit(encodeABC(Op.allocGeneric, objReg, typeReg, 0));
+    } else {
+      _emitter.emit(encodeABx(Op.newInstance, objReg, classId));
+    }
+
+    // 2. Set each field from the constant's fieldValues map.
+    final layouts = _instanceFieldLayouts[cls];
+
+    for (final entry in constant.fieldValues.entries) {
+      final field = entry.key.asField;
+      final value = entry.value;
+
+      // Look up field layout (offset + kind).
+      final layout = layouts?[field.getterReference];
+      if (layout == null) {
+        throw UnsupportedError(
+          'InstanceConstant: field layout not found for '
+          '${cls.name}.${field.name.text}',
+        );
+      }
+
+      // Compile the constant field value.
+      var (valReg, valLoc) = value.accept(_constantVisitor);
+
+      _emitSetField(objReg, valReg, valLoc, layout, field.type);
+    }
+
+    return (objReg, ResultLoc.ref);
+  }
+
+  // ── TypeLiteral (Type as value, e.g., `int` used as expression) ──
+
+  /// Compiles a [ir.TypeLiteral]: reifies a Dart type into a runtime
+  /// [DarticType] object via INSTANTIATE_TYPE.
+  (int, ResultLoc) _compileTypeLiteral(ir.TypeLiteral expr) {
+    return _emitTypeReification(expr.type);
+  }
+
+  /// Compiles a [ir.TypeLiteralConstant]: same as TypeLiteral but from
+  /// a constant context.
+  (int, ResultLoc) _compileTypeLiteralConstant(
+      ir.TypeLiteralConstant constant) {
+    return _emitTypeReification(constant.type);
+  }
+
+  /// Shared helper: convert a DartType to a runtime DarticType via
+  /// TypeTemplate → INSTANTIATE_TYPE.
+  (int, ResultLoc) _emitTypeReification(ir.DartType type) {
+    final template = dartTypeToTemplate(
+      type,
+      _typeClassIdLookup,
+      enclosingClassTypeParams: _currentClassTypeParams,
+      enclosingFunctionTypeParams: _currentFunctionTypeParams,
+    );
+    final templateIdx = _constantPool.addRef(template);
+    final typeReg = _allocRefReg();
+    _emitter.emit(encodeABx(Op.instantiateType, typeReg, templateIdx));
+    return (typeReg, ResultLoc.ref);
+  }
+
+  // ── Instantiation (generic function instantiation, e.g., `foo<int>`) ──
+
+  /// Compiles an [ir.Instantiation]: a generic function tear-off with bound
+  /// type arguments (e.g., `identity<int>`).
+  ///
+  /// When the instantiation causes a value/ref stack mismatch between the
+  /// generic function's parameter types (`T` → ref) and the instantiated
+  /// type (`int` → value), generates a bridge thunk that coerces arguments
+  /// and return values between the two calling conventions.
+  (int, ResultLoc) _compileInstantiation(ir.Instantiation expr) {
+    // For StaticTearOff targets, we know the function at compile time and
+    // can generate an optimized CALL_STATIC thunk.
+    if (expr.expression is ir.StaticTearOff) {
+      return _compileStaticInstantiation(
+        expr.expression as ir.StaticTearOff,
+        expr.typeArguments,
+      );
+    }
+    // Fallback for non-StaticTearOff targets: pass through.
+    return _compileExpression(expr.expression);
+  }
+
+  /// Compiles `Instantiation(StaticTearOff(f), typeArgs)`.
+  ///
+  /// If the instantiation causes a stack-kind mismatch (e.g., generic `T` is
+  /// ref but instantiated `int` is value), generates a bridge thunk.
+  /// Otherwise returns a plain tear-off closure.
+  (int, ResultLoc) _compileStaticInstantiation(
+    ir.StaticTearOff tearOff,
+    List<ir.DartType> typeArgs,
+  ) {
+    final target = tearOff.target;
+    final funcId = _procToFuncId[target.reference];
+    if (funcId == null) {
+      throw UnsupportedError(
+        'Instantiation: unknown function ${target.name.text}',
+      );
+    }
+
+    final fn = target.function;
+    final typeParams = fn.typeParameters;
+    if (typeParams.isEmpty || typeArgs.isEmpty) {
+      return _compileStaticTearOff(tearOff);
+    }
+
+    // Build a substitution to compute instantiated types.
+    final subst = type_algebra.Substitution.fromPairs(typeParams, typeArgs);
+
+    if (!_needsInstantiationThunk(fn, subst)) {
+      return _compileStaticTearOff(tearOff);
+    }
+
+    return _generateInstantiationThunk(funcId, fn, subst, typeArgs);
+  }
+
+  /// Returns true if instantiating [fn] with [subst] causes a value/ref
+  /// stack-kind mismatch for any parameter or the return type.
+  bool _needsInstantiationThunk(
+      ir.FunctionNode fn, type_algebra.Substitution subst) {
+    for (final param in fn.positionalParameters) {
+      if (_classifyStackKind(param.type) !=
+          _classifyStackKind(subst.substituteType(param.type))) {
+        return true;
+      }
+    }
+    for (final param in fn.namedParameters) {
+      if (_classifyStackKind(param.type) !=
+          _classifyStackKind(subst.substituteType(param.type))) {
+        return true;
+      }
+    }
+    return _classifyStackKind(fn.returnType) !=
+        _classifyStackKind(subst.substituteType(fn.returnType));
+  }
+
+  /// Generates a bridge thunk for a generic function instantiation that has
+  /// value/ref stack mismatches.
+  ///
+  /// The thunk accepts parameters per the **instantiated** types (matching
+  /// the caller's calling convention), coerces them to the **actual** types
+  /// (matching the generic function's convention), calls the inner function
+  /// via CALL_STATIC, and coerces the return value back.
+  (int, ResultLoc) _generateInstantiationThunk(
+    int innerFuncId,
+    ir.FunctionNode fn,
+    type_algebra.Substitution subst,
+    List<ir.DartType> typeArgs,
+  ) {
+    // Reserve a slot in the function table.
+    final thunkFuncId = _functions.length;
+    _functions.add(DarticFuncProto(
+      funcId: thunkFuncId,
+      bytecode: DarticCompiler._haltBytecode,
+      valueRegCount: 0,
+      refRegCount: 0,
+      paramCount: 0,
+    ));
+
+    // Save current compilation state.
+    _pushContext();
+    _currentReturnType = subst.substituteType(fn.returnType);
+
+    // Create a new scope for the thunk.
+    _scope = Scope(
+      valueAlloc: _valueAlloc,
+      refAlloc: _refAlloc,
+    );
+
+    // Reserve standard header: ITA(0), FTA(1), this(2).
+    _refAlloc.alloc(); // rsp+0: ITA
+    _refAlloc.alloc(); // rsp+1: FTA
+    _refAlloc.alloc(); // rsp+2: this/receiver
+
+    // Register parameters with INSTANTIATED types. The caller sends args
+    // based on the instantiated type, so this ensures the thunk receives
+    // them on the correct stack.
+    final paramMappings = <({int reg, StackKind instKind, StackKind actualKind,
+        ir.DartType instType})>[];
+    for (final param in fn.positionalParameters) {
+      final instType = subst.substituteType(param.type);
+      final instKind = _classifyStackKind(instType);
+      final actualKind = _classifyStackKind(param.type);
+      final reg = instKind.isValue ? _valueAlloc.alloc() : _refAlloc.alloc();
+      paramMappings.add((
+        reg: reg,
+        instKind: instKind,
+        actualKind: actualKind,
+        instType: instType,
+      ));
+    }
+    final namedMappings = <({int reg, StackKind instKind, StackKind actualKind,
+        ir.DartType instType, String name})>[];
+    for (final param in fn.namedParameters) {
+      final instType = subst.substituteType(param.type);
+      final instKind = _classifyStackKind(instType);
+      final actualKind = _classifyStackKind(param.type);
+      final reg = instKind.isValue ? _valueAlloc.alloc() : _refAlloc.alloc();
+      namedMappings.add((
+        reg: reg,
+        instKind: instKind,
+        actualKind: actualKind,
+        instType: instType,
+        name: param.name!,
+      ));
+    }
+
+    // Build argument temps for the CALL_STATIC to the inner function,
+    // coercing each arg to match the inner function's actual parameter kind.
+    final argTemps = <(int, ResultLoc)>[];
+    for (final m in paramMappings) {
+      argTemps.add(_coerceThunkArg(m.reg, m.instKind, m.actualKind, m.instType));
+    }
+    for (final m in namedMappings) {
+      argTemps.add(_coerceThunkArg(m.reg, m.instKind, m.actualKind, m.instType));
+    }
+
+    // Emit FTA for the call — the inner function needs its type arguments.
+    _emitFTAForCall(typeArgs);
+
+    // Emit CALL_STATIC to the inner function.
+    final actualRetKind = _classifyStackKind(fn.returnType);
+    final innerResultReg =
+        actualRetKind.isValue ? _allocValueReg() : _allocRefReg();
+    _emitArgMovesAndCall(argTemps, Op.callStatic, innerResultReg, innerFuncId);
+
+    // Coerce return value and emit RETURN.
+    final instRetKind =
+        _classifyStackKind(subst.substituteType(fn.returnType));
+    if (actualRetKind == StackKind.ref && instRetKind.isValue) {
+      // Inner returns ref, caller expects value → UNBOX + RETURN_VAL.
+      final valReg = _allocValueReg();
+      final unboxOp = instRetKind == StackKind.doubleVal
+          ? Op.unboxDouble
+          : Op.unboxInt;
+      _emitter.emit(encodeABC(unboxOp, valReg, innerResultReg, 0));
+      _emitter.emit(encodeABC(Op.returnVal, valReg, 0, 0));
+    } else if (actualRetKind.isValue && instRetKind == StackKind.ref) {
+      // Inner returns value, caller expects ref → BOX + RETURN_REF.
+      final refReg = _allocRefReg();
+      final boxOp = actualRetKind == StackKind.doubleVal
+          ? Op.boxDouble
+          : Op.boxInt;
+      _emitter.emit(encodeABC(boxOp, refReg, innerResultReg, 0));
+      _emitter.emit(encodeABC(Op.returnRef, refReg, 0, 0));
+    } else if (actualRetKind.isValue) {
+      _emitter.emit(encodeABC(Op.returnVal, innerResultReg, 0, 0));
+    } else {
+      _emitter.emit(encodeABC(Op.returnRef, innerResultReg, 0, 0));
+    }
+
+    _patchPendingArgMoves();
+
+    // Create the thunk FuncProto.
+    _functions[thunkFuncId] = DarticFuncProto(
+      funcId: thunkFuncId,
+      name: '<instantiation-thunk>',
+      bytecode: _emitter.toUint32List(),
+      valueRegCount: _valueAlloc.maxUsed,
+      refRegCount: _refAlloc.maxUsed,
+      paramCount:
+          fn.positionalParameters.length + fn.namedParameters.length,
+    );
+
+    // Restore enclosing compilation state.
+    _popContext();
+
+    // Emit CLOSURE wrapping the thunk in the enclosing function.
+    final closureReg = _allocRefReg();
+    _emitter.emit(encodeABx(Op.closure, closureReg, thunkFuncId));
+    return (closureReg, ResultLoc.ref);
+  }
+
+  /// Coerces a thunk parameter from the instantiated kind to the actual kind.
+  (int, ResultLoc) _coerceThunkArg(
+      int reg, StackKind instKind, StackKind actualKind, ir.DartType instType) {
+    if (instKind.isValue && actualKind == StackKind.ref) {
+      return (_emitBoxToRef(reg, instType), ResultLoc.ref);
+    } else if (instKind == StackKind.ref && actualKind.isValue) {
+      return (_emitUnbox(reg, actualKind), ResultLoc.value);
+    }
+    return (reg, instKind.isValue ? ResultLoc.value : ResultLoc.ref);
+  }
+
+  /// Compiles an [ir.InstantiationConstant]: a generic function tear-off
+  /// with bound type args in constant context.
+  ///
+  /// For StaticTearOffConstant targets, applies the same thunk generation
+  /// as [_compileInstantiation]. For other targets, delegates directly.
+  (int, ResultLoc) _compileInstantiationConstant(
+      ir.InstantiationConstant constant) {
+    if (constant.tearOffConstant is ir.StaticTearOffConstant) {
+      final tearOff = constant.tearOffConstant as ir.StaticTearOffConstant;
+      final target = tearOff.target;
+      final funcId = _procToFuncId[target.reference];
+      if (funcId == null) {
+        throw UnsupportedError(
+          'InstantiationConstant: unknown function ${target.name.text}',
+        );
+      }
+
+      final fn = target.function;
+      final typeParams = fn.typeParameters;
+      if (typeParams.isEmpty || constant.types.isEmpty) {
+        return _compileStaticTearOffConstant(tearOff);
+      }
+
+      final subst =
+          type_algebra.Substitution.fromPairs(typeParams, constant.types);
+
+      if (!_needsInstantiationThunk(fn, subst)) {
+        return _compileStaticTearOffConstant(tearOff);
+      }
+
+      return _generateInstantiationThunk(funcId, fn, subst, constant.types);
+    }
+    return constant.tearOffConstant.accept(_constantVisitor);
   }
 }
 
@@ -1714,6 +1986,14 @@ class _ExprCompileVisitor
   @override
   (int, ResultLoc) visitSuperPropertySet(ir.SuperPropertySet node) =>
       _c._compileSuperPropertySet(node);
+
+  // Phase 4 additions
+  @override
+  (int, ResultLoc) visitTypeLiteral(ir.TypeLiteral node) =>
+      _c._compileTypeLiteral(node);
+  @override
+  (int, ResultLoc) visitInstantiation(ir.Instantiation node) =>
+      _c._compileInstantiation(node);
 }
 
 /// Visitor that compiles [ir.Constant] nodes to bytecode.
@@ -1750,4 +2030,16 @@ class _ConstantCompileVisitor
   (int, ResultLoc) visitStaticTearOffConstant(
           ir.StaticTearOffConstant node) =>
       _c._compileStaticTearOffConstant(node);
+
+  // Phase 4 additions
+  @override
+  (int, ResultLoc) visitInstanceConstant(ir.InstanceConstant node) =>
+      _c._compileInstanceConstant(node);
+  @override
+  (int, ResultLoc) visitTypeLiteralConstant(ir.TypeLiteralConstant node) =>
+      _c._compileTypeLiteralConstant(node);
+  @override
+  (int, ResultLoc) visitInstantiationConstant(
+          ir.InstantiationConstant node) =>
+      _c._compileInstantiationConstant(node);
 }

@@ -70,6 +70,16 @@ extension on DarticCompiler {
         ir.BoolConstant() => _coreTypes.boolNonNullableRawType,
         ir.StringConstant() => _coreTypes.stringNonNullableRawType,
         ir.NullConstant() => const ir.NullType(),
+        ir.InstanceConstant(:final classNode, :final typeArguments) =>
+          ir.InterfaceType(
+            classNode,
+            ir.Nullability.nonNullable,
+            typeArguments,
+          ),
+        ir.TypeLiteralConstant() =>
+          _coreTypes.typeRawType(ir.Nullability.nonNullable),
+        ir.InstantiationConstant(:final tearOffConstant) =>
+          _inferConstantType(tearOffConstant),
         _ => null,
       };
 
@@ -303,6 +313,21 @@ class _ExprTypeInferVisitor
   @override
   ir.DartType? visitThrow(ir.Throw node) =>
       const ir.NeverType.nonNullable();
+
+  // Phase 4 additions
+  @override
+  ir.DartType? visitTypeLiteral(ir.TypeLiteral node) =>
+      _compiler._coreTypes.typeRawType(ir.Nullability.nonNullable);
+  @override
+  ir.DartType? visitInstantiation(ir.Instantiation node) {
+    // The result type is the instantiated function type.
+    final innerType = _compiler._inferExprType(node.expression);
+    if (innerType is ir.FunctionType && node.typeArguments.isNotEmpty) {
+      return type_algebra.FunctionTypeInstantiator.instantiate(
+          innerType, node.typeArguments);
+    }
+    return innerType;
+  }
 }
 
 /// Maps int binary operator names to opcodes (arithmetic + comparison).

@@ -611,15 +611,20 @@ class DarticCompiler {
     return (resultReg, ResultLoc.value);
   }
 
+  /// Emits UNBOX_INT or UNBOX_DOUBLE to move a ref-stack value to the value
+  /// stack. Returns the new value-stack register.
+  int _emitUnbox(int refReg, StackKind kind) {
+    final unboxOp =
+        kind == StackKind.doubleVal ? Op.unboxDouble : Op.unboxInt;
+    final valReg = _allocValueReg();
+    _emitter.emit(encodeABC(unboxOp, valReg, refReg, 0));
+    return valReg;
+  }
+
   /// Ensures a value is on the value stack. If [loc] is ref, emits
-  /// UNBOX_INT or UNBOX_DOUBLE based on [kind]. No-op if already on value stack.
+  /// UNBOX via [_emitUnbox]. No-op if already on value stack.
   int _ensureValue(int reg, ResultLoc loc, StackKind kind) {
-    if (loc == ResultLoc.ref) {
-      final unboxOp = kind == StackKind.doubleVal ? Op.unboxDouble : Op.unboxInt;
-      final valReg = _allocValueReg();
-      _emitter.emit(encodeABC(unboxOp, valReg, reg, 0));
-      return valReg;
-    }
+    if (loc == ResultLoc.ref) return _emitUnbox(reg, kind);
     return reg;
   }
 
@@ -726,6 +731,44 @@ class DarticCompiler {
       _emitter.emit(encodeABC(Op.boxInt, refReg, valueReg, 0));
     }
     return refReg;
+  }
+
+  /// Emits SET_FIELD_VAL or SET_FIELD_REF with appropriate value/ref coercion.
+  ///
+  /// If the field is a value-kind (int/double) but the source is on the ref
+  /// stack, emits UNBOX first. Conversely, if the field is ref-kind but the
+  /// source is on the value stack, emits BOX via [_emitBoxToRef].
+  ///
+  /// Returns the (possibly coerced) value register.
+  int _emitSetField(int receiverReg, int valReg, ResultLoc valLoc,
+      FieldLayout layout, ir.DartType? boxingType) {
+    if (layout.kind.isValue) {
+      valReg = _ensureValue(valReg, valLoc, layout.kind);
+      _emitter.emit(
+          encodeABC(Op.setFieldVal, receiverReg, valReg, layout.offset));
+    } else {
+      if (valLoc == ResultLoc.value) {
+        valReg = _emitBoxToRef(valReg, boxingType);
+      }
+      _emitter.emit(
+          encodeABC(Op.setFieldRef, receiverReg, valReg, layout.offset));
+    }
+    return valReg;
+  }
+
+  /// Emits GET_FIELD_VAL or GET_FIELD_REF based on the field layout kind.
+  (int, ResultLoc) _emitGetField(int receiverReg, FieldLayout layout) {
+    if (layout.kind.isValue) {
+      final resultReg = _allocValueReg();
+      _emitter.emit(
+          encodeABC(Op.getFieldVal, resultReg, receiverReg, layout.offset));
+      return (resultReg, ResultLoc.value);
+    } else {
+      final resultReg = _allocRefReg();
+      _emitter.emit(
+          encodeABC(Op.getFieldRef, resultReg, receiverReg, layout.offset));
+      return (resultReg, ResultLoc.ref);
+    }
   }
 
   /// Patches pending outgoing arg MOVE placeholders.

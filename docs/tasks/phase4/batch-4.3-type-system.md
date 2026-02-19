@@ -111,7 +111,7 @@ feat: support subtype checking, null safety, and type promotion
 - [x] 4.3.2 空安全类型检查
 - [x] 4.3.3 Flow analysis 类型提升
 - [x] `fvm dart analyze` 零警告
-- [x] `fvm dart test` 全部通过（1512 tests）
+- [x] `fvm dart test` 全部通过（1534 tests，含 Phase 4 visitor 补充）
 - [x] commit 已提交
 - [x] overview.md 已更新
 - [x] code review 已完成
