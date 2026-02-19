@@ -620,13 +620,15 @@ class DarticCompiler {
   /// Returns the (possibly new) register and its location.
   ///
   /// - ref arg → value param: emits UNBOX_INT/UNBOX_DOUBLE
-  /// - value arg → ref param: emits BOX via _emitBoxToRef
+  /// - value arg → ref param: emits BOX via _emitBoxToRef (uses [argExpr]
+  ///   to infer the boxing type — only evaluated on the boxing path)
   /// - matching: returns unchanged
   (int, ResultLoc) _coerceArg(
     int argReg, ResultLoc argLoc,
-    StackKind paramKind, ir.DartType? argType,
+    StackKind paramKind, ir.Expression? argExpr,
   ) {
     if (paramKind == StackKind.ref && argLoc == ResultLoc.value) {
+      final argType = argExpr != null ? _inferExprType(argExpr) : null;
       return (_emitBoxToRef(argReg, argType), ResultLoc.ref);
     } else if (paramKind.isValue && argLoc == ResultLoc.ref) {
       return (_ensureValue(argReg, argLoc, paramKind), ResultLoc.value);

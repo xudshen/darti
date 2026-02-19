@@ -467,8 +467,7 @@ extension on DarticCompiler {
     final binding = _lookupVar(expr.variable);
     var (srcReg, srcLoc) = _compileExpression(expr.value);
     // Coerce stack kind if mismatch.
-    (srcReg, _) = _coerceArg(
-        srcReg, srcLoc, binding.kind, _inferExprType(expr.value));
+    (srcReg, _) = _coerceArg(srcReg, srcLoc, binding.kind, expr.value);
     final bindingLoc = _locOf(binding);
     _emitMove(binding.reg, srcReg, bindingLoc);
     return (binding.reg, bindingLoc);
@@ -636,7 +635,7 @@ extension on DarticCompiler {
       if (i < positionalParams.length) {
         final paramKind = _classifyStackKind(positionalParams[i].type);
         (argReg, argLoc) = _coerceArg(
-            argReg, argLoc, paramKind, _inferExprType(positionalArgs[i]));
+            argReg, argLoc, paramKind, positionalArgs[i]);
       }
 
       argTemps.add((argReg, argLoc));
@@ -699,7 +698,7 @@ extension on DarticCompiler {
       if (i < posParamTypes.length) {
         final paramKind = _classifyStackKind(posParamTypes[i]);
         (argReg, argLoc) = _coerceArg(
-            argReg, argLoc, paramKind, _inferExprType(args[i]));
+            argReg, argLoc, paramKind, args[i]);
       }
       argTemps.add((argReg, argLoc));
     }
@@ -741,7 +740,7 @@ extension on DarticCompiler {
       if (i < posParamTypes.length) {
         final paramKind = _classifyStackKind(posParamTypes[i]);
         (argReg, argLoc) = _coerceArg(
-            argReg, argLoc, paramKind, _inferExprType(args[i]));
+            argReg, argLoc, paramKind, args[i]);
       }
       argTemps.add((argReg, argLoc));
     }
@@ -783,7 +782,7 @@ extension on DarticCompiler {
         var (argReg, argLoc) = _compileExpression(provided.value);
         final paramKind = _classifyStackKind(param.type);
         (argReg, argLoc) = _coerceArg(
-            argReg, argLoc, paramKind, _inferExprType(provided.value));
+            argReg, argLoc, paramKind, provided.value);
         argTemps.add((argReg, argLoc));
       } else {
         final (argReg, argLoc) = _compileDefaultValue(param);
@@ -814,7 +813,7 @@ extension on DarticCompiler {
         var (argReg, argLoc) = _compileExpression(provided.value);
         final paramKind = _classifyStackKind(param.type);
         (argReg, argLoc) = _coerceArg(
-            argReg, argLoc, paramKind, _inferExprType(provided.value));
+            argReg, argLoc, paramKind, provided.value);
         argTemps.add((argReg, argLoc));
       } else {
         argTemps.add(_loadNull());
@@ -1001,8 +1000,7 @@ extension on DarticCompiler {
       if (i < positionalParams.length) {
         final paramKind = _classifyStackKind(positionalParams[i].type);
         (argReg, argLoc) = _coerceArg(
-            argReg, argLoc, paramKind,
-            _inferExprType(expr.arguments.positional[i]));
+            argReg, argLoc, paramKind, expr.arguments.positional[i]);
       }
       argTemps.add((argReg, argLoc));
     }
@@ -1196,8 +1194,7 @@ extension on DarticCompiler {
       if (i < positionalParams.length) {
         final paramKind = _classifyStackKind(positionalParams[i].type);
         (argReg, argLoc) = _coerceArg(
-            argReg, argLoc, paramKind,
-            _inferExprType(expr.arguments.positional[i]));
+            argReg, argLoc, paramKind, expr.arguments.positional[i]);
       }
       argTemps.add((argReg, argLoc));
     }
@@ -1438,8 +1435,7 @@ extension on DarticCompiler {
       if (i < positionalParams.length) {
         final paramKind = _classifyStackKind(positionalParams[i].type);
         (argReg, argLoc) = _coerceArg(
-            argReg, argLoc, paramKind,
-            _inferExprType(expr.arguments.positional[i]));
+            argReg, argLoc, paramKind, expr.arguments.positional[i]);
       }
       argTemps.add((argReg, argLoc));
     }

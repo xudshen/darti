@@ -372,8 +372,7 @@ extension on DarticCompiler {
       if (i < targetParams.length) {
         final paramKind = _classifyStackKind(targetParams[i].type);
         (argReg, argLoc) = _coerceArg(
-            argReg, argLoc, paramKind,
-            _inferExprType(arguments.positional[i]));
+            argReg, argLoc, paramKind, arguments.positional[i]);
       }
       argTemps.add((argReg, argLoc));
     }
