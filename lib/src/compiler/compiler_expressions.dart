@@ -913,8 +913,11 @@ extension on DarticCompiler {
     final target = expr.interfaceTarget;
     final methodName = expr.name.text;
 
-    // 1. Compile receiver (always ref stack).
-    final (receiverReg, _) = _compileExpression(expr.receiver);
+    // 1. Compile receiver — box to ref stack if value-type.
+    var (receiverReg, receiverLoc) = _compileExpression(expr.receiver);
+    if (receiverLoc == ResultLoc.value) {
+      receiverReg = _emitBoxToRef(receiverReg, _inferExprType(expr.receiver));
+    }
 
     // 2. Allocate result register based on return type.
     final retType = target.function.returnType;
@@ -1209,6 +1212,8 @@ extension on DarticCompiler {
         final layout = layouts[target.getterReference];
         if (layout != null) {
           // Compile receiver.
+          // SAFETY: loc discarded — field access targets object instances
+          // which are always on the ref stack.
           final (recvReg, _) = _compileExpression(expr.receiver);
           if (layout.kind.isValue) {
             final resultReg = _allocValueReg();
@@ -1245,8 +1250,11 @@ extension on DarticCompiler {
     ir.InstanceGet expr,
     ir.Procedure getter,
   ) {
-    // 1. Compile receiver (always ref stack).
-    final (receiverReg, _) = _compileExpression(expr.receiver);
+    // 1. Compile receiver — box to ref stack if value-type.
+    var (receiverReg, receiverLoc) = _compileExpression(expr.receiver);
+    if (receiverLoc == ResultLoc.value) {
+      receiverReg = _emitBoxToRef(receiverReg, _inferExprType(expr.receiver));
+    }
 
     // 2. Allocate result register based on the getter's return type.
     final retType = getter.function.returnType;
@@ -1279,6 +1287,8 @@ extension on DarticCompiler {
         final layout = layouts[target.getterReference];
         if (layout != null) {
           // Compile receiver and value.
+          // SAFETY: loc discarded — field access targets object instances
+          // which are always on the ref stack.
           final (recvReg, _) = _compileExpression(expr.receiver);
           var (valReg, valLoc) = _compileExpression(expr.value);
 
@@ -1327,8 +1337,11 @@ extension on DarticCompiler {
     ir.InstanceSet expr,
     ir.Procedure setter,
   ) {
-    // 1. Compile receiver (always ref stack).
-    final (receiverReg, _) = _compileExpression(expr.receiver);
+    // 1. Compile receiver — box to ref stack if value-type.
+    var (receiverReg, receiverLoc) = _compileExpression(expr.receiver);
+    if (receiverLoc == ResultLoc.value) {
+      receiverReg = _emitBoxToRef(receiverReg, _inferExprType(expr.receiver));
+    }
 
     // 2. Compile the value argument.
     var (valReg, valLoc) = _compileExpression(expr.value);
@@ -1559,11 +1572,17 @@ class _ExprCompileVisitor
 
   @override
   (int, ResultLoc) defaultExpression(ir.Expression node) =>
-      throw UnsupportedError('Unsupported expression: ${node.runtimeType}');
+      throw UnsupportedError(
+        'Expression not yet implemented: ${node.runtimeType}. '
+        'This may be added in a future compiler phase.',
+      );
 
   @override
   (int, ResultLoc) defaultBasicLiteral(ir.BasicLiteral node) =>
-      throw UnsupportedError('Unsupported literal: ${node.runtimeType}');
+      throw UnsupportedError(
+        'Literal not yet implemented: ${node.runtimeType}. '
+        'This may be added in a future compiler phase.',
+      );
 
   // Literals
   @override
@@ -1709,7 +1728,8 @@ class _ConstantCompileVisitor
 
   @override
   (int, ResultLoc) defaultConstant(ir.Constant node) => throw UnsupportedError(
-        'Unsupported constant type: ${node.runtimeType}',
+        'Constant not yet implemented: ${node.runtimeType}. '
+        'This may be added in a future compiler phase.',
       );
 
   @override

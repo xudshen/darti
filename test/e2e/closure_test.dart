@@ -167,4 +167,41 @@ int main() => f();
       expect(result, 10);
     });
   });
+
+  group('block-scoped closure upvalue closing (L1)', () {
+    test('closure captures block-local variable, reads correct value after block exits',
+        () async {
+      final result = await compileAndRun('''
+int main() {
+  int Function() fn = () => 0;
+  {
+    int x = 42;
+    fn = () => x;
+  }
+  // After block exits, x's register may be reused.
+  // CLOSE_UPVALUE should have snapshotted x's value.
+  return fn();
+}
+''');
+      expect(result, 42);
+    });
+
+    test('nested block closure captures and returns correct value', () async {
+      final result = await compileAndRun('''
+int main() {
+  int Function() fn = () => 0;
+  {
+    int a = 10;
+    {
+      int b = 32;
+      fn = () => a + b;
+    }
+    // b's register may be reused here, but CLOSE_UPVALUE snapshotted it.
+  }
+  return fn();
+}
+''');
+      expect(result, 42);
+    });
+  });
 }

@@ -146,4 +146,124 @@ int main() => f(5);
       expect(result, 5);
     });
   });
+
+  group('typed catch (on Type)', () {
+    test('on typed catch catches matching type', () async {
+      final result = await compileAndRun('''
+class MyException {
+  int code;
+  MyException(this.code);
+}
+int f() {
+  try {
+    throw MyException(42);
+  } on MyException catch (e) {
+    return e.code;
+  } catch (e) {
+    return -1;
+  }
+  return 0;
+}
+int main() => f();
+''');
+      expect(result, 42);
+    });
+
+    test('typed catch skips non-matching type, falls through to catch-all',
+        () async {
+      final result = await compileAndRun('''
+class ExA {
+  int val;
+  ExA(this.val);
+}
+class ExB {
+  int val;
+  ExB(this.val);
+}
+int f() {
+  try {
+    throw ExB(99);
+  } on ExA catch (e) {
+    return e.val;
+  } catch (e) {
+    return -1;
+  }
+  return 0;
+}
+int main() => f();
+''');
+      expect(result, -1);
+    });
+
+    test('multiple typed catch clauses match in order', () async {
+      final result = await compileAndRun('''
+class Base {
+  int val;
+  Base(this.val);
+}
+class Sub extends Base {
+  Sub(int v) : super(v);
+}
+int f() {
+  try {
+    throw Sub(77);
+  } on Sub catch (e) {
+    return e.val;
+  } on Base catch (e) {
+    return e.val + 100;
+  } catch (e) {
+    return -1;
+  }
+  return 0;
+}
+int main() => f();
+''');
+      // Sub matches first
+      expect(result, 77);
+    });
+
+    test('typed catch matches subclass via supertype guard', () async {
+      final result = await compileAndRun('''
+class Base {
+  int val;
+  Base(this.val);
+}
+class Sub extends Base {
+  Sub(int v) : super(v);
+}
+int f() {
+  try {
+    throw Sub(55);
+  } on Base catch (e) {
+    return e.val;
+  } catch (e) {
+    return -1;
+  }
+  return 0;
+}
+int main() => f();
+''');
+      // Sub is a subtype of Base, so on Base catches it
+      expect(result, 55);
+    });
+
+    test('catch-all still works with no guard', () async {
+      final result = await compileAndRun('''
+class MyEx {
+  int val;
+  MyEx(this.val);
+}
+int f() {
+  try {
+    throw MyEx(10);
+  } catch (e) {
+    return 42;
+  }
+  return 0;
+}
+int main() => f();
+''');
+      expect(result, 42);
+    });
+  });
 }

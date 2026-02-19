@@ -173,7 +173,10 @@ class ExceptionHandler {
   /// PC to jump to when an exception is caught.
   final int handlerPC;
 
-  /// Class ID of the catch type, or -1 for catch-all.
+  /// Catch type discriminator:
+  /// - `-1`: catch-all (untyped `catch (e)` or `finally`)
+  /// - `>= 0`: constant pool index of a [TypeTemplate] for typed catch
+  ///   (`on SomeType catch (e)`)
   final int catchType;
 
   /// Value stack depth to restore when entering the handler.

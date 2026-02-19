@@ -84,6 +84,9 @@ class Scope {
   bool containsLocal(ir.VariableDeclaration decl) =>
       _bindings.containsKey(decl);
 
+  /// Returns all VariableDeclarations declared directly in THIS scope.
+  Iterable<ir.VariableDeclaration> get localDeclarations => _bindings.keys;
+
   /// Re-declares a variable as a ref-stack binding (used when promoting
   /// a value-stack variable to ref stack for closure capture).
   ///

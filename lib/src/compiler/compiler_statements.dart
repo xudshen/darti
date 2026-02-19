@@ -23,10 +23,8 @@ extension on DarticCompiler {
       _compileStatement(s);
     }
 
-    // TODO(phase3): Emit CLOSE_UPVALUE here for captured variables going out of
-    // scope. Currently only emitted before function returns. Block-scoped
-    // closures that outlive their declaring block may read stale data if the
-    // register is reused. See batch 3.1 code review I1.
+    // Emit CLOSE_UPVALUE for captured variables going out of scope.
+    _emitCloseUpvaluesForScope(_scope);
 
     // Release block-local registers and restore outer scope.
     _scope.release();
@@ -151,6 +149,9 @@ extension on DarticCompiler {
         encodeAsBx(Op.jumpIfFalse, condReg!, exitPC - jumpToExit - 1),
       );
     }
+
+    // Emit CLOSE_UPVALUE for captured loop variables going out of scope.
+    _emitCloseUpvaluesForScope(_scope);
 
     // Exit scope.
     _scope.release();
@@ -337,13 +338,30 @@ extension on DarticCompiler {
       // Jump to end of all catch handlers.
       final jumpToEnd = _emitter.emitPlaceholder();
 
+      // Determine catch type: -1 for catch-all, constant pool index for typed.
+      // In Kernel, untyped `catch(e)` has guard == Object (sound null safety)
+      // or DynamicType. Both are catch-all semantics.
+      int catchType = -1;
+      final guard = catchClause.guard;
+      final isCatchAll = guard is ir.DynamicType ||
+          (guard is ir.InterfaceType &&
+              guard.classNode == _coreTypes.objectClass);
+      if (!isCatchAll) {
+        final template = dartTypeToTemplate(
+          guard,
+          _typeClassIdLookup,
+          enclosingClassTypeParams: _currentClassTypeParams,
+          enclosingFunctionTypeParams: _currentFunctionTypeParams,
+        );
+        catchType = _constantPool.addRef(template);
+      }
+
       // Add exception handler entry.
-      // TODO(Phase 3): Support typed catch via catchClause.guard -> catchType.
       _exceptionHandlers.add(ExceptionHandler(
         startPC: startPC,
         endPC: endPC,
         handlerPC: handlerPC,
-        catchType: -1, // Phase 2: catch-all only
+        catchType: catchType,
         valStackDP: valStackDP,
         refStackDP: refStackDP,
         exceptionReg: exceptionReg,
@@ -510,6 +528,27 @@ extension on DarticCompiler {
     }
   }
 
+  // ── Upvalue close helper ──
+
+  /// Emits CLOSE_UPVALUE for captured variables going out of [scope].
+  ///
+  /// Only closes upvalues for variables declared in [scope], not parents.
+  /// Finds the minimum ref register among captured variables in this scope
+  /// and emits a single CLOSE_UPVALUE instruction (the VM closes all open
+  /// upvalues at or above the given register).
+  void _emitCloseUpvaluesForScope(Scope scope) {
+    int minReg = -1;
+    for (final varDecl in scope.localDeclarations) {
+      final refReg = _capturedVarRefRegs[varDecl];
+      if (refReg != null && (minReg == -1 || refReg < minReg)) {
+        minReg = refReg;
+      }
+    }
+    if (minReg != -1) {
+      _emitter.emit(encodeABC(Op.closeUpvalue, minReg, 0, 0));
+    }
+  }
+
   // ── Variable declaration ──
 
   void _compileVariableDeclaration(ir.VariableDeclaration decl) {
@@ -582,7 +621,10 @@ class _StmtCompileVisitor with ir.StatementVisitorDefaultMixin<void> {
 
   @override
   void defaultStatement(ir.Statement node) =>
-      throw UnsupportedError('Unsupported statement: ${node.runtimeType}');
+      throw UnsupportedError(
+        'Statement not yet implemented: ${node.runtimeType}. '
+        'This may be added in a future compiler phase.',
+      );
 
   @override
   void visitReturnStatement(ir.ReturnStatement node) =>

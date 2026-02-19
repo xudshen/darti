@@ -167,7 +167,8 @@ class DarticInterpreter {
       var searchPC = startPC;
       while (true) {
         final funcProto = module.functions[callStack.funcId];
-        final handler = _findHandler(funcProto, searchPC);
+        final handler = _findHandler(
+            funcProto, searchPC, exception, module, rBase, rs);
         if (handler != null) {
           rs.clearRange(rBase + handler.refStackDP, rs.sp);
           vs.sp = vBase + handler.valStackDP;
@@ -1012,12 +1013,32 @@ class DarticInterpreter {
   ///
   /// Returns the first matching [ExceptionHandler] where
   /// `startPC <= pc < endPC`, or null if no handler matches.
-  /// Phase 2: only supports catch-all (catchType == -1).
-  ExceptionHandler? _findHandler(DarticFuncProto funcProto, int pc) {
+  ///
+  /// For typed catch (`catchType >= 0`), resolves the guard TypeTemplate
+  /// from the constant pool and checks if the exception's runtime type is
+  /// a subtype of the guard type.
+  ExceptionHandler? _findHandler(
+    DarticFuncProto funcProto,
+    int pc,
+    Object? exception,
+    DarticModule module,
+    int rBase,
+    RefStack rs,
+  ) {
     for (final handler in funcProto.exceptionTable) {
       if (pc >= handler.startPC && pc < handler.endPC) {
-        // Phase 2: only catch-all handlers.
-        if (handler.catchType == -1) return handler;
+        if (handler.catchType == -1) return handler; // catch-all
+        // Typed catch: resolve guard type and check subtype.
+        final guardTemplate =
+            module.constantPool.getRef(handler.catchType) as TypeTemplate;
+        final ita = rs.read(rBase + 0) as List<DarticType>?;
+        final fta = rs.read(rBase + 1) as List<DarticType>?;
+        final reg = _activeTypeRegistry!;
+        final guardType = resolveType(guardTemplate, ita, fta, reg);
+        final exType = extractType(exception, reg, module.classes);
+        if (_subtypeChecker!.isSubtypeOf(exType, guardType)) {
+          return handler;
+        }
       }
     }
     return null;

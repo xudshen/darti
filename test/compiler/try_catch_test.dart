@@ -32,6 +32,35 @@ void main() {}
           reason: 'catch(e) should be catch-all');
     });
 
+    test('on Type catch sets catchType to constant pool index', () async {
+      final module = await compileDart('''
+class MyException {}
+int f() {
+  try {
+    throw MyException();
+  } on MyException catch (e) {
+    return 1;
+  } catch (e) {
+    return 2;
+  }
+  return 0;
+}
+void main() {}
+''');
+      final f = findFunc(module, 'f');
+      expect(f.exceptionTable.length, greaterThanOrEqualTo(2));
+
+      // First handler: typed catch (on MyException) — catchType >= 0.
+      final typedHandler = f.exceptionTable[0];
+      expect(typedHandler.catchType, greaterThanOrEqualTo(0),
+          reason: 'Typed catch should have catchType >= 0');
+
+      // Second handler: catch-all — catchType == -1.
+      final catchAllHandler = f.exceptionTable[1];
+      expect(catchAllHandler.catchType, -1,
+          reason: 'catch(e) should be catch-all');
+    });
+
     test('try-finally generates handler with RETHROW', () async {
       final module = await compileDart('''
 int f() {
