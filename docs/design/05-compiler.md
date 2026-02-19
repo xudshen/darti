@@ -146,11 +146,11 @@ CFE 已在 Kernel AST 中填入完整类型信息。编译器根据变量的静�
 | 变量赋值（VariableSet） | 取决于变量 StackKind | `UNBOX_INT`/`UNBOX_DOUBLE` | `BOX_INT`/`BOX_DOUBLE` |
 | 返回值（ReturnStatement） | 取决于函数返回类型 | `UNBOX_INT`/`UNBOX_DOUBLE` | `BOX_INT`/`BOX_DOUBLE` |
 | 算术运算（`+`/`-`/`*` 等） | value | `UNBOX_INT`/`UNBOX_DOUBLE` | 无需 |
-| 接收者（InstanceInvocation） | ref | 无需 | 需 boxing（潜在问题，见下） |
+| 接收者（InstanceInvocation） | ref | 无需 | `BOX_INT`/`BOX_DOUBLE`（编译器自动插入） |
 
-**安全的 `_) =` 模式**：以下场景中丢弃 `ResultLoc`（写为 `final (reg, _) = ...`）是安全的——因为结果必定在引用栈：接收者表达式（对象必须在 ref 栈上才能 `CALL_VIRTUAL`）、闭包表达式、switch case 常量。
+**安全的 `_) =` 模式**：以下场景中丢弃 `ResultLoc`（写为 `final (reg, _) = ...`）是安全的——因为结果必定在引用栈：闭包表达式、switch case 常量。接收者表达式**不在此列**——虽然大多数对象 receiver 在 ref 栈，但值类型 receiver 需要 boxing（见下）。
 
-**潜在问题——值类型接收者**：当表达式类型为 `int`/`double`/`bool` 且需要调用非特化方法时（如假设 `42.someExtensionMethod()` 走虚分发），编译器当前不会插入 boxing。实际上 Dart 的 `int`/`double`/`bool` 方法（`toString`、`compareTo` 等）均已由宿主绑定特化处理（`CALL_HOST`），暂不触发此问题。若未来新增走 `CALL_VIRTUAL` 的值类型方法，需补充接收者 boxing 逻辑。
+**值类型接收者 boxing**：当 receiver 表达式类型为 `int`/`double`/`bool` 且走 `CALL_VIRTUAL`/`CALL_SUPER`/getter/setter 分发时，编译器检查 `ResultLoc`，若为 `value` 则插入 `BOX_INT`/`BOX_DOUBLE` 将值提升到引用栈。此逻辑在 `_compileVirtualCall`、`_compileInstanceGetterCall`、`_compileInstanceSetterCall` 三处统一实现。实际上 Dart 的 `int`/`double`/`bool` 常用方法（`toString`、`compareTo` 等）由宿主绑定特化处理（`CALL_HOST`），boxing 主要覆盖未来新增的虚分发场景。
 
 **DartType 完整分类**：编译器在 StackKind 决策和 TypeTemplate 生成两个场景处理 Kernel 的 DartType。以下列出所有 DartType 子类的处理方式：
 
@@ -223,12 +223,12 @@ Kernel 的 `Constant` 子类映射到常量池四分区（refs/ints/doubles/name
 | 语法结构 | 编译模式 | 关键要点 |
 |----------|----------|----------|
 | `if`/`else` | 条件跳转 + 回填 | 编译条件 → `JUMP_IF_FALSE` 到 else → 编译 then → `JUMP` 到 end → 回填 else → 编译 else → 回填 end |
-| `for` | 向后跳转 | 进入作用域 → 编译初始化 → 记录循环起点 → 编译条件 → `JUMP_IF_FALSE` 出循环 → 编译循环体 → 编译更新 → `JUMP` 回起点 → 回填出口 |
+| `for` | 向后跳转 | 进入作用域 → 编译初始化 → 记录循环起点 → 编译条件 → `JUMP_IF_FALSE` 出循环 → 编译循环体 → 编译更新 → `JUMP` 回起点 → 发射 `CLOSE_UPVALUE`（若有被捕获的循环变量）→ 回填出口 |
 | `while` | 向后跳转 | 与 `for` 类似，无初始化和更新步骤 |
 | `do-while` | 先执行后判断 | 记录循环起点 → 编译循环体 → 编译条件 → `JUMP_IF_TRUE` 回起点 |
 | `for-in` | 迭代器协议 | 同步（`ForInStatement.isAsync == false`）：编译 `iterable.iterator` → 循环调用 `moveNext()` + `current` getter → 绑定循环变量。异步（`isAsync == true`，即 `await for`）：编译为 `stream.listen` + `AWAIT_STREAM_NEXT` 序列（详见 Ch7 async\* 生成器） |
 | `switch` | 跳转表 / 二分查找 | 密集整数 case → 跳转表指令；稀疏 case → 二分查找跳转链。Pattern matching 在 Kernel 中已由 CFE 脱糖为 if-else 链 |
-| `try`/`catch` | 异常处理器表 | 不使用内联跳转。生成 `(startPC, endPC, handlerPC, catchType, valueStackDepth, refStackDepth)` 元组。嵌套 try 按范围从小到大排序，运行时顺序扫描首个匹配。详见 Ch3 异常分发 |
+| `try`/`catch` | 异常处理器表 | 不使用内联跳转。生成 `(startPC, endPC, handlerPC, catchType, valueStackDepth, refStackDepth)` 元组。`catchType`：无类型守卫（`catch(e)` 或 `on Object`）设为 `-1`（catch-all）；有类型守卫（`on SomeType`）将 guard 编译为 TypeTemplate 写入常量池，`catchType` 设为常量池索引。嵌套 try 按范围从小到大排序，运行时顺序扫描首个匹配。详见 Ch3 异常分发 |
 | `try`/`finally` | 处理器表 + finally 块 | finally 块在正常路径和异常路径各编译一份 |
 | `labeled break`/`continue` | 标签→跳转目标映射 | 编译器维护标签映射表，`BreakStatement` 发射 `JUMP` 并记录待回填，标签语句结束时批量回填所有 break 跳转 |
 | `assert` | 条件省略 | `--no-enable-asserts` 时完全不生成代码。否则：编译条件 → `JUMP_IF_TRUE` 跳过 → `ASSERT` 指令（携带消息常量池索引） |
@@ -240,7 +240,7 @@ Kernel 的 `Constant` 子类映射到常量池四分区（refs/ints/doubles/name
 
 | Kernel 节点 | 编译策略 |
 |------------|----------|
-| `Block` | 进入新作用域 → 逐条编译子 Statement → 退出作用域（批量释放寄存器） |
+| `Block` | 进入新作用域 → 逐条编译子 Statement → 发射 `CLOSE_UPVALUE`（若有被捕获的 block-local 变量）→ 退出作用域（批量释放寄存器） |
 | `ExpressionStatement` | 编译 expression → 若结果占用临时寄存器则释放（不保留结果值） |
 | `EmptyStatement` | 不生成任何指令 |
 | `ReturnStatement` | **入口函数**：编译 expression → 根据 `loc` 和类型推断确定结果种类（int/double/ref）→ `HALT A, B, 0`（A=结果寄存器，B=种类编码）。无表达式时 `HALT 0, 0, 0`。**普通同步函数**：编译 expression → 若表达式在 ref 栈但函数返回值类型为值类型，先发射 `UNBOX_INT`/`UNBOX_DOUBLE` 拆箱 → `RETURN_VAL` / `RETURN_REF` / `RETURN_NULL`。async 函数：`ASYNC_RETURN`（详见 Ch7）。async\* 函数：`controller.close()` + 帧结束（详见 Ch7）。sync\* 函数：标记 iterator done + 帧结束（详见 Ch7） |
@@ -398,7 +398,7 @@ Super 分发通过 `interfaceTarget` 确定目标方法在父类方法表中的�
 
 `CLOSURE A, Bx` 指令在运行时根据 `funcProto[Bx]` 的上值描述符列表，从当前帧的寄存器或上值表中收集上值，创建闭包对象。
 
-当变量离开作用域且被捕获时，编译器在作用域退出前插入 `CLOSE_UPVALUE A`，运行时将所有指向 >= A 槽位的开放上值关闭（值从栈复制到上值对象内部）。
+当变量离开作用域且被捕获时，编译器在作用域退出前插入 `CLOSE_UPVALUE A`，运行时将所有指向 >= A 槽位的开放上值关闭（值从栈复制到上值对象内部）。编译器在以下作用域退出点发射 `CLOSE_UPVALUE`：函数返回、`Block` 退出、`for` 循环退出。`_emitCloseUpvaluesForScope()` 扫描当前 scope 的 `localDeclarations`，找到被捕获变量中最小的引用栈寄存器编号作为 `CLOSE_UPVALUE` 的操作数。
 
 ### Tear-off 编译
 
@@ -626,7 +626,9 @@ StackKind classifyType(DartType type) {
 // startPC     — try 块起始字节码位置
 // endPC       — try 块结束字节码位置
 // handlerPC   — catch 处理器入口
-// catchType   — 常量池中的类型索引（-1 = catch-all）
+// catchType   — -1 = catch-all（无类型守卫的 catch(e) 或 finally）
+//               >= 0 = 常量池中 TypeTemplate 的索引（on SomeType catch (e)）
+//               运行时通过 resolveType + isSubtypeOf 做子类型匹配
 // valStackDP  — 进入 try 时的值栈深度（异常时回退）
 // refStackDP  — 进入 try 时的引用栈深度（异常时回退）
 //

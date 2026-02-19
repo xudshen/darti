@@ -42,7 +42,7 @@
 ## 关键陷阱
 
 - **排查不动时加日志** — 静态读代码超过 2 轮没定位到根因，立刻在关键路径（guard 条件、async 衔接点、回调触发点）加 `debugPrint`，用实际运行数据定位，不要靠猜
-- **双栈 coercion：`_compileExpression` 返回的 `ResultLoc` 不能随意丢弃** — 编译器采用 value/ref 双栈架构，`_compileExpression` 返回 `(reg, ResultLoc)` 表示结果所在栈。在以下消费端必须检查 loc 并做 coercion（unbox 或 box）：条件跳转（if/while/for/do/assert/not/logical/conditional）、函数参数传递、变量赋值。只有**确定结果一定在 ref 栈**的场景（对象 receiver、闭包、常量 case 表达式）才可以安全丢弃 loc。已知遗留：值类型 receiver 调用非特化方法（如 `42.toString()`）缺少 boxing，需后续补 `_ensureRefReceiver`
+- **双栈 coercion：`_compileExpression` 返回的 `ResultLoc` 不能随意丢弃** — 编译器采用 value/ref 双栈架构，`_compileExpression` 返回 `(reg, ResultLoc)` 表示结果所在栈。在以下消费端必须检查 loc 并做 coercion（unbox 或 box）：条件跳转（if/while/for/do/assert/not/logical/conditional）、函数参数传递、变量赋值、接收者表达式（虚调用/getter/setter 分发）。只有**确定结果一定在 ref 栈**的场景（闭包、常量 case 表达式）才可以安全丢弃 loc
 
 ## 初始化
 

@@ -115,3 +115,46 @@ feat: support subtype checking, null safety, and type promotion
 - [x] commit 已提交
 - [x] overview.md 已更新
 - [x] code review 已完成
+- [x] code review 修复已提交
+
+## Code Review 修复
+
+Code review 发现 5 个设计限制（L1-L5），其中 L1/L2/L3 已修复，L5 推迟。
+
+### L1: Block/For 作用域退出发射 CLOSE_UPVALUE — ✅ 已修复
+
+**问题**：闭包捕获的 block-local 变量在 block 退出后寄存器被复用，闭包读到脏数据。
+
+**修复**：
+- `scope.dart` 新增 `localDeclarations` getter，暴露当前 scope 直接声明的变量
+- `compiler_statements.dart` 新增 `_emitCloseUpvaluesForScope()` 方法，扫描被捕获变量的最小 ref 寄存器编号
+- 在 `_compileBlock()` 和 `_compileForStatement()` 的 `_scope.release()` 前调用
+- 新增 2 个 e2e 测试（block-scoped 闭包逃逸后读取正确值）
+
+### L2: 值类型 receiver 调用非特化方法时 boxing — ✅ 已修复
+
+**问题**：`_compileVirtualCall`/`_compileInstanceGetterCall`/`_compileInstanceSetterCall` 丢弃 receiver 的 `ResultLoc`，若 receiver 为值类型则未 boxing。
+
+**修复**：
+- 三处将 `final (receiverReg, _)` 改为 `var (receiverReg, receiverLoc)` 并加入 boxing 检查
+- 当 `receiverLoc == ResultLoc.value` 时调用 `_emitBoxToRef()` 将值提升到引用栈
+
+### L3: Typed catch 支持 — ✅ 已修复
+
+**问题**：`catchType` 始终为 -1（catch-all），不支持 `on SomeType catch (e)` 语法。
+
+**修复**：
+- `module.dart` 更新 `catchType` 文档语义（-1 = catch-all，>= 0 = 常量池 TypeTemplate 索引）
+- `compiler_statements.dart` `_compileTryCatch()` 编译 guard 类型为 TypeTemplate 写入常量池
+- `interpreter.dart` `_findHandler()` 扩展为接受异常对象参数，通过 `resolveType` + `isSubtypeOf` 做类型匹配
+- 注意：Dart 3 sound null safety 中 plain `catch(e)` 的 guard 是 `Object`（非 `DynamicType`），需同时视为 catch-all
+- 新增 5 个 e2e 测试（typed catch 匹配、非匹配 fallthrough、多 catch 子句顺序、子类匹配、catch-all 回归）
+- 新增 1 个 compiler-level 测试（catchType 字段值验证）
+
+### L5: TryFinally 字节码重复 — 推迟
+
+**理由**：当前实现功能正确，仅字节码体积冗余。修复需引入新的控制流机制（subroutine call 或条件 rethrow flag），收益不足以 justify 复杂度。Phase 4+ 有更高优先级功能待实现。
+
+### 发现的前置 bug
+
+- **for-loop 变量闭包捕获**：for-loop 条件字节码在变量 promotion（值栈 → 引用栈）之前发射，导致条件始终读取 stale 值寄存器。此问题存在于 L1 修复之前，需单独修复（涉及 for-loop 编译流程重构）。
