@@ -178,19 +178,19 @@ feat: support class instantiation, fields, methods, and constructors
 
 ## 核心发现
 
-1. **Stale method table references (Task 3.2.3)**: Two-pass compilation creates placeholder FuncProtos in Pass 1c that get stored in `DarticClassInfo.methods`. Pass 2c compiles real FuncProtos and replaces `_functions[funcId]`, but the method table Map still holds references to old placeholders. Fixed with a post-compilation refresh loop that updates all method table entries to point to the compiled FuncProtos.
+1. **方法表陈旧引用 (Task 3.2.3)**：两遍编译在 Pass 1c 创建占位 FuncProto 并存入 `DarticClassInfo.methods`。Pass 2c 编译出真正的 FuncProto 替换 `_functions[funcId]`，但方法表 Map 仍持有旧占位对象的引用。解决方案：在 Pass 2c 后增加刷新循环，将所有方法表条目更新为已编译的 FuncProto。
 
-2. **compileAndRun test pattern**: `compileAndRun` reads `valueStack.readInt(0)`, which only works if the result lands at v0. For tests with constructor calls and intermediate computations, wrap logic in a helper function: `int _test() { ... } int main() => _test();` — this routes through RETURN_VAL → CALL_STATIC → v0.
+2. **compileAndRun 测试模式**：`compileAndRun` 读取 `valueStack.readInt(0)`，只有结果恰好落在 v0 时才正确。构造器调用和中间计算会偏移结果寄存器。解决方案：将逻辑包装在辅助函数中 `int _test() { ... } int main() => _test();`，通过 RETURN_VAL → CALL_STATIC 将结果路由到 v0。
 
-3. **CALL_VIRTUAL receiver handling**: The interpreter automatically places the receiver at callee's rsp+2 (unlike CALL_STATIC for constructors where an explicit MOVE is emitted). This reduces instruction count per virtual call.
+3. **CALL_VIRTUAL receiver 处理**：解释器自动将 receiver 放置在 callee 的 rsp+2（不同于构造器调用中 CALL_STATIC 需要显式 MOVE）。减少了每次虚调用的指令数。
 
-4. **IC table per function**: `_icEntries` list in the compiler is per-function state — cleared at function start, saved/restored during closure compilation via `_CompilationContext`.
+4. **IC 表是逐函数状态**：编译器中的 `_icEntries` 列表在函数编译开始时清空，闭包编译时通过 `_CompilationContext` 保存/恢复。
 
-5. **Setter naming convention (Task 3.2.6)**: Setters use "name=" convention in the method table (e.g., `value=`) to distinguish from getters/methods with the same base name. IC entries use the same convention.
+5. **Setter 命名约定 (Task 3.2.6)**：Setter 在方法表中使用 "name=" 命名（如 `value=`），以区分同名的 getter/方法。IC 条目使用相同约定。
 
-6. **Factory constructors are transparent**: Kernel represents them as `Procedure(isFactory=true, isStatic=true)`, compiled as regular static functions. Call-sites use `StaticInvocation`. No special handling needed beyond what already existed.
+6. **工厂构造器透明处理**：Kernel 将其表示为 `Procedure(isFactory=true, isStatic=true)`，作为普通静态函数编译。调用端使用 `StaticInvocation`，无需特殊处理。
 
-7. **Redirecting constructors (Task 3.2.4)**: Compiled as CALL_STATIC to the target constructor, passing `this` (rsp+2) along with the redirecting arguments. The `RedirectingInitializer` node provides the target constructor reference and arguments.
+7. **重定向构造器 (Task 3.2.4)**：编译为 CALL_STATIC 到目标构造器，传递 `this`（rsp+2）和重定向参数。`RedirectingInitializer` 节点提供目标构造器引用和参数。
 
 ## Batch 完成检查
 
