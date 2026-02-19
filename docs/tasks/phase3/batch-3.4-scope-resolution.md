@@ -102,6 +102,6 @@ feat: support scoping, imports/exports, and name resolution
 - [x] 3.4.3 this / super 引用
 - [x] `fvm dart analyze` 零警告
 - [x] `fvm dart test` 全部通过
-- [ ] commit 已提交
+- [x] commit 已提交
 - [x] overview.md 已更新
 - [x] code review 已完成
