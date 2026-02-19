@@ -62,6 +62,15 @@ extension on DarticCompiler {
     if (expr is ir.InstanceSet) {
       return _compileInstanceSet(expr);
     }
+    if (expr is ir.SuperMethodInvocation) {
+      return _compileSuperMethodInvocation(expr);
+    }
+    if (expr is ir.SuperPropertyGet) {
+      return _compileSuperPropertyGet(expr);
+    }
+    if (expr is ir.SuperPropertySet) {
+      return _compileSuperPropertySet(expr);
+    }
     throw UnsupportedError(
       'Unsupported expression: ${expr.runtimeType}',
     );
@@ -248,6 +257,15 @@ extension on DarticCompiler {
     final isInt = leftType != null && _isIntType(leftType);
     final isDouble = leftType != null && _isDoubleType(leftType);
 
+    // User-defined operator==: dispatch via CALL_VIRTUAL.
+    // Check if interfaceTarget is from a user-defined class (not Object/int/double).
+    if (!isInt && !isDouble) {
+      final eqClass = expr.interfaceTarget.enclosingClass;
+      if (eqClass != null && _classToClassId.containsKey(eqClass)) {
+        return _compileUserEqualsCall(expr);
+      }
+    }
+
     final (lhsReg, _) = _compileExpression(expr.left);
     final (rhsReg, _) = _compileExpression(expr.right);
     final resultReg = _allocValueReg();
@@ -259,6 +277,40 @@ extension on DarticCompiler {
     } else {
       _emitter.emit(encodeABC(Op.eqGeneric, resultReg, lhsReg, rhsReg));
     }
+    return (resultReg, ResultLoc.value);
+  }
+
+  /// Compiles a user-defined operator== via CALL_VIRTUAL.
+  (int, ResultLoc) _compileUserEqualsCall(ir.EqualsCall expr) {
+    // Compile receiver (left operand, ref stack).
+    var (receiverReg, receiverLoc) = _compileExpression(expr.left);
+    if (receiverLoc == ResultLoc.value) {
+      receiverReg = _emitBoxToRef(receiverReg, _inferExprType(expr.left));
+    }
+
+    // Compile argument (right operand, ref stack — parameter type is Object).
+    var (argReg, argLoc) = _compileExpression(expr.right);
+    if (argLoc == ResultLoc.value) {
+      argReg = _emitBoxToRef(argReg, _inferExprType(expr.right));
+    }
+
+    // Result is bool (value stack).
+    final resultReg = _allocValueReg();
+
+    // Emit arg move for right operand to callee's ref arg slot 3
+    // (slot 0=ITA, 1=FTA, 2=this, 3=first ref arg).
+    final movePC = _emitter.emitPlaceholder();
+    _pendingArgMoves.add(
+      (pc: movePC, srcReg: argReg, argIdx: 3, loc: ResultLoc.ref),
+    );
+
+    // Emit CALL_VIRTUAL with method name '=='.
+    final methodNameIdx = _constantPool.addName('==');
+    final icIndex = _icEntries.length;
+    _icEntries.add(ICEntry(methodNameIndex: methodNameIdx));
+    _emitter.emit(
+        encodeABC(Op.callVirtual, resultReg, receiverReg, icIndex));
+
     return (resultReg, ResultLoc.value);
   }
 
@@ -773,7 +825,7 @@ extension on DarticCompiler {
       );
     }
 
-    if (callOp == Op.callStatic) {
+    if (callOp == Op.callStatic || callOp == Op.callSuper) {
       _emitter.emit(encodeABx(callOp, resultReg, callOperandB));
     } else {
       _emitter.emit(encodeABC(callOp, resultReg, callOperandB, 0));
@@ -998,6 +1050,22 @@ extension on DarticCompiler {
       }
     }
     if (type is ir.NullType) return (v) => v == null;
+
+    // User-defined class: check via supertypeIds on DarticObject.
+    // Note: closures capture _classInfos by reference. This is safe because
+    // the list is fully populated before execution begins (single-module
+    // compilation model). Multi-module support would need to revisit this.
+    if (type is ir.InterfaceType) {
+      final classId = _classToClassId[type.classNode];
+      if (classId != null) {
+        return (v) {
+          if (v is! DarticObject) return false;
+          // Look up the class info to check supertypeIds.
+          return v.classId == classId ||
+              _classInfos[v.classId].supertypeIds.contains(classId);
+        };
+      }
+    }
     throw UnsupportedError('Unsupported type for is check: $type');
   }
 
@@ -1016,6 +1084,23 @@ extension on DarticCompiler {
       }
     }
     if (type is ir.NullType) return (v) => v as Null;
+
+    // User-defined class: cast via supertypeIds check on DarticObject.
+    // Note: closures capture _classInfos by reference. See _createTypeChecker
+    // comment for safety rationale.
+    if (type is ir.InterfaceType) {
+      final classId = _classToClassId[type.classNode];
+      if (classId != null) {
+        return (v) {
+          if (v is DarticObject &&
+              (v.classId == classId ||
+                  _classInfos[v.classId].supertypeIds.contains(classId))) {
+            return v;
+          }
+          throw TypeError();
+        };
+      }
+    }
     throw UnsupportedError('Unsupported type for cast: $type');
   }
 
@@ -1275,5 +1360,216 @@ extension on DarticCompiler {
 
     // InstanceSet evaluates to the assigned value.
     return (savedValReg, savedValLoc);
+  }
+
+  // ── Super access expressions ──
+
+  /// Compiles [SuperMethodInvocation] via CALL_SUPER.
+  ///
+  /// The target method is resolved at compile time via Kernel's
+  /// `interfaceTarget`. CALL_SUPER ABx: A=result, Bx=funcId.
+  /// The receiver (this) is passed at rsp+2 of the callee frame.
+  (int, ResultLoc) _compileSuperMethodInvocation(
+    ir.SuperMethodInvocation expr,
+  ) {
+    final target = expr.interfaceTarget;
+
+    final funcId = _procToFuncId[target.reference];
+    if (funcId == null) {
+      throw UnsupportedError(
+        'Unknown super method target: ${target.name.text}',
+      );
+    }
+
+    // Allocate result register based on return type.
+    final retType = target.function.returnType;
+    final retLoc = _classifyType(retType);
+    final resultReg =
+        retLoc == ResultLoc.ref ? _allocRefReg() : _allocValueReg();
+
+    // Compile arguments.
+    final positionalParams = target.function.positionalParameters;
+    final namedParams = target.function.namedParameters;
+    final argTemps = <(int, ResultLoc)>[];
+
+    for (var i = 0; i < expr.arguments.positional.length; i++) {
+      var (argReg, argLoc) = _compileExpression(expr.arguments.positional[i]);
+      if (i < positionalParams.length) {
+        final paramKind = _classifyStackKind(positionalParams[i].type);
+        if (paramKind == StackKind.ref && argLoc == ResultLoc.value) {
+          argReg = _emitBoxToRef(
+            argReg, _inferExprType(expr.arguments.positional[i]));
+          argLoc = ResultLoc.ref;
+        }
+      }
+      argTemps.add((argReg, argLoc));
+    }
+
+    // Fill missing optional positional args.
+    for (var i = expr.arguments.positional.length;
+        i < positionalParams.length;
+        i++) {
+      argTemps.add(_compileDefaultValue(positionalParams[i]));
+    }
+
+    // Handle named arguments.
+    if (namedParams.isNotEmpty) {
+      _compileNamedArgsFromParams(namedParams, expr.arguments.named, argTemps);
+    }
+
+    // Pass `this` (rsp+2) to the callee's `this` slot (argIdx 2).
+    const thisReg = 2;
+    final thisMovePC = _emitter.emitPlaceholder();
+    _pendingArgMoves.add(
+      (pc: thisMovePC, srcReg: thisReg, argIdx: 2, loc: ResultLoc.ref),
+    );
+
+    // Emit arg moves + CALL_SUPER.
+    _emitArgMovesAndCall(argTemps, Op.callSuper, resultReg, funcId);
+
+    return (resultReg, retLoc);
+  }
+
+  /// Compiles [SuperPropertyGet] via CALL_SUPER for getters, or direct
+  /// field access for fields.
+  (int, ResultLoc) _compileSuperPropertyGet(ir.SuperPropertyGet expr) {
+    final target = expr.interfaceTarget;
+
+    // If the target is a field, use GET_FIELD_REF/GET_FIELD_VAL on `this`.
+    if (target is ir.Field) {
+      final cls = target.enclosingClass!;
+      final layouts = _instanceFieldLayouts[cls];
+      if (layouts != null) {
+        final layout = layouts[target.getterReference];
+        if (layout != null) {
+          const thisReg = 2; // rsp+2
+          if (layout.kind.isValue) {
+            final resultReg = _allocValueReg();
+            _emitter.emit(encodeABC(
+              Op.getFieldVal, resultReg, thisReg, layout.offset,
+            ));
+            return (resultReg, ResultLoc.value);
+          } else {
+            final resultReg = _allocRefReg();
+            _emitter.emit(encodeABC(
+              Op.getFieldRef, resultReg, thisReg, layout.offset,
+            ));
+            return (resultReg, ResultLoc.ref);
+          }
+        }
+      }
+    }
+
+    // Getter Procedure → CALL_SUPER.
+    if (target is ir.Procedure && target.isGetter) {
+      final funcId = _procToFuncId[target.reference];
+      if (funcId == null) {
+        throw UnsupportedError(
+          'Unknown super getter target: ${target.name.text}',
+        );
+      }
+
+      final retType = target.function.returnType;
+      final retLoc = _classifyType(retType);
+      final resultReg =
+          retLoc == ResultLoc.ref ? _allocRefReg() : _allocValueReg();
+
+      // Pass `this` to the callee.
+      const thisReg = 2;
+      final thisMovePC = _emitter.emitPlaceholder();
+      _pendingArgMoves.add(
+        (pc: thisMovePC, srcReg: thisReg, argIdx: 2, loc: ResultLoc.ref),
+      );
+
+      // No arguments for a getter.
+      _emitArgMovesAndCall(
+          <(int, ResultLoc)>[], Op.callSuper, resultReg, funcId);
+
+      return (resultReg, retLoc);
+    }
+
+    throw UnsupportedError(
+      'Unsupported SuperPropertyGet target: ${target.runtimeType}',
+    );
+  }
+
+  /// Compiles [SuperPropertySet] via CALL_SUPER for setters, or direct
+  /// field write for fields.
+  (int, ResultLoc) _compileSuperPropertySet(ir.SuperPropertySet expr) {
+    final target = expr.interfaceTarget;
+
+    // If the target is a field, use SET_FIELD_REF/SET_FIELD_VAL on `this`.
+    if (target is ir.Field) {
+      final cls = target.enclosingClass!;
+      final layouts = _instanceFieldLayouts[cls];
+      if (layouts != null) {
+        final layout = layouts[target.getterReference];
+        if (layout != null) {
+          var (valReg, valLoc) = _compileExpression(expr.value);
+          const thisReg = 2;
+
+          if (layout.kind.isValue) {
+            if (valLoc == ResultLoc.ref) {
+              final unboxed = _allocValueReg();
+              final unboxOp = layout.kind == StackKind.doubleVal
+                  ? Op.unboxDouble
+                  : Op.unboxInt;
+              _emitter.emit(encodeABC(unboxOp, unboxed, valReg, 0));
+              valReg = unboxed;
+            }
+            _emitter.emit(encodeABC(
+              Op.setFieldVal, thisReg, valReg, layout.offset,
+            ));
+          } else {
+            if (valLoc == ResultLoc.value) {
+              valReg = _emitBoxToRef(valReg, _inferExprType(expr.value));
+            }
+            _emitter.emit(encodeABC(
+              Op.setFieldRef, thisReg, valReg, layout.offset,
+            ));
+          }
+          return (valReg, valLoc);
+        }
+      }
+    }
+
+    // Setter Procedure → CALL_SUPER.
+    if (target is ir.Procedure && target.isSetter) {
+      final funcId = _procToFuncId[target.reference];
+      if (funcId == null) {
+        throw UnsupportedError(
+          'Unknown super setter target: ${target.name.text}',
+        );
+      }
+
+      var (valReg, valLoc) = _compileExpression(expr.value);
+      final savedValReg = valReg;
+      final savedValLoc = valLoc;
+
+      final setterParam = target.function.positionalParameters.first;
+      final paramKind = _classifyStackKind(setterParam.type);
+      if (paramKind == StackKind.ref && valLoc == ResultLoc.value) {
+        valReg = _emitBoxToRef(valReg, _inferExprType(expr.value));
+        valLoc = ResultLoc.ref;
+      }
+
+      final dummyResult = _allocRefReg();
+      final argTemps = <(int, ResultLoc)>[(valReg, valLoc)];
+
+      // Pass `this` to the callee.
+      const thisReg = 2;
+      final thisMovePC = _emitter.emitPlaceholder();
+      _pendingArgMoves.add(
+        (pc: thisMovePC, srcReg: thisReg, argIdx: 2, loc: ResultLoc.ref),
+      );
+
+      _emitArgMovesAndCall(argTemps, Op.callSuper, dummyResult, funcId);
+
+      return (savedValReg, savedValLoc);
+    }
+
+    throw UnsupportedError(
+      'Unsupported SuperPropertySet target: ${target.runtimeType}',
+    );
   }
 }

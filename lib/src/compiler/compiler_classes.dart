@@ -6,13 +6,30 @@ extension on DarticCompiler {
 
   /// Registers a Kernel [Class] node: assigns classId, computes field layout,
   /// assigns funcIds to constructors and instance methods.
+  ///
+  /// Inheritance: child class field offsets start after parent's field counts.
+  /// superClassId is resolved if the parent is a user-defined class (not a
+  /// platform class like Object).
   void _registerClass(ir.Class cls) {
     final classId = _classInfos.length;
     _classToClassId[cls] = classId;
 
-    // Compute field layout: separate offset counters for ref and value fields.
-    var refOffset = 0;
-    var valOffset = 0;
+    // Resolve superclass field counts for inherited field offset calculation.
+    var inheritedRefFields = 0;
+    var inheritedValFields = 0;
+    var superClassId = -1;
+
+    final superClass = cls.superclass;
+    if (superClass != null && _classToClassId.containsKey(superClass)) {
+      superClassId = _classToClassId[superClass]!;
+      final superInfo = _classInfos[superClassId];
+      inheritedRefFields = superInfo.refFieldCount;
+      inheritedValFields = superInfo.valueFieldCount;
+    }
+
+    // Compute field layout: offsets start after inherited fields.
+    var refOffset = inheritedRefFields;
+    var valOffset = inheritedValFields;
     final fieldLayouts = <ir.Reference, FieldLayout>{};
 
     for (final field in cls.fields) {
@@ -26,15 +43,32 @@ extension on DarticCompiler {
         fieldLayouts[setterRef] = layout;
       }
     }
+
+    // Also include parent class field layouts so that child class code can
+    // access inherited fields via their parent-defined offsets.
+    if (superClass != null) {
+      final parentLayouts = _instanceFieldLayouts[superClass];
+      if (parentLayouts != null) {
+        for (final entry in parentLayouts.entries) {
+          fieldLayouts.putIfAbsent(entry.key, () => entry.value);
+        }
+      }
+    }
     _instanceFieldLayouts[cls] = fieldLayouts;
 
     final classInfo = DarticClassInfo(
       classId: classId,
       name: cls.name,
-      superClassId: -1, // TODO(phase3): resolve superclass classId
-      refFieldCount: refOffset,
-      valueFieldCount: valOffset,
+      superClassId: superClassId,
+      refFieldCount: refOffset, // Total including inherited
+      valueFieldCount: valOffset, // Total including inherited
     );
+
+    // Build supertypeIds: self + transitive closure of parent's supertypeIds.
+    classInfo.supertypeIds.add(classId);
+    if (superClassId >= 0) {
+      classInfo.supertypeIds.addAll(_classInfos[superClassId].supertypeIds);
+    }
 
     // Register constructors → assign funcIds.
     for (final ctor in cls.constructors) {
@@ -69,6 +103,15 @@ extension on DarticCompiler {
           : proc.name.text;
       final nameIdx = _constantPool.addName(methodName);
       classInfo.methods[nameIdx] = _functions.last;
+    }
+
+    // Flatten parent methods into child method table (compile-time flattening).
+    // putIfAbsent preserves child overrides registered above.
+    if (superClassId >= 0) {
+      final superInfo = _classInfos[superClassId];
+      for (final entry in superInfo.methods.entries) {
+        classInfo.methods.putIfAbsent(entry.key, () => entry.value);
+      }
     }
 
     _classInfos.add(classInfo);
@@ -123,8 +166,7 @@ extension on DarticCompiler {
       if (init is ir.FieldInitializer) {
         _compileFieldInitializer(init);
       } else if (init is ir.SuperInitializer) {
-        // Skip super constructor call for now (no inheritance support yet).
-        // TODO(phase3): Compile SuperInitializer when inheritance is supported.
+        _compileSuperInitializer(init);
       } else if (init is ir.RedirectingInitializer) {
         _compileRedirectingInitializer(init);
       } else if (init is ir.LocalInitializer) {
@@ -213,6 +255,68 @@ extension on DarticCompiler {
       }
       _emitter.emit(encodeABC(Op.setFieldRef, thisReg, srcReg, layout.offset));
     }
+  }
+
+  /// Compiles a [SuperInitializer] within a constructor.
+  ///
+  /// Emits CALL_SUPER to the parent constructor, passing `this` (rsp+2)
+  /// and the super arguments. Uses CALL_SUPER (ABx) since the target
+  /// constructor funcId is known at compile time.
+  void _compileSuperInitializer(ir.SuperInitializer init) {
+    final targetRef = init.targetReference;
+    final funcId = _constructorToFuncId[targetRef];
+    if (funcId == null) {
+      // Super constructor is in a platform class (e.g., Object()).
+      // Platform constructors are no-ops for our purposes — skip.
+      return;
+    }
+
+    final targetParams = init.target.function.positionalParameters;
+    final targetNamedParams = init.target.function.namedParameters;
+    final argTemps = <(int, ResultLoc)>[];
+
+    // Compile positional arguments.
+    for (var i = 0; i < init.arguments.positional.length; i++) {
+      var (argReg, argLoc) = _compileExpression(init.arguments.positional[i]);
+      if (i < targetParams.length) {
+        final paramKind = _classifyStackKind(targetParams[i].type);
+        if (paramKind == StackKind.ref && argLoc == ResultLoc.value) {
+          argReg = _emitBoxToRef(
+            argReg,
+            _inferExprType(init.arguments.positional[i]),
+          );
+          argLoc = ResultLoc.ref;
+        }
+      }
+      argTemps.add((argReg, argLoc));
+    }
+
+    // Fill missing optional positional args with defaults.
+    for (var i = init.arguments.positional.length;
+        i < targetParams.length;
+        i++) {
+      argTemps.add(_compileDefaultValue(targetParams[i]));
+    }
+
+    // Handle named arguments.
+    if (targetNamedParams.isNotEmpty) {
+      _compileNamedArgsFromParams(
+        targetNamedParams,
+        init.arguments.named,
+        argTemps,
+      );
+    }
+
+    // Pass `this` (rsp+2) to the super constructor's `this` slot (argIdx 2).
+    const thisReg = 2;
+    final thisMovePC = _emitter.emitPlaceholder();
+    _pendingArgMoves.add(
+      (pc: thisMovePC, srcReg: thisReg, argIdx: 2, loc: ResultLoc.ref),
+    );
+
+    // Emit arg moves + CALL_SUPER. Super constructor is compile-time resolved.
+    final dummyResult = _allocRefReg();
+    _emitArgMovesAndCall(argTemps, Op.callSuper, dummyResult, funcId);
   }
 
   /// Compiles a [RedirectingInitializer] within a constructor.

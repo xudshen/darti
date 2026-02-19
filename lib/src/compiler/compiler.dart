@@ -8,6 +8,7 @@ import '../bytecode/encoding.dart';
 import '../bytecode/module.dart';
 import '../bytecode/opcodes.dart';
 import '../runtime/class_info.dart';
+import '../runtime/object.dart';
 import 'bytecode_emitter.dart';
 import 'register_allocator.dart';
 import 'scope.dart';

@@ -602,6 +602,44 @@ class DarticInterpreter {
           code = cvCallee.bytecode;
           pc = 0;
 
+        case Op.callSuper: // CALL_SUPER A, Bx — call super method functions[Bx], result→reg A
+          final csA = (instr >> 8) & 0xFF;
+          final csBx = (instr >> 16) & 0xFFFF;
+          final csCallee = module.functions[csBx];
+
+          // Overflow and call depth checks.
+          if (vs.sp + csCallee.valueRegCount > vs.capacity ||
+              rs.sp + csCallee.refRegCount > rs.capacity) {
+            throw DarticError('Stack overflow');
+          }
+          if (callStack.depth >= callStack.maxFrames) {
+            throw DarticError('Maximum call depth exceeded');
+          }
+
+          // Push frame — save caller state.
+          callStack.pushFrame(
+            funcId: csCallee.funcId,
+            returnPC: pc,
+            savedFP: callStack.fp,
+            savedVSP: vBase,
+            savedRSP: rBase,
+            resultReg: csA,
+          );
+
+          // Save caller's upvalues; super calls have no closure upvalues.
+          _upvalueStack.add(currentUpvalues);
+          currentUpvalues = null;
+
+          // Advance to callee frame.
+          vBase = vs.sp;
+          rBase = rs.sp;
+          vs.sp += csCallee.valueRegCount;
+          rs.sp += csCallee.refRegCount;
+
+          // Switch to callee bytecode.
+          code = csCallee.bytecode;
+          pc = 0;
+
         // RETURN_REF / RETURN_VAL / RETURN_NULL share identical frame-restore
         // logic. The only difference: what is captured before and written after.
         case Op.returnRef: // RETURN_REF A — return refStack[A] to caller

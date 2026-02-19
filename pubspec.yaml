@@ -1,6 +1,7 @@
 name: dartic
 description: A Dart bytecode interpreter.
 version: 1.0.0
+publish_to: none
 repository: https://github.com/xudshen/dartic.git
 
 environment:

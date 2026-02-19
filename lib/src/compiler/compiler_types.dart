@@ -60,6 +60,15 @@ extension on DarticCompiler {
       if (target is ir.Procedure) return target.function.returnType;
     }
     if (expr is ir.InstanceSet) return _inferExprType(expr.value);
+    if (expr is ir.SuperMethodInvocation) {
+      return expr.interfaceTarget.function.returnType;
+    }
+    if (expr is ir.SuperPropertyGet) {
+      final target = expr.interfaceTarget;
+      if (target is ir.Field) return target.type;
+      if (target is ir.Procedure) return target.function.returnType;
+    }
+    if (expr is ir.SuperPropertySet) return _inferExprType(expr.value);
     return null;
   }
 

@@ -121,16 +121,20 @@ feat: support inheritance, override, and operator overloading
 
 ## 核心发现
 
-_(执行时填写)_
+- **方法表策略**：采用编译时扁平化（方案 B）——子类方法表包含所有继承+重写的方法，IC miss 慢路径 O(1) 查找，无需运行时沿 superClassId 链遍历。实现方式：`_registerClass` 中对父类 `methods` 做 `putIfAbsent` 拷贝。
+- **抽象类零额外代码**：CFE 保证具体子类实现所有抽象方法，抽象方法 body 为 null 不会被编译，加上方法表扁平化自动继承具体方法，无需额外编译器逻辑。
+- **操作符重载自然路由**：用户自定义操作符（+、-、*、<、>、[]、unary- 等）在 Kernel 中为 InstanceInvocation，`_compileInstanceInvocation` 跳过 int/double 快速路径后自然走 `_compileVirtualCall`（CALL_VIRTUAL），无需特殊处理。唯一例外是 `operator==`：Kernel 使用 EqualsCall 节点，需检测 interfaceTarget 是否为用户自定义类并改走 CALL_VIRTUAL。
+- **`_inferExprType` 必须覆盖 super 表达式**：SuperMethodInvocation 未在 `_inferExprType` 注册导致 `super.f() + 10` 的 int 快速路径被跳过，receiver 从 value 栈被误读为 ref 栈 → null receiver 错误。修复后所有 super 表达式节点均已覆盖。
+- **`_classInfos` 闭包捕获**：`_createTypeChecker` 和 `_createCaster` 闭包通过引用捕获 `_classInfos`，在单模块编译模型下安全（执行前列表已完全填充），多模块支持时需重新评估。
 
 ## Batch 完成检查
 
-- [ ] 3.3.1 单继承 + super 调用
-- [ ] 3.3.2 方法重写 + 虚分发
-- [ ] 3.3.3 抽象类与抽象方法
-- [ ] 3.3.4 操作符重载
-- [ ] `fvm dart analyze` 零警告
-- [ ] `fvm dart test` 全部通过
+- [x] 3.3.1 单继承 + super 调用
+- [x] 3.3.2 方法重写 + 虚分发
+- [x] 3.3.3 抽象类与抽象方法
+- [x] 3.3.4 操作符重载
+- [x] `fvm dart analyze` 零警告
+- [x] `fvm dart test` 全部通过
 - [ ] commit 已提交
 - [ ] overview.md 已更新
-- [ ] code review 已完成
+- [x] code review 已完成
