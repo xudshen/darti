@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:kernel/ast.dart' as ir;
 import 'package:kernel/core_types.dart' show CoreTypes;
+import 'package:kernel/type_algebra.dart' as type_algebra;
 
 import '../bytecode/constant_pool.dart';
 import '../bytecode/encoding.dart';

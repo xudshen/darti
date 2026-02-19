@@ -39,7 +39,16 @@ extension on DarticCompiler {
     }
     if (expr is ir.IsExpression) return _coreTypes.boolNonNullableRawType;
     if (expr is ir.AsExpression) return expr.type;
-    if (expr is ir.StaticInvocation) return expr.target.function.returnType;
+    if (expr is ir.StaticInvocation) {
+      final retType = expr.target.function.returnType;
+      final typeParams = expr.target.function.typeParameters;
+      if (typeParams.isNotEmpty && expr.arguments.types.isNotEmpty) {
+        return type_algebra.Substitution.fromPairs(
+          typeParams, expr.arguments.types,
+        ).substituteType(retType);
+      }
+      return retType;
+    }
     if (expr is ir.InstanceInvocation) {
       return _inferInstanceInvocationType(expr);
     }

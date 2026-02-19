@@ -128,6 +128,28 @@ int main() {
     });
   });
 
+  group('generic static function type inference', () {
+    test('generic static function return used in arithmetic', () async {
+      final result = await compileAndRun('''
+T identity<T>(T x) => x;
+int main() {
+  return identity<int>(40) + 2;
+}
+''');
+      expect(result, 42);
+    });
+
+    test('generic static function with multiple type params', () async {
+      final result = await compileAndRun('''
+A first<A, B>(A a, B b) => a;
+int main() {
+  return first<int, String>(42, 'hello');
+}
+''');
+      expect(result, 42);
+    });
+  });
+
   group('chained generic function calls', () {
     test('nested generic function calls', () async {
       final result = await compileAndRun('''
