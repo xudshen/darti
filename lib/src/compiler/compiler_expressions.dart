@@ -74,20 +74,8 @@ extension on DarticCompiler {
 
   // ── ConstantExpression ──
 
-  (int, ResultLoc) _compileConstantExpression(ir.ConstantExpression expr) {
-    final constant = expr.constant;
-    if (constant is ir.IntConstant) return _loadInt(constant.value);
-    if (constant is ir.DoubleConstant) return _loadDouble(constant.value);
-    if (constant is ir.BoolConstant) return _loadBool(constant.value);
-    if (constant is ir.StringConstant) return _loadString(constant.value);
-    if (constant is ir.NullConstant) return _loadNull();
-    if (constant is ir.StaticTearOffConstant) {
-      return _compileStaticTearOffConstant(constant);
-    }
-    throw UnsupportedError(
-      'Unsupported constant type: ${constant.runtimeType}',
-    );
-  }
+  (int, ResultLoc) _compileConstantExpression(ir.ConstantExpression expr) =>
+      expr.constant.accept(_constantVisitor);
 
   // ── Not ──
 
@@ -1672,4 +1660,39 @@ class _ExprCompileVisitor
   @override
   (int, ResultLoc) visitSuperPropertySet(ir.SuperPropertySet node) =>
       _c._compileSuperPropertySet(node);
+}
+
+/// Visitor that compiles [ir.Constant] nodes to bytecode.
+///
+/// Delegates each constant type to the corresponding extension method on
+/// [DarticCompiler]. Unhandled constants fall through to [defaultConstant]
+/// which throws [UnsupportedError].
+class _ConstantCompileVisitor
+    with ir.ConstantVisitorDefaultMixin<(int, ResultLoc)> {
+  _ConstantCompileVisitor(this._c);
+  final DarticCompiler _c;
+
+  @override
+  (int, ResultLoc) defaultConstant(ir.Constant node) => throw UnsupportedError(
+        'Unsupported constant type: ${node.runtimeType}',
+      );
+
+  @override
+  (int, ResultLoc) visitIntConstant(ir.IntConstant node) =>
+      _c._loadInt(node.value);
+  @override
+  (int, ResultLoc) visitDoubleConstant(ir.DoubleConstant node) =>
+      _c._loadDouble(node.value);
+  @override
+  (int, ResultLoc) visitBoolConstant(ir.BoolConstant node) =>
+      _c._loadBool(node.value);
+  @override
+  (int, ResultLoc) visitStringConstant(ir.StringConstant node) =>
+      _c._loadString(node.value);
+  @override
+  (int, ResultLoc) visitNullConstant(ir.NullConstant node) => _c._loadNull();
+  @override
+  (int, ResultLoc) visitStaticTearOffConstant(
+          ir.StaticTearOffConstant node) =>
+      _c._compileStaticTearOffConstant(node);
 }
