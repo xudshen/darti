@@ -213,6 +213,8 @@ class DarticCompiler {
 
     // Pass 1c: register classes — assign classIds, compute field layouts,
     // assign funcIds to constructors and instance methods.
+    // NOTE: Relies on Kernel CFE emitting classes in dependency order within
+    // each library (superclasses and interfaces before their subtypes).
     for (final lib in _component.libraries) {
       if (_isPlatformLibrary(lib)) continue;
       for (final cls in lib.classes) {
@@ -276,6 +278,10 @@ class DarticCompiler {
         }
         for (final proc in cls.procedures) {
           if (proc.isStatic) continue;
+          // Skip abstract methods — they have no body and serve only as
+          // interface contracts. Their funcIds are registered in Pass 1c
+          // for method table resolution, but no bytecode is generated.
+          if (proc.isAbstract) continue;
           _compileProcedure(proc);
         }
       }

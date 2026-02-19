@@ -64,10 +64,18 @@ extension on DarticCompiler {
       valueFieldCount: valOffset, // Total including inherited
     );
 
-    // Build supertypeIds: self + transitive closure of parent's supertypeIds.
+    // Build supertypeIds: self + transitive closure of all supertypes.
+    // Includes superclass chain AND implementedTypes (interfaces).
     classInfo.supertypeIds.add(classId);
     if (superClassId >= 0) {
       classInfo.supertypeIds.addAll(_classInfos[superClassId].supertypeIds);
+    }
+    for (final implemented in cls.implementedTypes) {
+      final implClassId = _classToClassId[implemented.classNode];
+      if (implClassId != null) {
+        // Add the interface itself and its transitive supertypeIds.
+        classInfo.supertypeIds.addAll(_classInfos[implClassId].supertypeIds);
+      }
     }
 
     // Register constructors -> assign funcIds.
