@@ -59,15 +59,15 @@
 | [3.2](phase3/batch-3.2-class-basics.md) | 类基础 | 6 | ✅ |
 | [3.3](phase3/batch-3.3-inheritance.md) | 继承与多态 | 4 | ✅ |
 | [3.4](phase3/batch-3.4-scope-resolution.md) | 作用域与名称解析 | 3 | ✅ |
-| [3.5](phase3/batch-3.5-co19-harness-v1.md) | co19 Harness v1 | 6 | ⏳ |
+| [3.5](phase3/batch-3.5-co19-harness-v1.md) | co19 Harness v1 | 6 | ✅ |
 | [3.6](phase3/batch-3.6-type-template.md) | 泛型编译预备 | 3 | ⏳ |
 
 **里程碑：**
-- [ ] co19 `Language/Functions` 通过率 > 50%
-- [ ] co19 `Language/Classes` 基础子集通过率 > 40%
-- [ ] co19 `Language/Reference` 通过率 > 40%
-- [ ] Phase 2 类别零回归（或回归已修复）
-- [ ] Phase 2 类别通过率较上期有提升
+- [x] co19 `Language/Functions` 通过率 > 50% — 实际 72.2% (135/187)
+- [x] co19 `Language/Classes` 基础子集通过率 > 40% — 实际 76.8% (649/845)
+- [x] co19 `Language/Reference` 通过率 > 40% — 实际 81.4% (451/554)
+- [x] Phase 2 类别零回归（或回归已修复） — 0 回归
+- [x] Phase 2 类别通过率较上期有提升 — 53.2% → 56.2% (+78 new pass)
 
 ---
 

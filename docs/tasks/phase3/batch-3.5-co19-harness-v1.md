@@ -142,20 +142,39 @@ feat: co19 harness v1 — integrate expect.dart with class support
 
 ## 核心发现
 
-_(执行时填写)_
+### Task 3.5.1
+1. **EqualsCall generic path 未 box 操作数** — `_compileEqualsCall` 在 generic 路径（非 int/double）直接使用 `EQ_GENERIC`（读 ref stack），但未确保操作数在 ref stack 上。当 `Object?` 类型变量与 `true`/`false` 字面量比较时，字面量在 value stack 上，导致比较结果错误。修复：在 `else` 分支中对 value-stack 操作数调用 `_emitBoxToRef`。
+2. **跨帧异常传播未实现** — THROW/RETHROW 仅搜索当前帧的 exception table，不在的话直接 `throw exception!` 到宿主 VM。当 `Expect.throws(() { throw 'error'; })` 执行时，`throw 'error'` 在内层闭包帧中发生，无法被外层 `Expect.throws` 的 try/catch 捕获。修复：实现跨帧异常展开——循环弹出帧并搜索 caller 的 exception table，直到找到 handler 或回到 entry frame。
+3. **简化 expect.dart 策略** — 去除 `implements Exception`（避免平台类型 is 检查问题）、`dart:async`、泛型、字符串插值等不支持特性。ExpectException 使用普通 class 而非 `implements Exception`。
+
+### Task 3.5.3
+1. **Kernel CFE 已完整处理 part 合并** — `library` + `part` 指令在 Kernel 编译阶段（`fvm dart compile kernel`）已被完全解析：part 文件中的所有声明被合并到主 Library 的 members 中。DarticCompiler 遍历 `component.libraries` 时自然处理了这些合并后的声明，无需任何编译器修改。
+2. **跨 part 文件的双向引用正常** — part 文件可以调用主 library 中定义的函数（如 `computed() => baseValue() * 3`），不同 part 文件之间也可以互相引用（如 part2 调用 part1 的 `getA()`）。这是因为 Kernel 将它们视为同一 Library 的成员。
+3. **多 Library 交叉引用无需特殊处理** — 多个独立 library 被 main 文件 import 后，Kernel Component 中包含多个 Library 节点，DarticCompiler 的多 pass 编译（Pass 1a/1b/1c → Pass 2a/2b/2c）自然遍历所有非 platform library，函数/类的跨库引用通过 `_procToFuncId` 映射正确解析。
+
+### Task 3.5.5
+1. **noSuchMethod forwarder 报 `Unknown constructor: _InvocationMirror._withType`** — 原因不是 `Invocation` 类未定义，而是 CFE 为含 `noSuchMethod` 覆写的类自动生成了 synthetic forwarder 方法，其方法体使用了 `dart:core` 内部私有类 `_InvocationMirror._withType`、`List.unmodifiable`、`_GrowableList._literal1` 等平台 API。dartic 不编译 `dart:core` 内部代码，因此无法处理这些调用。影响约 54 个 co19 测试。修复方案：在 `_compileProcedure` 中检测 `proc.isNoSuchMethodForwarder`，跳过 CFE 生成的方法体，改为自己生成字节码（加载 null 作为 Invocation 参数 → CALL_VIRTUAL noSuchMethod → 返回结果）。此修复不随 Phase 4/5 自动解决，需要专门处理。
+2. **三个新类别通过率均远超目标** — Functions 72.2%（目标 >50%）、Classes 76.8%（目标 >40%）、Reference 81.4%（目标 >40%）。主要失败原因：`InstanceConstant`（常量对象构造）占大多数 fail，其次是 `_InvocationMirror._withType`（noSuchMethod forwarder）、`YieldStatement`（async/generator）、`DynamicInvocation`（dynamic 调用）。
+
+### Task 3.5.6
+1. **Phase 2 类别零回归** — 对比 phase2-baseline.json，0 个回归、78 个新通过。总通过率从 53.2% (1373/2581) 提升到 56.2% (1451/2581)。新通过主要分布在 Expressions（+57，包括 Instance_Creation、Property_Extraction、Function_Expressions 等因类/闭包支持而新通过的测试）和 Statements（+18，主要是 Return/If/Local_Variable 相关）。
+
+### Task 3.5.4
+1. **工厂模式已完整支持，无需编译器修改** — Batch 3.1 的一等公民函数支持（StaticTearOff + CLOSURE + CALL）和 Batch 3.2 的类支持已覆盖工厂模式所需的全部能力：函数作为参数传递（StaticTearOff）、lambda 作为参数（FunctionExpression）、通过函数参数创建对象实例、多个回调组合。
+2. **co19 的 `test(Factory create)` 回调模式可正常工作** — 验证了完整的 co19 风格模式：定义类 → 传入 lambda 作为工厂函数 → 在回调中调用工厂创建实例 → 断言实例属性。与 Expect 断言类组合使用也无问题。
 
 ## Batch 完成检查
 
-- [ ] 3.5.1 编译 Utils/expect.dart
-- [ ] 3.5.2 相对路径 import 解析
-- [ ] 3.5.3 多文件测试支持
-- [ ] 3.5.4 工厂模式测试支持
-- [ ] 3.5.5 验证跑新增类别
-- [ ] 3.5.6 回归跑 Phase 2 类别
-- [ ] co19 Language/Functions 通过率 > 50%
-- [ ] co19 Language/Classes 通过率 > 40%
-- [ ] co19 Language/Reference 通过率 > 40%
-- [ ] Phase 2 类别零回归（或回归已修复）
+- [x] 3.5.1 编译 Utils/expect.dart
+- [x] 3.5.2 相对路径 import 解析
+- [x] 3.5.3 多文件测试支持
+- [x] 3.5.4 工厂模式测试支持
+- [x] 3.5.5 验证跑新增类别
+- [x] 3.5.6 回归跑 Phase 2 类别 — 0 回归，+78 new pass
+- [x] co19 Language/Functions 通过率 > 50% — 实际 72.2% (135/187)
+- [x] co19 Language/Classes 通过率 > 40% — 实际 76.8% (649/845)
+- [x] co19 Language/Reference 通过率 > 40% — 实际 81.4% (451/554)
+- [x] Phase 2 类别零回归（或回归已修复） — 0 回归，+78 new pass
 - [ ] commit 已提交
-- [ ] overview.md 已更新
-- [ ] code review 已完成
+- [x] overview.md 已更新
+- [x] code review 已完成

@@ -133,8 +133,9 @@ bool isNegativeTest(String source) {
 // Test discovery
 // ---------------------------------------------------------------------------
 
-/// Regex matching co19 test file names: `<name>_t<NN>.dart` where NN is 2 digits.
-final _testFilePattern = RegExp(r'_t\d{2}\.dart$');
+/// Regex matching co19 test file names: `<name>_t<NN>.dart` or
+/// `<name>_t<NNN>.dart` where NN is 2 digits and NNN is 3 digits.
+final _testFilePattern = RegExp(r'_t\d{2,3}\.dart$');
 
 /// Discovers co19 test files by recursively scanning [rootDirs].
 ///

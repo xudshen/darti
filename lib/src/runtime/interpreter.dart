@@ -112,6 +112,42 @@ class DarticInterpreter {
     // Push sentinel entry for the initial frame.
     _upvalueStack.add(null);
 
+    // Helper: unwind frames searching for an exception handler starting at
+    // [startPC]. If found, restores stacks, writes exception/stackTrace into
+    // the handler's registers, and returns the handler PC. If no handler
+    // exists, rethrows [exception] to the host VM.
+    //
+    // Side effects: mutates vBase, rBase, code, currentUpvalues via closure.
+    int unwindToHandler(int startPC, Object? exception, Object? stackTrace) {
+      var searchPC = startPC;
+      while (true) {
+        final funcProto = module.functions[callStack.funcId];
+        final handler = _findHandler(funcProto, searchPC);
+        if (handler != null) {
+          rs.clearRange(rBase + handler.refStackDP, rs.sp);
+          vs.sp = vBase + handler.valStackDP;
+          rs.sp = rBase + handler.refStackDP;
+          rs.write(rBase + handler.exceptionReg, exception);
+          if (handler.stackTraceReg >= 0) {
+            rs.write(rBase + handler.stackTraceReg, stackTrace);
+          }
+          return handler.handlerPC;
+        }
+        if (callStack.depth <= 1) throw exception!;
+        rs.clearRange(rBase, rs.sp);
+        vs.sp = vBase;
+        rs.sp = rBase;
+        final callerVSP = callStack.savedVSP;
+        final callerRSP = callStack.savedRSP;
+        searchPC = callStack.returnPC - 1;
+        callStack.popFrame();
+        vBase = callerVSP;
+        rBase = callerRSP;
+        code = module.functions[callStack.funcId].bytecode;
+        currentUpvalues = _upvalueStack.removeLast();
+      }
+    }
+
     while (_fuel-- > 0) {
       final instr = code[pc++];
       final op = instr & 0xFF;
@@ -760,57 +796,16 @@ class DarticInterpreter {
         case Op.throw_: // THROW A — throw refStack[A]
           final a = (instr >> 8) & 0xFF;
           final exception = rs.read(rBase + a);
-          final stackTrace = StackTrace.current;
-
-          // Search for matching handler in the current function.
-          final funcProto = module.functions[callStack.funcId];
-          final handlerResult = _findHandler(funcProto, pc - 1);
-          if (handlerResult != null) {
-            // Unwind stacks to handler's saved depths.
-            rs.clearRange(rBase + handlerResult.refStackDP, rs.sp);
-            vs.sp = vBase + handlerResult.valStackDP;
-            rs.sp = rBase + handlerResult.refStackDP;
-
-            // Bind exception variable.
-            rs.write(rBase + handlerResult.exceptionReg, exception);
-            if (handlerResult.stackTraceReg >= 0) {
-              rs.write(rBase + handlerResult.stackTraceReg, stackTrace);
-            }
-
-            // Jump to handler.
-            pc = handlerResult.handlerPC;
-          } else {
-            // No handler in current frame — propagate to host VM.
-            // TODO(Phase 3): Walk dartic CallStack frames, searching each
-            // frame's exception table. Clean up intermediate frames (null
-            // ref slots for GC safety) before jumping to the handler.
-            throw exception!;
-          }
+          pc = unwindToHandler(pc - 1, exception, StackTrace.current);
 
         case Op.rethrow_: // RETHROW A, B — rethrow refStack[A] with stackTrace refStack[B]
           final a = (instr >> 8) & 0xFF;
           final b = (instr >> 16) & 0xFF;
           final exception = rs.read(rBase + a);
-          // Read stackTrace BEFORE clearRange — the source register may fall
+          // Read stackTrace BEFORE unwinding — the source register may fall
           // within the range that gets nullified during stack unwinding.
           final stackTrace = b > 0 ? rs.read(rBase + b) : null;
-
-          final funcProto = module.functions[callStack.funcId];
-          final handlerResult = _findHandler(funcProto, pc - 1);
-          if (handlerResult != null) {
-            rs.clearRange(rBase + handlerResult.refStackDP, rs.sp);
-            vs.sp = vBase + handlerResult.valStackDP;
-            rs.sp = rBase + handlerResult.refStackDP;
-
-            rs.write(rBase + handlerResult.exceptionReg, exception);
-            if (handlerResult.stackTraceReg >= 0) {
-              rs.write(rBase + handlerResult.stackTraceReg, stackTrace);
-            }
-
-            pc = handlerResult.handlerPC;
-          } else {
-            throw exception!;
-          }
+          pc = unwindToHandler(pc - 1, exception, stackTrace);
 
         case Op.assert_: // ASSERT A, Bx — if valueStack[A] == 0 → throw AssertionError
           final a = (instr >> 8) & 0xFF;
@@ -819,24 +814,7 @@ class DarticInterpreter {
             final message =
                 bx != 0xFFFF ? module.constantPool.getRef(bx) : null;
             final exception = AssertionError(message?.toString());
-            final stackTrace = StackTrace.current;
-
-            final funcProto = module.functions[callStack.funcId];
-            final handler = _findHandler(funcProto, pc - 1);
-            if (handler != null) {
-              rs.clearRange(rBase + handler.refStackDP, rs.sp);
-              vs.sp = vBase + handler.valStackDP;
-              rs.sp = rBase + handler.refStackDP;
-
-              rs.write(rBase + handler.exceptionReg, exception);
-              if (handler.stackTraceReg >= 0) {
-                rs.write(rBase + handler.stackTraceReg, stackTrace);
-              }
-
-              pc = handler.handlerPC;
-            } else {
-              throw exception;
-            }
+            pc = unwindToHandler(pc - 1, exception, StackTrace.current);
           }
 
         // ── Closure (0x70-0x71) ──

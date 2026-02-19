@@ -266,8 +266,8 @@ extension on DarticCompiler {
       }
     }
 
-    final (lhsReg, _) = _compileExpression(expr.left);
-    final (rhsReg, _) = _compileExpression(expr.right);
+    var (lhsReg, lhsLoc) = _compileExpression(expr.left);
+    var (rhsReg, rhsLoc) = _compileExpression(expr.right);
     final resultReg = _allocValueReg();
 
     if (isInt) {
@@ -275,6 +275,13 @@ extension on DarticCompiler {
     } else if (isDouble) {
       _emitter.emit(encodeABC(Op.eqDbl, resultReg, lhsReg, rhsReg));
     } else {
+      // EQ_GENERIC operates on the ref stack — ensure both operands are boxed.
+      if (lhsLoc == ResultLoc.value) {
+        lhsReg = _emitBoxToRef(lhsReg, _inferExprType(expr.left));
+      }
+      if (rhsLoc == ResultLoc.value) {
+        rhsReg = _emitBoxToRef(rhsReg, _inferExprType(expr.right));
+      }
       _emitter.emit(encodeABC(Op.eqGeneric, resultReg, lhsReg, rhsReg));
     }
     return (resultReg, ResultLoc.value);

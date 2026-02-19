@@ -104,22 +104,37 @@ void main() {
         expect(entries.first.path, endsWith('constant_variable_t01.dart'));
       });
 
-      test('excludes files with _t but no 2-digit suffix', () {
+      test('excludes files with _t but no 2-3 digit suffix', () {
         // _t1.dart (1 digit — not a match)
         createFile('Variables/foo_t1.dart');
-        // _t123.dart (3 digits — not a match)
-        createFile('Variables/foo_t123.dart');
+        // _t1234.dart (4 digits — not a match)
+        createFile('Variables/foo_t1234.dart');
         // _t.dart (no digits — not a match)
         createFile('Variables/foo_t.dart');
         // _tab.dart (letters — not a match)
         createFile('Variables/foo_tab.dart');
-        // Valid match
+        // Valid 2-digit match
         createFile('Variables/foo_t01.dart');
+        // Valid 3-digit match
+        createFile('Variables/foo_t123.dart');
 
         final entries = discoverTests([tempDir.path]);
 
-        expect(entries, hasLength(1));
-        expect(entries.first.path, endsWith('foo_t01.dart'));
+        expect(entries, hasLength(2));
+        expect(
+          entries.map((e) => e.path.split('/').last).toSet(),
+          equals({'foo_t01.dart', 'foo_t123.dart'}),
+        );
+      });
+
+      test('matches 3-digit test numbers (t100 through t999)', () {
+        createFile('Variables/foo_t100.dart');
+        createFile('Variables/foo_t200.dart');
+        createFile('Variables/foo_t999.dart');
+
+        final entries = discoverTests([tempDir.path]);
+
+        expect(entries, hasLength(3));
       });
     });
 
@@ -274,8 +289,8 @@ void main() {
           for (final entry in entries) {
             expect(
               entry.path,
-              matches(RegExp(r'_t\d{2}\.dart$')),
-              reason: '${entry.path} should match _tNN.dart pattern',
+              matches(RegExp(r'_t\d{2,3}\.dart$')),
+              reason: '${entry.path} should match _tNN(N).dart pattern',
             );
           }
 
