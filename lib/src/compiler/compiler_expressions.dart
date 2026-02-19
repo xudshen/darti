@@ -271,8 +271,29 @@ extension on DarticCompiler {
     final resultReg = _allocValueReg();
 
     if (isInt) {
+      // Unbox if operands are on the ref-stack (e.g., generic field access).
+      if (lhsLoc == ResultLoc.ref) {
+        final valReg = _allocValueReg();
+        _emitter.emit(encodeABC(Op.unboxInt, valReg, lhsReg, 0));
+        lhsReg = valReg;
+      }
+      if (rhsLoc == ResultLoc.ref) {
+        final valReg = _allocValueReg();
+        _emitter.emit(encodeABC(Op.unboxInt, valReg, rhsReg, 0));
+        rhsReg = valReg;
+      }
       _emitter.emit(encodeABC(Op.eqInt, resultReg, lhsReg, rhsReg));
     } else if (isDouble) {
+      if (lhsLoc == ResultLoc.ref) {
+        final valReg = _allocValueReg();
+        _emitter.emit(encodeABC(Op.unboxDouble, valReg, lhsReg, 0));
+        lhsReg = valReg;
+      }
+      if (rhsLoc == ResultLoc.ref) {
+        final valReg = _allocValueReg();
+        _emitter.emit(encodeABC(Op.unboxDouble, valReg, rhsReg, 0));
+        rhsReg = valReg;
+      }
       _emitter.emit(encodeABC(Op.eqDbl, resultReg, lhsReg, rhsReg));
     } else {
       // EQ_GENERIC operates on the ref stack — ensure both operands are boxed.
@@ -916,9 +937,20 @@ extension on DarticCompiler {
       if (name == '/' &&
           receiverType != null &&
           _isIntType(receiverType)) {
-        final (lhsReg, _) = _compileExpression(expr.receiver);
-        final (rhsReg, _) =
+        var (lhsReg, lhsLoc) = _compileExpression(expr.receiver);
+        var (rhsReg, rhsLoc) =
             _compileExpression(expr.arguments.positional[0]);
+        // Unbox if operands are on the ref-stack (e.g., generic field access).
+        if (lhsLoc == ResultLoc.ref) {
+          final valReg = _allocValueReg();
+          _emitter.emit(encodeABC(Op.unboxInt, valReg, lhsReg, 0));
+          lhsReg = valReg;
+        }
+        if (rhsLoc == ResultLoc.ref) {
+          final valReg = _allocValueReg();
+          _emitter.emit(encodeABC(Op.unboxInt, valReg, rhsReg, 0));
+          rhsReg = valReg;
+        }
         final lhsDbl = _allocValueReg();
         _emitter.emit(encodeABC(Op.intToDbl, lhsDbl, lhsReg, 0));
         final rhsDbl = _allocValueReg();

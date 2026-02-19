@@ -198,7 +198,7 @@ feat(generics): add reified generics with DarticType residency
 - **FTA 传递机制**：编译器在调用点发射 `INSTANTIATE_TYPE` + `CREATE_TYPE_ARGS` 组装 FTA，通过 pending arg MOVE 放入 callee rsp+1。复用已有的 arg move 机制，无需新指令
 - **`_classToClassId` vs `_typeClassIdLookup` 分离**：避免 core type classIds 污染编译器的 EqualsCall dispatch 和 constructor resolution 等决策
 - **TypeParameterType 解析**：`_currentClassTypeParams` (ITA) 和 `_currentFunctionTypeParams` (FTA) 必须同时传递给 `dartTypeToTemplate`，否则 `is T` 中的 T 会退化为 DynamicTemplate（is dynamic 始终为 true）
-- **泛型类字段的 operator dispatch 局限**：`_inferExprType` 对 TypeParameterType 字段返回原始类型参数而非实例化类型（如 `Pair<int,int>.first` 返回 TypeParameterType(A) 而非 int），导致 int 专用算术指令无法触发。这是 Phase 2 的泛型类型特化问题
+- **泛型类字段的 operator dispatch** ~~局限~~（已修复）：`_inferExprType` 对 InstanceGet 改用 `expr.resultType`（Kernel 已替换类型参数），对 InstanceInvocation fallback 改用 `expr.functionType.returnType`。同时 `_emitBinaryOp`/`_emitUnaryOp`/`_compileEqualsCall` 等消费端增加 ref-stack 操作数 unbox
 - **SubtypeChecker 实现范围**：Phase 1 实现规则 1-3, 11-12（identical 快速路径、顶类型、底类型、SuperTypeMap + 类型参数递归），规则 4-10 留 Batch 4.3
 
 ## Batch 完成检查

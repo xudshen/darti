@@ -130,6 +130,99 @@ int main() {
     });
   });
 
+  group('generic field type inference', () {
+    test('generic field arithmetic: Pair<int,int>.first + .second', () async {
+      final result = await compileAndRun('''
+class Pair<A, B> {
+  A first;
+  B second;
+  Pair(this.first, this.second);
+}
+int main() {
+  Pair<int, int> p = Pair<int, int>(10, 32);
+  return p.first + p.second;
+}
+''');
+      expect(result, 42);
+    });
+
+    test('generic field comparison: Box<int>.value == 42', () async {
+      final result = await compileAndRun('''
+class Box<T> {
+  T value;
+  Box(this.value);
+}
+int main() {
+  Box<int> b = Box<int>(42);
+  if (b.value == 42) return 1;
+  return 0;
+}
+''');
+      expect(result, 1);
+    });
+
+    test('generic method return value participates in arithmetic', () async {
+      final result = await compileAndRun('''
+class Box<T> {
+  T value;
+  Box(this.value);
+  T getValue() => value;
+}
+int main() {
+  Box<int> b = Box<int>(10);
+  return b.getValue() + 1;
+}
+''');
+      expect(result, 11);
+    });
+
+    test('generic field assigned to int variable then used in arithmetic',
+        () async {
+      final result = await compileAndRun('''
+class Box<T> {
+  T value;
+  Box(this.value);
+}
+int main() {
+  Box<int> b = Box<int>(20);
+  int v = b.value;
+  return v + 5;
+}
+''');
+      expect(result, 25);
+    });
+
+    test('Box<double> field participates in double arithmetic', () async {
+      final result = await compileAndRun('''
+class Box<T> {
+  T value;
+  Box(this.value);
+}
+int main() {
+  Box<double> b = Box<double>(3.5);
+  double d = b.value + 1.5;
+  return d.toInt();
+}
+''');
+      expect(result, 5);
+    });
+
+    test('nested Box<Box<int>> inner field arithmetic', () async {
+      final result = await compileAndRun('''
+class Box<T> {
+  T value;
+  Box(this.value);
+}
+int main() {
+  Box<int> inner = Box<int>(100);
+  Box<Box<int>> outer = Box<Box<int>>(inner);
+  return outer.value.value + 1;
+}
+''');
+      expect(result, 101);
+    });
+  });
+
   group('generic class inheritance', () {
     test('non-generic child extends generic parent: IntBox extends Box<int>',
         () async {

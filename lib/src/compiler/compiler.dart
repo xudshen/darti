@@ -561,21 +561,54 @@ class DarticCompiler {
   }
 
   /// Compiles a binary value-stack operation: receiver op arg[0].
+  ///
+  /// If either operand is on the ref-stack (e.g., from a generic field access),
+  /// it is unboxed first. The unbox type (int vs double) is inferred from the
+  /// opcode itself — the caller has already chosen the correct opcode based on
+  /// the operand types.
   (int, ResultLoc) _emitBinaryOp(ir.InstanceInvocation expr, int op) {
-    final (lhsReg, _) = _compileExpression(expr.receiver);
-    final (rhsReg, _) = _compileExpression(expr.arguments.positional[0]);
+    var (lhsReg, lhsLoc) = _compileExpression(expr.receiver);
+    var (rhsReg, rhsLoc) = _compileExpression(expr.arguments.positional[0]);
+    final unboxOp = _isDoubleBinaryOp(op) ? Op.unboxDouble : Op.unboxInt;
+    if (lhsLoc == ResultLoc.ref) {
+      final valReg = _allocValueReg();
+      _emitter.emit(encodeABC(unboxOp, valReg, lhsReg, 0));
+      lhsReg = valReg;
+    }
+    if (rhsLoc == ResultLoc.ref) {
+      final valReg = _allocValueReg();
+      _emitter.emit(encodeABC(unboxOp, valReg, rhsReg, 0));
+      rhsReg = valReg;
+    }
     final resultReg = _allocValueReg();
     _emitter.emit(encodeABC(op, resultReg, lhsReg, rhsReg));
     return (resultReg, ResultLoc.value);
   }
 
   /// Compiles a unary value-stack operation on the receiver.
+  ///
+  /// If the operand is on the ref-stack, it is unboxed first. The unbox type
+  /// is determined by what the opcode expects: negDbl/dblToInt need double
+  /// input; everything else (negInt, bitNot, intToDbl) needs int input.
   (int, ResultLoc) _emitUnaryOp(ir.InstanceInvocation expr, int op) {
-    final (srcReg, _) = _compileExpression(expr.receiver);
+    var (srcReg, srcLoc) = _compileExpression(expr.receiver);
+    if (srcLoc == ResultLoc.ref) {
+      final isDoubleInput = (op == Op.negDbl || op == Op.dblToInt);
+      final unboxOp = isDoubleInput ? Op.unboxDouble : Op.unboxInt;
+      final valReg = _allocValueReg();
+      _emitter.emit(encodeABC(unboxOp, valReg, srcReg, 0));
+      srcReg = valReg;
+    }
     final resultReg = _allocValueReg();
     _emitter.emit(encodeABC(op, resultReg, srcReg, 0));
     return (resultReg, ResultLoc.value);
   }
+
+  /// Returns true if [op] is a double binary opcode (arithmetic or comparison).
+  bool _isDoubleBinaryOp(int op) =>
+      (op >= Op.addDbl && op <= Op.divDbl) ||
+      (op >= Op.ltDbl && op <= Op.geDbl) ||
+      op == Op.eqDbl;
 
   /// Compiles [branchExpr], boxing and moving the result into [targetReg].
   ///

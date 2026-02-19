@@ -55,9 +55,10 @@ extension on DarticCompiler {
       return null;
     }
     if (expr is ir.InstanceGet) {
-      final target = expr.interfaceTarget;
-      if (target is ir.Field) return target.type;
-      if (target is ir.Procedure) return target.function.returnType;
+      // Use Kernel's pre-computed resultType which has type parameter
+      // substitutions applied (e.g., returns `int` instead of `T` for
+      // a field access on `Box<int>`).
+      return expr.resultType;
     }
     if (expr is ir.InstanceSet) return _inferExprType(expr.value);
     if (expr is ir.SuperMethodInvocation) {
@@ -110,7 +111,10 @@ extension on DarticCompiler {
       return _coreTypes.doubleNonNullableRawType;
     }
 
-    return expr.interfaceTarget.function.returnType;
+    // Use Kernel's substituted functionType rather than the raw declaration
+    // returnType, so generic method return types are resolved (e.g., `T`
+    // becomes `int` for `Box<int>.getValue()`).
+    return expr.functionType.returnType;
   }
 
   bool _isIntType(ir.DartType type) =>
