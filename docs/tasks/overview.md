@@ -58,7 +58,7 @@
 | [3.1](phase3/batch-3.1-functions.md) | 函数进阶 | 4 | ✅ |
 | [3.2](phase3/batch-3.2-class-basics.md) | 类基础 | 6 | ✅ |
 | [3.3](phase3/batch-3.3-inheritance.md) | 继承与多态 | 4 | ✅ |
-| [3.4](phase3/batch-3.4-scope-resolution.md) | 作用域与名称解析 | 3 | ⏳ |
+| [3.4](phase3/batch-3.4-scope-resolution.md) | 作用域与名称解析 | 3 | ✅ |
 | [3.5](phase3/batch-3.5-co19-harness-v1.md) | co19 Harness v1 | 6 | ⏳ |
 | [3.6](phase3/batch-3.6-type-template.md) | 泛型编译预备 | 3 | ⏳ |
 

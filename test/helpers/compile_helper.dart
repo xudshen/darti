@@ -82,3 +82,63 @@ Future<Object?> compileAndRun(String source) async {
   interp.execute(module);
   return interp.entryResult;
 }
+
+/// Compiles multiple Dart source files and returns a [DarticModule].
+///
+/// [sources] maps relative filenames to source code.
+/// The first entry is the main file (or specify [mainFile]).
+Future<DarticModule> compileDartMultiFile(
+  Map<String, String> sources, {
+  String? mainFile,
+  Directory? tempDir,
+}) async {
+  final dir = tempDir ?? await Directory.systemTemp.createTemp('dartic_test_');
+  try {
+    // Write all source files to the temp directory.
+    for (final entry in sources.entries) {
+      final file = File('${dir.path}/${entry.key}');
+      await file.parent.create(recursive: true);
+      await file.writeAsString(entry.value);
+    }
+
+    // Determine the main file to compile.
+    final main = mainFile ?? sources.keys.first;
+    final mainPath = '${dir.path}/$main';
+    final dillPath = '${dir.path}/output.dill';
+
+    final result = await Process.run(
+      'fvm',
+      ['dart', 'compile', 'kernel', mainPath, '-o', dillPath],
+    );
+    if (result.exitCode != 0) {
+      throw StateError(
+        'Failed to compile .dill:\n'
+        'stdout: ${result.stdout}\n'
+        'stderr: ${result.stderr}',
+      );
+    }
+
+    final bytes = File(dillPath).readAsBytesSync();
+    final component = ir.Component();
+    BinaryBuilder(bytes).readComponent(component);
+
+    return DarticCompiler(component).compile();
+  } finally {
+    if (tempDir == null) await dir.delete(recursive: true);
+  }
+}
+
+/// Compiles multiple Dart source files, executes the result, and returns the
+/// entry result.
+///
+/// [sources] maps relative filenames to source code.
+/// The first entry is the main file (or specify [mainFile]).
+Future<Object?> compileAndRunMultiFile(
+  Map<String, String> sources, {
+  String? mainFile,
+}) async {
+  final module = await compileDartMultiFile(sources, mainFile: mainFile);
+  final interp = DarticInterpreter();
+  interp.execute(module);
+  return interp.entryResult;
+}

@@ -91,15 +91,17 @@ feat: support scoping, imports/exports, and name resolution
 
 ## 核心发现
 
-_(执行时填写)_
+- **Task 3.4.1**: 发现并修复 `_compileVariableDeclaration` 中的变量别名 bug。当初始化器为 `VariableGet`（如 `int b = a;`）时，`declareWithReg` 将新变量绑定到源变量的同一个寄存器，导致两个变量共享寄存器——对其中一个赋值会同时修改另一个。修复方法：当初始化器为 `VariableGet` 时，使用 `_scope.declare()` 分配独立寄存器并发射 MOVE 指令。33 个 e2e 测试覆盖：同名变量在兄弟块/嵌套块中独立、内层遮蔽外层变量恢复正确、循环变量独立、函数参数与局部变量交互、闭包与局部变量遮蔽、if/else 分支作用域、寄存器回收复用。另发现 LocalFunctionInvocation 作为二元表达式左操作数时结果丢失的 pre-existing bug（如 `f() + x`），已记录但不在此 Task 修复范围内。
+- **Task 3.4.2**: 多库编译零代码改动即全部通过。编译器已在所有 Pass（1a/1b/1c/2a/2b/2c）中遍历 `_component.libraries` 的全部非平台库，Kernel CFE 将所有导入合并到单个 `.dill`，跨库引用通过 `interfaceTarget` 正确解析到已分配的 `funcId`/`classId`/`globalIndex`。新增 `compileDartMultiFile` / `compileAndRunMultiFile` 测试辅助函数，6 个 e2e 测试全部通过。
+- **Task 3.4.3**: this/super 引用的编译实现完全正确，22 个 e2e 测试全部通过，无需修改生产代码。覆盖场景：this 隐式/显式引用、this 作为参数传递、this 在构造器中使用、super 字段读取（value/ref）、super getter/setter 调用、super 带参方法调用（value/ref/mixed args）、多级 super 链式调用（最多 4 层）、this 与 super 混合使用。
 
 ## Batch 完成检查
 
-- [ ] 3.4.1 块级作用域变量遮蔽
-- [ ] 3.4.2 库导入/导出与可见性
-- [ ] 3.4.3 this / super 引用
-- [ ] `fvm dart analyze` 零警告
-- [ ] `fvm dart test` 全部通过
+- [x] 3.4.1 块级作用域变量遮蔽
+- [x] 3.4.2 库导入/导出与可见性
+- [x] 3.4.3 this / super 引用
+- [x] `fvm dart analyze` 零警告
+- [x] `fvm dart test` 全部通过
 - [ ] commit 已提交
-- [ ] overview.md 已更新
-- [ ] code review 已完成
+- [x] overview.md 已更新
+- [x] code review 已完成

@@ -572,7 +572,18 @@ extension on DarticCompiler {
           'Type mismatch: declared $kind but initializer is $initLoc '
           'for ${decl.name}',
         );
-        _scope.declareWithReg(decl, kind, initReg);
+
+        // If the initializer is a VariableGet, the returned register belongs to
+        // an existing variable. We must allocate a fresh register and copy the
+        // value so the new variable does not alias the source. Without this, code
+        // like `int a = 1; int b = a; b = 5;` would corrupt `a`.
+        if (decl.initializer is ir.VariableGet) {
+          final binding = _scope.declare(decl, kind);
+          final loc = kind.isValue ? ResultLoc.value : ResultLoc.ref;
+          _emitMove(binding.reg, initReg, loc);
+        } else {
+          _scope.declareWithReg(decl, kind, initReg);
+        }
       }
     } else {
       // No initializer -- allocate a register and load a default value.
