@@ -8,141 +8,8 @@ extension on DarticCompiler {
   /// Infers the static DartType of an expression without StaticTypeContext.
   ///
   /// Handles common cases needed for Phase 1 int arithmetic specialization.
-  ir.DartType? _inferExprType(ir.Expression expr) {
-    if (expr is ir.VariableGet) return expr.promotedType ?? expr.variable.type;
-    if (expr is ir.IntLiteral) return _coreTypes.intNonNullableRawType;
-    if (expr is ir.DoubleLiteral) return _coreTypes.doubleNonNullableRawType;
-    if (expr is ir.BoolLiteral) return _coreTypes.boolNonNullableRawType;
-    if (expr is ir.StringLiteral) return _coreTypes.stringNonNullableRawType;
-    if (expr is ir.NullLiteral) return const ir.NullType();
-    if (expr is ir.ConstantExpression) return _inferConstantType(expr.constant);
-    if (expr is ir.Not) return _coreTypes.boolNonNullableRawType;
-    if (expr is ir.LogicalExpression) return _coreTypes.boolNonNullableRawType;
-    if (expr is ir.EqualsNull) return _coreTypes.boolNonNullableRawType;
-    if (expr is ir.EqualsCall) return _coreTypes.boolNonNullableRawType;
-    if (expr is ir.ConditionalExpression) return expr.staticType;
-    if (expr is ir.Let) return _inferExprType(expr.body);
-    if (expr is ir.BlockExpression) return _inferExprType(expr.value);
-    if (expr is ir.NullCheck) {
-      final operandType = _inferExprType(expr.operand);
-      // NullCheck produces the non-nullable version of the operand type.
-      if (operandType is ir.InterfaceType &&
-          operandType.nullability == ir.Nullability.nullable) {
-        return operandType.withDeclaredNullability(ir.Nullability.nonNullable);
-      }
-      return operandType;
-    }
-    if (expr is ir.StaticGet) {
-      final target = expr.targetReference.asMember;
-      if (target is ir.Field) return target.type;
-      if (target is ir.Procedure) return target.function.returnType;
-    }
-    if (expr is ir.IsExpression) return _coreTypes.boolNonNullableRawType;
-    if (expr is ir.AsExpression) return expr.type;
-    if (expr is ir.StaticInvocation) {
-      final retType = expr.target.function.returnType;
-      final typeParams = expr.target.function.typeParameters;
-      if (typeParams.isNotEmpty && expr.arguments.types.isNotEmpty) {
-        return type_algebra.Substitution.fromPairs(
-          typeParams, expr.arguments.types,
-        ).substituteType(retType);
-      }
-      return retType;
-    }
-    if (expr is ir.InstanceInvocation) {
-      return _inferInstanceInvocationType(expr);
-    }
-    if (expr is ir.ConstructorInvocation) {
-      return ir.InterfaceType(
-        expr.target.enclosingClass,
-        ir.Nullability.nonNullable,
-        expr.arguments.types,
-      );
-    }
-    if (expr is ir.ThisExpression) {
-      // ThisExpression type is the enclosing class. We can't determine it
-      // statically here, but it's always a ref type.
-      return null;
-    }
-    if (expr is ir.InstanceGet) {
-      // Use Kernel's pre-computed resultType which has type parameter
-      // substitutions applied (e.g., returns `int` instead of `T` for
-      // a field access on `Box<int>`).
-      return expr.resultType;
-    }
-    if (expr is ir.InstanceSet) return _inferExprType(expr.value);
-    if (expr is ir.SuperMethodInvocation) {
-      var retType = expr.interfaceTarget.function.returnType;
-      // Step 1: Substitute class-level type params from the subclass context.
-      final targetClass = expr.interfaceTarget.enclosingClass!;
-      if (_currentEnclosingClass != null &&
-          targetClass.typeParameters.isNotEmpty) {
-        final typeArgs =
-            _findSuperTypeArgs(_currentEnclosingClass!, targetClass);
-        if (typeArgs != null && typeArgs.isNotEmpty) {
-          retType = type_algebra.Substitution.fromPairs(
-            targetClass.typeParameters,
-            typeArgs,
-          ).substituteType(retType);
-        }
-      }
-      // Step 2: Substitute function-level type params if generic method.
-      final funcTypeParams = expr.interfaceTarget.function.typeParameters;
-      if (funcTypeParams.isNotEmpty && expr.arguments.types.isNotEmpty) {
-        retType = type_algebra.Substitution.fromPairs(
-          funcTypeParams,
-          expr.arguments.types,
-        ).substituteType(retType);
-      }
-      return retType;
-    }
-    if (expr is ir.SuperPropertyGet) {
-      final target = expr.interfaceTarget;
-      ir.DartType rawType;
-      if (target is ir.Field) {
-        rawType = target.type;
-      } else if (target is ir.Procedure) {
-        rawType = target.function.returnType;
-      } else {
-        return null;
-      }
-      final targetClass = target.enclosingClass;
-      if (_currentEnclosingClass != null &&
-          targetClass != null &&
-          targetClass.typeParameters.isNotEmpty) {
-        final typeArgs =
-            _findSuperTypeArgs(_currentEnclosingClass!, targetClass);
-        if (typeArgs != null && typeArgs.isNotEmpty) {
-          return type_algebra.Substitution.fromPairs(
-            targetClass.typeParameters,
-            typeArgs,
-          ).substituteType(rawType);
-        }
-      }
-      return rawType;
-    }
-    if (expr is ir.SuperPropertySet) return _inferExprType(expr.value);
-
-    // ── Calls with Kernel pre-computed functionType ──
-    // LocalFunctionInvocation: Kernel's functionType already includes generic
-    // substitution. E.g., T local<T>(T t) => t; local(0) → functionType = int Function(int)
-    if (expr is ir.LocalFunctionInvocation) {
-      return expr.functionType.returnType;
-    }
-    // FunctionInvocation: Kernel's functionType includes the substituted return type.
-    if (expr is ir.FunctionInvocation) {
-      return expr.functionType?.returnType;
-    }
-
-    // ── Assignment expressions — type follows the assigned value ──
-    if (expr is ir.VariableSet) return _inferExprType(expr.value);
-    if (expr is ir.StaticSet) return _inferExprType(expr.value);
-
-    // ── Never type ──
-    if (expr is ir.Throw) return const ir.NeverType.nonNullable();
-
-    return null;
-  }
+  ir.DartType? _inferExprType(ir.Expression expr) =>
+      expr.accept(_typeInferVisitor);
 
   /// Infers the return type of an [ir.InstanceInvocation].
   ///
@@ -260,6 +127,182 @@ extension on DarticCompiler {
     }
     return null;
   }
+}
+
+/// Visitor that infers the static [ir.DartType] of an expression.
+///
+/// Unlike the compilation visitor, `defaultExpression` returns `null`
+/// (unknown type) rather than throwing — callers handle null gracefully.
+class _ExprTypeInferVisitor
+    with ir.ExpressionVisitorDefaultMixin<ir.DartType?> {
+  _ExprTypeInferVisitor(this._compiler);
+  final DarticCompiler _compiler;
+
+  @override
+  ir.DartType? defaultExpression(ir.Expression node) => null;
+
+  @override
+  ir.DartType? visitVariableGet(ir.VariableGet node) =>
+      node.promotedType ?? node.variable.type;
+  @override
+  ir.DartType? visitIntLiteral(ir.IntLiteral node) =>
+      _compiler._coreTypes.intNonNullableRawType;
+  @override
+  ir.DartType? visitDoubleLiteral(ir.DoubleLiteral node) =>
+      _compiler._coreTypes.doubleNonNullableRawType;
+  @override
+  ir.DartType? visitBoolLiteral(ir.BoolLiteral node) =>
+      _compiler._coreTypes.boolNonNullableRawType;
+  @override
+  ir.DartType? visitStringLiteral(ir.StringLiteral node) =>
+      _compiler._coreTypes.stringNonNullableRawType;
+  @override
+  ir.DartType? visitNullLiteral(ir.NullLiteral node) =>
+      const ir.NullType();
+  @override
+  ir.DartType? visitConstantExpression(ir.ConstantExpression node) =>
+      _compiler._inferConstantType(node.constant);
+  @override
+  ir.DartType? visitNot(ir.Not node) =>
+      _compiler._coreTypes.boolNonNullableRawType;
+  @override
+  ir.DartType? visitLogicalExpression(ir.LogicalExpression node) =>
+      _compiler._coreTypes.boolNonNullableRawType;
+  @override
+  ir.DartType? visitEqualsNull(ir.EqualsNull node) =>
+      _compiler._coreTypes.boolNonNullableRawType;
+  @override
+  ir.DartType? visitEqualsCall(ir.EqualsCall node) =>
+      _compiler._coreTypes.boolNonNullableRawType;
+  @override
+  ir.DartType? visitConditionalExpression(ir.ConditionalExpression node) =>
+      node.staticType;
+  @override
+  ir.DartType? visitLet(ir.Let node) =>
+      _compiler._inferExprType(node.body);
+  @override
+  ir.DartType? visitBlockExpression(ir.BlockExpression node) =>
+      _compiler._inferExprType(node.value);
+  @override
+  ir.DartType? visitNullCheck(ir.NullCheck node) {
+    final operandType = _compiler._inferExprType(node.operand);
+    if (operandType is ir.InterfaceType &&
+        operandType.nullability == ir.Nullability.nullable) {
+      return operandType.withDeclaredNullability(ir.Nullability.nonNullable);
+    }
+    return operandType;
+  }
+
+  @override
+  ir.DartType? visitStaticGet(ir.StaticGet node) {
+    final target = node.targetReference.asMember;
+    if (target is ir.Field) return target.type;
+    if (target is ir.Procedure) return target.function.returnType;
+    return null;
+  }
+
+  @override
+  ir.DartType? visitIsExpression(ir.IsExpression node) =>
+      _compiler._coreTypes.boolNonNullableRawType;
+  @override
+  ir.DartType? visitAsExpression(ir.AsExpression node) => node.type;
+  @override
+  ir.DartType? visitStaticInvocation(ir.StaticInvocation node) {
+    final retType = node.target.function.returnType;
+    final typeParams = node.target.function.typeParameters;
+    if (typeParams.isNotEmpty && node.arguments.types.isNotEmpty) {
+      return type_algebra.Substitution.fromPairs(
+        typeParams, node.arguments.types,
+      ).substituteType(retType);
+    }
+    return retType;
+  }
+
+  @override
+  ir.DartType? visitInstanceInvocation(ir.InstanceInvocation node) =>
+      _compiler._inferInstanceInvocationType(node);
+  @override
+  ir.DartType? visitConstructorInvocation(ir.ConstructorInvocation node) =>
+      ir.InterfaceType(
+        node.target.enclosingClass,
+        ir.Nullability.nonNullable,
+        node.arguments.types,
+      );
+  @override
+  ir.DartType? visitThisExpression(ir.ThisExpression node) => null;
+  @override
+  ir.DartType? visitInstanceGet(ir.InstanceGet node) => node.resultType;
+  @override
+  ir.DartType? visitInstanceSet(ir.InstanceSet node) =>
+      _compiler._inferExprType(node.value);
+  @override
+  ir.DartType? visitSuperMethodInvocation(ir.SuperMethodInvocation node) {
+    var retType = node.interfaceTarget.function.returnType;
+    final targetClass = node.interfaceTarget.enclosingClass!;
+    if (_compiler._currentEnclosingClass != null &&
+        targetClass.typeParameters.isNotEmpty) {
+      final typeArgs = _compiler._findSuperTypeArgs(
+          _compiler._currentEnclosingClass!, targetClass);
+      if (typeArgs != null && typeArgs.isNotEmpty) {
+        retType = type_algebra.Substitution.fromPairs(
+          targetClass.typeParameters, typeArgs,
+        ).substituteType(retType);
+      }
+    }
+    final funcTypeParams = node.interfaceTarget.function.typeParameters;
+    if (funcTypeParams.isNotEmpty && node.arguments.types.isNotEmpty) {
+      retType = type_algebra.Substitution.fromPairs(
+        funcTypeParams, node.arguments.types,
+      ).substituteType(retType);
+    }
+    return retType;
+  }
+
+  @override
+  ir.DartType? visitSuperPropertyGet(ir.SuperPropertyGet node) {
+    final target = node.interfaceTarget;
+    ir.DartType rawType;
+    if (target is ir.Field) {
+      rawType = target.type;
+    } else if (target is ir.Procedure) {
+      rawType = target.function.returnType;
+    } else {
+      return null;
+    }
+    final targetClass = target.enclosingClass;
+    if (_compiler._currentEnclosingClass != null &&
+        targetClass != null &&
+        targetClass.typeParameters.isNotEmpty) {
+      final typeArgs = _compiler._findSuperTypeArgs(
+          _compiler._currentEnclosingClass!, targetClass);
+      if (typeArgs != null && typeArgs.isNotEmpty) {
+        return type_algebra.Substitution.fromPairs(
+          targetClass.typeParameters, typeArgs,
+        ).substituteType(rawType);
+      }
+    }
+    return rawType;
+  }
+
+  @override
+  ir.DartType? visitSuperPropertySet(ir.SuperPropertySet node) =>
+      _compiler._inferExprType(node.value);
+  @override
+  ir.DartType? visitLocalFunctionInvocation(
+          ir.LocalFunctionInvocation node) =>
+      node.functionType.returnType;
+  @override
+  ir.DartType? visitFunctionInvocation(ir.FunctionInvocation node) =>
+      node.functionType?.returnType;
+  @override
+  ir.DartType? visitVariableSet(ir.VariableSet node) =>
+      _compiler._inferExprType(node.value);
+  @override
+  ir.DartType? visitStaticSet(ir.StaticSet node) =>
+      _compiler._inferExprType(node.value);
+  @override
+  ir.DartType? visitThrow(ir.Throw node) =>
+      const ir.NeverType.nonNullable();
 }
 
 /// Maps int binary operator names to opcodes (arithmetic + comparison).

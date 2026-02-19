@@ -165,6 +165,8 @@ class DarticCompiler {
 
   late final _ExprCompileVisitor _exprVisitor = _ExprCompileVisitor(this);
   late final _StmtCompileVisitor _stmtVisitor = _StmtCompileVisitor(this);
+  late final _ExprTypeInferVisitor _typeInferVisitor =
+      _ExprTypeInferVisitor(this);
 
   /// Core type classIds — populated by [_registerCoreTypes].
   CoreTypeIds? _coreTypeIds;
