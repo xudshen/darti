@@ -104,7 +104,7 @@
 | Batch | 描述 | Task 数 | 状态 |
 |-------|------|---------|------|
 | [5.1](phase5/batch-5.1-bridge-infra.md) | Bridge 基础设施 + CALL_HOST 管线 | 5 | ✅ |
-| [5.2](phase5/batch-5.2-core-bridges.md) | dart:core 完整桥接 | 6 | |
+| [5.2](phase5/batch-5.2-core-bridges.md) | dart:core 完整桥接 | 6 | ✅ |
 | [5.3](phase5/batch-5.3-collections-strings.md) | 集合字面量、字符串插值与回调 | 4 | |
 | [5.4](phase5/batch-5.4-co19-harness-v3.md) | co19 Harness v3 — 验证与回归 | 4 | |
 

@@ -7,6 +7,18 @@
 library;
 
 import 'host_bindings.dart';
+import 'wrappers/bool_wrapper.dart';
+import 'wrappers/double_wrapper.dart';
+import 'wrappers/duration_wrapper.dart';
+import 'wrappers/error_wrappers.dart';
+import 'wrappers/int_wrapper.dart';
+import 'wrappers/iterable_wrapper.dart';
+import 'wrappers/list_wrapper.dart';
+import 'wrappers/map_wrapper.dart';
+import 'wrappers/num_wrapper.dart';
+import 'wrappers/object_wrapper.dart';
+import 'wrappers/set_wrapper.dart';
+import 'wrappers/string_wrapper.dart';
 
 /// Registers all dart:core host function bindings into [bindings].
 ///
@@ -21,6 +33,18 @@ abstract final class CoreBindings {
     _registerIntBindings(bindings);
     _registerStringBindings(bindings);
     _registerObjectBindings(bindings);
+    ObjectBindings.register(bindings);
+    IntBindings.register(bindings);
+    DoubleBindings.register(bindings);
+    NumBindings.register(bindings);
+    BoolBindings.register(bindings);
+    StringBindings.register(bindings);
+    ListBindings.register(bindings);
+    IterableBindings.register(bindings);
+    MapBindings.register(bindings);
+    SetBindings.register(bindings);
+    DurationBindings.register(bindings);
+    ErrorBindings.register(bindings);
   }
 
   // ── print ──

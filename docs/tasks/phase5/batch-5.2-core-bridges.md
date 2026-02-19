@@ -223,18 +223,43 @@ feat(bridge): add dart:core bridges for int, String, List, Map, Set, Duration, a
 
 ## 核心发现
 
-_(执行时填写：各类型方法覆盖度统计、值类型装拆箱的实际开销、高频方法 top 20 列表、需要延迟到 5.3.3 的回调方法数量等)_
+**方法覆盖度统计：**
+
+| 类型 | 注册绑定数 | 覆盖范围 |
+|------|-----------|---------|
+| Object | 5 | toString, hashCode, runtimeType, noSuchMethod, identical |
+| Type | 2 | toString, hashCode |
+| int | ~25 | isEven, isOdd, abs, bitLength, sign, toRadixString, gcd, modPow, parse, tryParse, ceil/floor/round/truncate... |
+| num | ~18 | abs, ceil, floor, round, truncate, toInt, toDouble, sign, isFinite/Infinite/NaN/Negative, clamp, compareTo, parse, tryParse... |
+| double | ~28 | toString, ceil/floor/round/truncate, toInt, abs, sign, is*, ceilToDouble/floorToDouble/roundToDouble/truncateToDouble, parse, tryParse, 常量... |
+| bool | 2 | toString, hashCode |
+| String | 28 | isEmpty/isNotEmpty, toLowerCase/toUpperCase, trim*, substring, indexOf, contains, startsWith/endsWith, replaceAll/First, split, compareTo, codeUnitAt, padLeft/Right, operator+/*/[], fromCharCode/Codes |
+| List | ~40+ | length, isEmpty/isNotEmpty, first/last, reversed, []/[]=, add/addAll/insert, remove*/clear, contains, indexOf, sublist, join, toList/toSet, filled/empty/generate/of/from, + _GrowableList internal bindings |
+| Iterable | ~14 | length, isEmpty/isNotEmpty, first/last, toList/toSet, contains, join, elementAt, take, skip |
+| Map | ~15 | length, isEmpty/isNotEmpty, keys/values/entries, []/[]=, containsKey/Value, remove, addAll, clear, putIfAbsent |
+| Set | ~18 | length, isEmpty/isNotEmpty, first/last, contains, add/addAll, remove/removeAll/retainAll, union/intersection/difference, toList, clear |
+| Duration | ~25 | inDays/Hours/Minutes/Seconds/Milliseconds/Microseconds, isNegative, abs, compareTo, toString, operators(+/-/*/~/</>/<=/>=/unary-), 构造器#6, zero, 常量 |
+| Error 系列 | ~17 | ArgumentError, RangeError, StateError, UnsupportedError, FormatException, Error, Exception, ConcurrentModificationError, StackOverflowError |
+
+**需要延迟到 5.3.3 的回调方法（约 15+）：** List.sort(compare), List.forEach, List.map/where/any/every/reduce/fold, List.removeWhere/retainWhere, Map.forEach/map/putIfAbsent/update, Set.removeWhere/retainWhere
+
+**关键发现：**
+1. `int.parse` 在 Kernel 中有 3 个形参（source, radix, onError），非预期的 2 个
+2. Dart SDK 前端将 List 字面量降级为 `_GrowableList._literalN()` 内部工厂调用，需要同时注册内部绑定名
+3. operator[] 的 Kernel name.text 是 `[]`（不是 `[`）
+4. Duration 构造器的命名参数在 CALL_HOST 中无法传递参数名，是已知的设计局限
+5. Map/Set 字面量和 Duration 常量需要编译器支持 MapLiteral/SetLiteral/InstanceConstant，当前通过 HostBindings.invoke() 单元测试验证
 
 ## Batch 完成检查
 
-- [ ] 5.2.1 Object + Type + Null Bridge
-- [ ] 5.2.2 int + num Bridge
-- [ ] 5.2.3 double Bridge
-- [ ] 5.2.4 bool + String Bridge
-- [ ] 5.2.5 List + Iterable Bridge
-- [ ] 5.2.6 Map + Set + Duration + 其他常用类 Bridge
-- [ ] `fvm dart analyze` 零警告
-- [ ] `fvm dart test` 全部通过
+- [x] 5.2.1 Object + Type + Null Bridge
+- [x] 5.2.2 int + num Bridge
+- [x] 5.2.3 double Bridge
+- [x] 5.2.4 bool + String Bridge
+- [x] 5.2.5 List + Iterable Bridge
+- [x] 5.2.6 Map + Set + Duration + 其他常用类 Bridge
+- [x] `fvm dart analyze` 零警告
+- [x] `fvm dart test` 全部通过 (1758 tests)
 - [ ] commit 已提交
 - [ ] overview.md 已更新
 - [ ] code review 已完成
