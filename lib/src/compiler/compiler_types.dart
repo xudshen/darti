@@ -97,8 +97,28 @@ extension on DarticCompiler {
     }
     if (expr is ir.SuperPropertyGet) {
       final target = expr.interfaceTarget;
-      if (target is ir.Field) return target.type;
-      if (target is ir.Procedure) return target.function.returnType;
+      ir.DartType rawType;
+      if (target is ir.Field) {
+        rawType = target.type;
+      } else if (target is ir.Procedure) {
+        rawType = target.function.returnType;
+      } else {
+        return null;
+      }
+      final targetClass = target.enclosingClass;
+      if (_currentEnclosingClass != null &&
+          targetClass != null &&
+          targetClass.typeParameters.isNotEmpty) {
+        final typeArgs =
+            _findSuperTypeArgs(_currentEnclosingClass!, targetClass);
+        if (typeArgs != null && typeArgs.isNotEmpty) {
+          return type_algebra.Substitution.fromPairs(
+            targetClass.typeParameters,
+            typeArgs,
+          ).substituteType(rawType);
+        }
+      }
+      return rawType;
     }
     if (expr is ir.SuperPropertySet) return _inferExprType(expr.value);
     return null;

@@ -396,6 +396,44 @@ int main() {
       expect(result, 42);
     });
 
+    test('super property get on generic parent: arithmetic on field value',
+        () async {
+      final result = await compileAndRun('''
+class Box<T> {
+  T value;
+  Box(this.value);
+}
+class IntBox extends Box<int> {
+  IntBox(int v) : super(v);
+  int doubled() => super.value + super.value;
+}
+int main() {
+  IntBox ib = IntBox(21);
+  return ib.doubled();
+}
+''');
+      expect(result, 42);
+    });
+
+    test('super getter on generic parent returns substituted type', () async {
+      final result = await compileAndRun('''
+class Box<T> {
+  T _val;
+  Box(this._val);
+  T get val => _val;
+}
+class IntBox extends Box<int> {
+  IntBox(int v) : super(v);
+  int inc() => super.val + 1;
+}
+int main() {
+  IntBox ib = IntBox(9);
+  return ib.inc();
+}
+''');
+      expect(result, 10);
+    });
+
     test('is check on non-generic child of generic parent', () async {
       final result = await compileAndRun('''
 class Box<T> {
