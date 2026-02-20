@@ -3,18 +3,18 @@
 /// When the interpreter encounters a dynamic property access or method call
 /// on a non-DarticObject receiver (e.g., `dynamic x = [1,2]; x.length`),
 /// the [HostDispatchRegistry] resolves the receiver's type to a dispatcher,
-/// which routes by property/method name through the existing [HostBindings].
+/// which routes by property/method name through the existing [HostFunctionRegistry].
 ///
 /// See: docs/design/04-interop.md "HostClassWrapper"
 library;
 
-import 'host_bindings.dart';
+import 'host_function_registry.dart';
 
 /// Abstract base for host class property/method dispatch.
 ///
 /// Each implementation handles one or more host types. Phase 7's
 /// BridgeGenerator will produce hardcoded-switch subclasses; the current
-/// [BindingLookupDispatcher] uses name-based HostBindings lookup.
+/// [BindingLookupDispatcher] uses name-based HostFunctionRegistry lookup.
 abstract class HostDispatcher {
   /// Gets a named property from [host] (getter dispatch).
   Object? getProperty(Object host, String name);
@@ -23,15 +23,15 @@ abstract class HostDispatcher {
   Object? invokeMethod(Object host, String name, List<Object?> args);
 }
 
-/// [HostDispatcher] backed by HostBindings name lookup.
+/// [HostDispatcher] backed by HostFunctionRegistry name lookup.
 ///
 /// Constructs binding keys from a list of class name prefixes and looks up
-/// methods/getters in the existing HostBindings registry. This avoids
+/// methods/getters in the existing HostFunctionRegistry registry. This avoids
 /// duplicating dispatch logic that's already in the binding registrations.
 class BindingLookupDispatcher implements HostDispatcher {
-  BindingLookupDispatcher(this._bindings, this._prefixes);
+  BindingLookupDispatcher(this._registry, this._prefixes);
 
-  final HostBindings _bindings;
+  final HostFunctionRegistry _registry;
 
   /// Binding key prefixes to try, e.g. `['dart:core::List::', 'dart:core::_GrowableList::']`.
   /// Tried in order; first match wins.
@@ -43,8 +43,8 @@ class BindingLookupDispatcher implements HostDispatcher {
   @override
   Object? getProperty(Object host, String name) {
     for (final prefix in _prefixes) {
-      final id = _bindings.lookupByName('$prefix$name#0');
-      if (id >= 0) return _bindings.invoke(id, [host]);
+      final id = _registry.lookupByName('$prefix$name#0');
+      if (id >= 0) return _registry.invoke(id, [host]);
     }
     return notFound;
   }
@@ -56,8 +56,8 @@ class BindingLookupDispatcher implements HostDispatcher {
     // with 1 arg). The binding functions already guard missing optionals.
     for (final prefix in _prefixes) {
       for (var arity = args.length; arity <= args.length + 3; arity++) {
-        final id = _bindings.lookupByName('$prefix$name#$arity');
-        if (id >= 0) return _bindings.invoke(id, [host, ...args]);
+        final id = _registry.lookupByName('$prefix$name#$arity');
+        if (id >= 0) return _registry.invoke(id, [host, ...args]);
       }
     }
     return notFound;
@@ -66,7 +66,7 @@ class BindingLookupDispatcher implements HostDispatcher {
 
 /// [HostDispatcher] for [Invocation] objects passed to noSuchMethod.
 ///
-/// Dispatches property access directly without going through HostBindings,
+/// Dispatches property access directly without going through HostFunctionRegistry,
 /// since Invocation is a core Dart abstract class with known properties.
 class _InvocationDispatcher implements HostDispatcher {
   @override
@@ -94,39 +94,39 @@ class _InvocationDispatcher implements HostDispatcher {
 ///
 /// Uses `is` checks for reliable subtype matching (e.g., `_GrowableList is List`).
 class HostDispatchRegistry {
-  HostDispatchRegistry(HostBindings bindings) {
-    _list = BindingLookupDispatcher(bindings, [
+  HostDispatchRegistry(HostFunctionRegistry registry) {
+    _list = BindingLookupDispatcher(registry, [
       'dart:core::List::',
       'dart:core::_GrowableList::',
       'dart:core::Iterable::',
     ]);
-    _map = BindingLookupDispatcher(bindings, [
+    _map = BindingLookupDispatcher(registry, [
       'dart:core::Map::',
       'dart:collection::LinkedHashMap::',
     ]);
-    _set = BindingLookupDispatcher(bindings, [
+    _set = BindingLookupDispatcher(registry, [
       'dart:core::Set::',
       'dart:_compact_hash::_Set::',
       'dart:core::Iterable::',
     ]);
-    _string = BindingLookupDispatcher(bindings, [
+    _string = BindingLookupDispatcher(registry, [
       'dart:core::String::',
     ]);
-    _int = BindingLookupDispatcher(bindings, [
+    _int = BindingLookupDispatcher(registry, [
       'dart:core::int::',
       'dart:core::num::',
     ]);
-    _double = BindingLookupDispatcher(bindings, [
+    _double = BindingLookupDispatcher(registry, [
       'dart:core::double::',
       'dart:core::num::',
     ]);
-    _bool = BindingLookupDispatcher(bindings, [
+    _bool = BindingLookupDispatcher(registry, [
       'dart:core::bool::',
     ]);
-    _iterable = BindingLookupDispatcher(bindings, [
+    _iterable = BindingLookupDispatcher(registry, [
       'dart:core::Iterable::',
     ]);
-    _duration = BindingLookupDispatcher(bindings, [
+    _duration = BindingLookupDispatcher(registry, [
       'dart:core::Duration::',
     ]);
   }

@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-import 'package:dartic/src/bridge/host_bindings.dart';
+import 'package:dartic/src/bridge/host_function_registry.dart';
 import 'package:dartic/src/bytecode/constant_pool.dart';
 import 'package:dartic/src/bytecode/encoding.dart';
 import 'package:dartic/src/bytecode/module.dart';
@@ -10,10 +10,10 @@ import 'package:test/test.dart';
 
 void main() {
   group('CALL_HOST', () {
-    late HostBindings bindings;
+    late HostFunctionRegistry registry;
 
     setUp(() {
-      bindings = HostBindings();
+      registry = HostFunctionRegistry();
     });
 
     /// Helper to build a module with binding names and execute it.
@@ -38,16 +38,16 @@ void main() {
         entryFuncId: 0,
         bindingNames: bindingNames,
       );
-      final interp = DarticInterpreter(hostBindings: bindings);
+      final interp = DarticInterpreter(hostFunctionRegistry: registry);
       interp.execute(module);
       return interp.entryResult;
     }
 
     test('no-arg host function returns value via ref stack', () {
       // Register a no-arg function that returns 42.
-      bindings.register('test::noarg#0', (args) => 42);
+      registry.register('test::noarg#0', (args) => 42);
 
-      // CALL_HOST A=0, Bx=0  →  refStack[0] = hostBindings.invoke(0, [])
+      // CALL_HOST A=0, Bx=0  →  refStack[0] = hostFunctionRegistry.invoke(0, [])
       // HALT A=0, B=1(ref)
       final code = Uint32List.fromList([
         encodeABx(Op.callHost, 0, 0), // callHost r0, binding#0
@@ -63,7 +63,7 @@ void main() {
 
     test('single-arg host function (int arg via BOX_INT)', () {
       // Register: (args) => args[0] + 1
-      bindings.register('test::inc#1', (args) => (args[0] as int) + 1);
+      registry.register('test::inc#1', (args) => (args[0] as int) + 1);
 
       // LOAD_INT v0 = 41
       // BOX_INT r0 = v0
@@ -90,7 +90,7 @@ void main() {
 
     test('multi-arg host function (2 args)', () {
       // Register: (args) => args[0] + args[1]
-      bindings.register('test::add#2', (args) {
+      registry.register('test::add#2', (args) {
         return (args[0] as int) + (args[1] as int);
       });
 
@@ -111,7 +111,7 @@ void main() {
     });
 
     test('host function exception is caught by exception handler', () {
-      bindings.register('test::throws#0', (args) {
+      registry.register('test::throws#0', (args) {
         throw StateError('host error');
       });
 
@@ -151,13 +151,13 @@ void main() {
         bindingNames: [BindingEntry(name: 'test::throws#0', argCount: 0)],
       );
 
-      final interp = DarticInterpreter(hostBindings: bindings);
+      final interp = DarticInterpreter(hostFunctionRegistry: registry);
       interp.execute(module);
       expect(interp.entryResult, equals(99));
     });
 
     test('CALL_HOST consumes 1 fuel', () {
-      bindings.register('test::noop#0', (args) => null);
+      registry.register('test::noop#0', (args) => null);
 
       // Execute with fuel=2: one for callHost, one for halt.
       final code = Uint32List.fromList([
@@ -181,13 +181,13 @@ void main() {
       );
 
       // With fuel = 2, both instructions should execute fine.
-      final interp = DarticInterpreter(hostBindings: bindings, fuelBudget: 2);
+      final interp = DarticInterpreter(hostFunctionRegistry: registry, fuelBudget: 2);
       interp.execute(module);
       // If fuel were consumed as >1 per CALL_HOST, this would fail.
     });
 
     test('binding table index out of bounds throws DarticError', () {
-      // No bindings registered, but CALL_HOST references binding#0.
+      // No registry registered, but CALL_HOST references binding#0.
       final code = Uint32List.fromList([
         encodeABx(Op.callHost, 0, 5), // binding#5 doesn't exist
         encodeABC(Op.halt, 0, 0, 0),
@@ -203,7 +203,7 @@ void main() {
     });
 
     test('host function returning String (ref type)', () {
-      bindings.register('test::greet#0', (args) => 'hello');
+      registry.register('test::greet#0', (args) => 'hello');
 
       final code = Uint32List.fromList([
         encodeABx(Op.callHost, 0, 0),
@@ -218,7 +218,7 @@ void main() {
     });
 
     test('host function returning null', () {
-      bindings.register('test::nullfn#0', (args) => null);
+      registry.register('test::nullfn#0', (args) => null);
 
       final code = Uint32List.fromList([
         encodeABx(Op.callHost, 0, 0),
@@ -232,8 +232,8 @@ void main() {
       expect(result, isNull);
     });
 
-    test('works without hostBindings (no CALL_HOST instructions)', () {
-      // Modules without CALL_HOST should work even without hostBindings.
+    test('works without hostFunctionRegistry (no CALL_HOST instructions)', () {
+      // Modules without CALL_HOST should work even without hostFunctionRegistry.
       final code = Uint32List.fromList([
         encodeAsBx(Op.loadInt, 0, 7),
         encodeABC(Op.halt, 0, 3, 0),

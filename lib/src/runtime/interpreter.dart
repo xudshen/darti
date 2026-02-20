@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
 import '../bridge/callback_proxy.dart';
-import '../bridge/host_bindings.dart';
+import '../bridge/host_function_registry.dart';
 import '../bridge/dynamic_dispatch.dart';
 import '../bytecode/module.dart';
 import '../bytecode/opcodes.dart';
@@ -31,7 +31,7 @@ class DarticInterpreter {
     RefStack? refStack,
     CallStack? callStack,
     this.typeRegistry,
-    this.hostBindings,
+    this.hostFunctionRegistry,
     this.fuelBudget = defaultFuelBudget,
   })  : valueStack = valueStack ?? ValueStack(),
         refStack = refStack ?? RefStack(),
@@ -48,7 +48,7 @@ class DarticInterpreter {
   final TypeRegistry? typeRegistry;
 
   /// Host function bindings for CALL_HOST. If null, CALL_HOST throws.
-  final HostBindings? hostBindings;
+  final HostFunctionRegistry? hostFunctionRegistry;
 
   /// Global variable table — initialized per-module in [execute].
   DarticGlobalTable? _globalTable;
@@ -80,14 +80,14 @@ class DarticInterpreter {
   /// Return value from a callback that exited via HOST_BOUNDARY RETURN.
   Object? _callbackResult;
 
-  /// Runtime-resolved binding ID map: local index → HostBindings runtime ID.
+  /// Runtime-resolved binding ID map: local index → HostFunctionRegistry runtime ID.
   ///
-  /// Filled during [execute] via `HostBindings.resolveBindingTable`.
+  /// Filled during [execute] via `HostFunctionRegistry.resolveBindingTable`.
   /// Read by CALL_HOST in the dispatch loop.
   List<int> _bindingIdMap = const [];
 
   /// Dynamic dispatch registry for host (VM-native) objects.
-  /// Initialized per-execution from [hostBindings].
+  /// Initialized per-execution from [hostFunctionRegistry].
   HostDispatchRegistry? _hostClassRegistry;
 
   /// Executes [module] starting from its entry function.
@@ -107,8 +107,8 @@ class DarticInterpreter {
     _resolveBindings(module);
 
     // Initialize dynamic dispatch registry for host objects.
-    if (hostBindings != null) {
-      _hostClassRegistry = HostDispatchRegistry(hostBindings!);
+    if (hostFunctionRegistry != null) {
+      _hostClassRegistry = HostDispatchRegistry(hostFunctionRegistry!);
     }
 
     // Set up global table and run initializers.
@@ -158,17 +158,17 @@ class DarticInterpreter {
   /// Returns the active TypeRegistry (user-provided or auto-provisioned).
   TypeRegistry? get _activeTypeRegistry => _effectiveTypeRegistry ?? typeRegistry;
 
-  /// Resolves the module's binding name table using [hostBindings].
+  /// Resolves the module's binding name table using [hostFunctionRegistry].
   ///
   /// Maps each symbolic name in [module.bindingNames] to a runtime ID via
-  /// [HostBindings.resolveBindingTable]. Unresolved names get -1.
+  /// [HostFunctionRegistry.resolveBindingTable]. Unresolved names get -1.
   void _resolveBindings(DarticModule module) {
     if (module.bindingNames.isEmpty) return;
-    final hb = hostBindings;
+    final hb = hostFunctionRegistry;
     if (hb == null) {
       throw DarticError(
         'Module has ${module.bindingNames.length} host bindings '
-        'but no HostBindings provided',
+        'but no HostFunctionRegistry provided',
       );
     }
     _bindingIdMap = hb.resolveBindingTable(
@@ -1052,7 +1052,7 @@ class DarticInterpreter {
 
           // Invoke the host function and write result to refStack[A].
           try {
-            final hostResult = hostBindings!.invoke(runtimeId, hostArgs);
+            final hostResult = hostFunctionRegistry!.invoke(runtimeId, hostArgs);
             rs.write(rBase + chA, hostResult);
           } on Object catch (e, st) {
             // Host function threw — route through the exception handler.

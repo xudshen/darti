@@ -1,5 +1,5 @@
 import 'package:dartic/src/bridge/core_bindings.dart';
-import 'package:dartic/src/bridge/host_bindings.dart';
+import 'package:dartic/src/bridge/host_function_registry.dart';
 import 'package:dartic/src/runtime/interpreter.dart';
 import 'package:test/test.dart';
 
@@ -7,9 +7,9 @@ import '../helpers/compile_helper.dart';
 
 Future<Object?> _run(String source) async {
   final module = await compileDart(source);
-  final bindings = HostBindings();
-  CoreBindings.registerAll(bindings);
-  final interp = DarticInterpreter(hostBindings: bindings);
+  final registry = HostFunctionRegistry();
+  CoreBindings.registerAll(registry);
+  final interp = DarticInterpreter(hostFunctionRegistry: registry);
   interp.execute(module);
   return interp.entryResult;
 }
@@ -17,9 +17,9 @@ Future<Object?> _run(String source) async {
 Future<(Object?, List<String>)> _runCapturePrint(String source) async {
   final printLog = <String>[];
   final module = await compileDart(source);
-  final bindings = HostBindings();
-  CoreBindings.registerAll(bindings, printFn: (v) => printLog.add('$v'));
-  final interp = DarticInterpreter(hostBindings: bindings);
+  final registry = HostFunctionRegistry();
+  CoreBindings.registerAll(registry, printFn: (v) => printLog.add('$v'));
+  final interp = DarticInterpreter(hostFunctionRegistry: registry);
   interp.execute(module);
   return (interp.entryResult, printLog);
 }

@@ -1,5 +1,5 @@
 import 'package:dartic/src/bridge/core_bindings.dart';
-import 'package:dartic/src/bridge/host_bindings.dart';
+import 'package:dartic/src/bridge/host_function_registry.dart';
 import 'package:dartic/src/runtime/interpreter.dart';
 import 'package:test/test.dart';
 
@@ -8,9 +8,9 @@ import '../helpers/compile_helper.dart';
 /// Compiles Dart source and executes with CoreBindings host functions.
 Future<Object?> _compileAndRunWithHost(String source) async {
   final module = await compileDart(source);
-  final bindings = HostBindings();
-  CoreBindings.registerAll(bindings);
-  final interp = DarticInterpreter(hostBindings: bindings);
+  final registry = HostFunctionRegistry();
+  CoreBindings.registerAll(registry);
+  final interp = DarticInterpreter(hostFunctionRegistry: registry);
   interp.execute(module);
   return interp.entryResult;
 }
@@ -162,9 +162,9 @@ Object main() {
   return obj.doesNotExist();
 }
 ''');
-      final bindings = HostBindings();
-      CoreBindings.registerAll(bindings);
-      final interp = DarticInterpreter(hostBindings: bindings);
+      final registry = HostFunctionRegistry();
+      CoreBindings.registerAll(registry);
+      final interp = DarticInterpreter(hostFunctionRegistry: registry);
       expect(
         () => interp.execute(module),
         throwsA(isA<NoSuchMethodError>()),
@@ -179,9 +179,9 @@ Object main() {
   return obj.nope;
 }
 ''');
-      final bindings = HostBindings();
-      CoreBindings.registerAll(bindings);
-      final interp = DarticInterpreter(hostBindings: bindings);
+      final registry = HostFunctionRegistry();
+      CoreBindings.registerAll(registry);
+      final interp = DarticInterpreter(hostFunctionRegistry: registry);
       expect(
         () => interp.execute(module),
         throwsA(isA<NoSuchMethodError>()),

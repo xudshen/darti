@@ -1,16 +1,16 @@
 import 'package:dartic/src/bridge/core_bindings.dart';
-import 'package:dartic/src/bridge/host_bindings.dart';
+import 'package:dartic/src/bridge/host_function_registry.dart';
 import 'package:dartic/src/bridge/dynamic_dispatch.dart';
 import 'package:test/test.dart';
 
 void main() {
-  late HostBindings bindings;
+  late HostFunctionRegistry fnRegistry;
   late HostDispatchRegistry registry;
 
   setUp(() {
-    bindings = HostBindings();
-    CoreBindings.registerAll(bindings);
-    registry = HostDispatchRegistry(bindings);
+    fnRegistry = HostFunctionRegistry();
+    CoreBindings.registerAll(fnRegistry);
+    registry = HostDispatchRegistry(fnRegistry);
   });
 
   group('HostDispatchRegistry.lookup', () {

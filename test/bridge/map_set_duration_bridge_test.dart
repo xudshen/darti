@@ -1,50 +1,50 @@
 import 'package:dartic/src/bridge/core_bindings.dart';
-import 'package:dartic/src/bridge/host_bindings.dart';
+import 'package:dartic/src/bridge/host_function_registry.dart';
 import 'package:test/test.dart';
 
 void main() {
-  late HostBindings bindings;
+  late HostFunctionRegistry registry;
 
   setUp(() {
-    bindings = HostBindings();
-    CoreBindings.registerAll(bindings);
+    registry = HostFunctionRegistry();
+    CoreBindings.registerAll(registry);
   });
 
   // ── Helper to invoke a binding by symbolic name ──
   Object? invoke(String name, List<Object?> args) {
-    final id = bindings.lookupByName(name);
+    final id = registry.lookupByName(name);
     if (id == -1) fail('Binding not found: $name');
-    return bindings.invoke(id, args);
+    return registry.invoke(id, args);
   }
 
   group('MapBindings registration', () {
-    test('Map bindings are registered', () {
-      expect(bindings.lookupByName('dart:core::Map::length#0'),
+    test('Map registry are registered', () {
+      expect(registry.lookupByName('dart:core::Map::length#0'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Map::isEmpty#0'),
+      expect(registry.lookupByName('dart:core::Map::isEmpty#0'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Map::isNotEmpty#0'),
-          isNot(equals(-1)));
-      expect(
-          bindings.lookupByName('dart:core::Map::keys#0'), isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Map::values#0'),
-          isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Map::entries#0'),
-          isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Map::[]#1'), isNot(equals(-1)));
-      expect(
-          bindings.lookupByName('dart:core::Map::[]=#2'), isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Map::containsKey#1'),
-          isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Map::containsValue#1'),
-          isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Map::remove#1'),
-          isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Map::addAll#1'),
+      expect(registry.lookupByName('dart:core::Map::isNotEmpty#0'),
           isNot(equals(-1)));
       expect(
-          bindings.lookupByName('dart:core::Map::clear#0'), isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Map::toString#0'),
+          registry.lookupByName('dart:core::Map::keys#0'), isNot(equals(-1)));
+      expect(registry.lookupByName('dart:core::Map::values#0'),
+          isNot(equals(-1)));
+      expect(registry.lookupByName('dart:core::Map::entries#0'),
+          isNot(equals(-1)));
+      expect(registry.lookupByName('dart:core::Map::[]#1'), isNot(equals(-1)));
+      expect(
+          registry.lookupByName('dart:core::Map::[]=#2'), isNot(equals(-1)));
+      expect(registry.lookupByName('dart:core::Map::containsKey#1'),
+          isNot(equals(-1)));
+      expect(registry.lookupByName('dart:core::Map::containsValue#1'),
+          isNot(equals(-1)));
+      expect(registry.lookupByName('dart:core::Map::remove#1'),
+          isNot(equals(-1)));
+      expect(registry.lookupByName('dart:core::Map::addAll#1'),
+          isNot(equals(-1)));
+      expect(
+          registry.lookupByName('dart:core::Map::clear#0'), isNot(equals(-1)));
+      expect(registry.lookupByName('dart:core::Map::toString#0'),
           isNot(equals(-1)));
     });
   });
@@ -141,27 +141,27 @@ void main() {
   });
 
   group('SetBindings registration', () {
-    test('Set bindings are registered', () {
-      expect(bindings.lookupByName('dart:core::Set::length#0'),
+    test('Set registry are registered', () {
+      expect(registry.lookupByName('dart:core::Set::length#0'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Set::isEmpty#0'),
+      expect(registry.lookupByName('dart:core::Set::isEmpty#0'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Set::isNotEmpty#0'),
+      expect(registry.lookupByName('dart:core::Set::isNotEmpty#0'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Set::contains#1'),
-          isNot(equals(-1)));
-      expect(
-          bindings.lookupByName('dart:core::Set::add#1'), isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Set::remove#1'),
+      expect(registry.lookupByName('dart:core::Set::contains#1'),
           isNot(equals(-1)));
       expect(
-          bindings.lookupByName('dart:core::Set::union#1'), isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Set::intersection#1'),
-          isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Set::difference#1'),
+          registry.lookupByName('dart:core::Set::add#1'), isNot(equals(-1)));
+      expect(registry.lookupByName('dart:core::Set::remove#1'),
           isNot(equals(-1)));
       expect(
-          bindings.lookupByName('dart:core::Set::clear#0'), isNot(equals(-1)));
+          registry.lookupByName('dart:core::Set::union#1'), isNot(equals(-1)));
+      expect(registry.lookupByName('dart:core::Set::intersection#1'),
+          isNot(equals(-1)));
+      expect(registry.lookupByName('dart:core::Set::difference#1'),
+          isNot(equals(-1)));
+      expect(
+          registry.lookupByName('dart:core::Set::clear#0'), isNot(equals(-1)));
     });
   });
 
@@ -241,44 +241,44 @@ void main() {
   });
 
   group('DurationBindings registration', () {
-    test('Duration bindings are registered', () {
-      expect(bindings.lookupByName('dart:core::Duration::inDays#0'),
+    test('Duration registry are registered', () {
+      expect(registry.lookupByName('dart:core::Duration::inDays#0'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Duration::inHours#0'),
+      expect(registry.lookupByName('dart:core::Duration::inHours#0'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Duration::inMinutes#0'),
+      expect(registry.lookupByName('dart:core::Duration::inMinutes#0'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Duration::inSeconds#0'),
+      expect(registry.lookupByName('dart:core::Duration::inSeconds#0'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Duration::inMilliseconds#0'),
+      expect(registry.lookupByName('dart:core::Duration::inMilliseconds#0'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Duration::inMicroseconds#0'),
+      expect(registry.lookupByName('dart:core::Duration::inMicroseconds#0'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Duration::isNegative#0'),
+      expect(registry.lookupByName('dart:core::Duration::isNegative#0'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Duration::abs#0'),
+      expect(registry.lookupByName('dart:core::Duration::abs#0'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Duration::+#1'),
+      expect(registry.lookupByName('dart:core::Duration::+#1'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Duration::-#1'),
+      expect(registry.lookupByName('dart:core::Duration::-#1'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Duration::*#1'),
+      expect(registry.lookupByName('dart:core::Duration::*#1'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Duration::~/#1'),
+      expect(registry.lookupByName('dart:core::Duration::~/#1'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Duration::<#1'),
+      expect(registry.lookupByName('dart:core::Duration::<#1'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Duration::>#1'),
+      expect(registry.lookupByName('dart:core::Duration::>#1'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Duration::<=#1'),
+      expect(registry.lookupByName('dart:core::Duration::<=#1'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Duration::>=#1'),
+      expect(registry.lookupByName('dart:core::Duration::>=#1'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Duration::unary-#0'),
+      expect(registry.lookupByName('dart:core::Duration::unary-#0'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Duration::#6'),
+      expect(registry.lookupByName('dart:core::Duration::#6'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Duration::zero#0'),
+      expect(registry.lookupByName('dart:core::Duration::zero#0'),
           isNot(equals(-1)));
     });
   });
@@ -407,32 +407,32 @@ void main() {
   });
 
   group('ErrorBindings registration', () {
-    test('Error bindings are registered', () {
-      expect(bindings.lookupByName('dart:core::ArgumentError::#1'),
+    test('Error registry are registered', () {
+      expect(registry.lookupByName('dart:core::ArgumentError::#1'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::ArgumentError::message#0'),
+      expect(registry.lookupByName('dart:core::ArgumentError::message#0'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::ArgumentError::toString#0'),
+      expect(registry.lookupByName('dart:core::ArgumentError::toString#0'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::RangeError::#1'),
+      expect(registry.lookupByName('dart:core::RangeError::#1'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::RangeError::range#5'),
+      expect(registry.lookupByName('dart:core::RangeError::range#5'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::StateError::#1'),
+      expect(registry.lookupByName('dart:core::StateError::#1'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::UnsupportedError::#1'),
+      expect(registry.lookupByName('dart:core::UnsupportedError::#1'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::FormatException::#3'),
+      expect(registry.lookupByName('dart:core::FormatException::#3'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Error::toString#0'),
+      expect(registry.lookupByName('dart:core::Error::toString#0'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Exception::toString#0'),
+      expect(registry.lookupByName('dart:core::Exception::toString#0'),
           isNot(equals(-1)));
       expect(
-          bindings
+          registry
               .lookupByName('dart:core::ConcurrentModificationError::#1'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::StackOverflowError::#0'),
+      expect(registry.lookupByName('dart:core::StackOverflowError::#0'),
           isNot(equals(-1)));
     });
   });
