@@ -1,8 +1,6 @@
 /// Registers `Set` host bindings for the CALL_HOST pipeline.
 ///
-/// Covers Set instance methods, getters, and set operations.
-/// Callback-based methods (where, map, etc.) are deferred to 5.3.3
-/// when DarticCallbackProxy is ready.
+/// Covers Set instance methods, getters, set operations, and callback methods.
 ///
 /// See: docs/design/04-interop.md
 library;
@@ -99,6 +97,124 @@ abstract final class SetBindings {
     });
     registry.register('dart:core::Set::iterator#0', (args) {
       return (args[0] as Set).iterator;
+    });
+
+    // ── Callback methods ──
+
+    registry.register('dart:core::Set::forEach#1', (args) {
+      final fn = args[1] as Function;
+      for (final e in args[0] as Set) {
+        fn(e);
+      }
+      return null;
+    });
+    registry.register('dart:core::Set::map#1', (args) {
+      final fn = args[1] as Function;
+      return (args[0] as Set).map((e) => fn(e));
+    });
+    registry.register('dart:core::Set::where#1', (args) {
+      final fn = args[1] as Function;
+      return (args[0] as Set).where((e) => fn(e) as bool);
+    });
+    registry.register('dart:core::Set::any#1', (args) {
+      final fn = args[1] as Function;
+      return (args[0] as Set).any((e) => fn(e) as bool);
+    });
+    registry.register('dart:core::Set::every#1', (args) {
+      final fn = args[1] as Function;
+      return (args[0] as Set).every((e) => fn(e) as bool);
+    });
+    registry.register('dart:core::Set::fold#2', (args) {
+      final fn = args[2] as Function;
+      return (args[0] as Set).fold(args[1], (prev, e) => fn(prev, e));
+    });
+    // Manual iteration: Set.reduce((a,b) => fn(a,b)) fails at runtime
+    // because (dynamic, dynamic) => dynamic is not a subtype of (T, T) => T.
+    registry.register('dart:core::Set::reduce#1', (args) {
+      final fn = args[1] as Function;
+      final set = args[0] as Set;
+      final iter = set.iterator;
+      if (!iter.moveNext()) {
+        throw StateError('No element');
+      }
+      var value = iter.current;
+      while (iter.moveNext()) {
+        value = fn(value, iter.current);
+      }
+      return value;
+    });
+    registry.register('dart:core::Set::expand#1', (args) {
+      return (args[0] as Set)
+          .expand((e) => (args[1] as Function)(e) as Iterable);
+    });
+    // Manual iteration for firstWhere/lastWhere/singleWhere: delegating to
+    // Set's typed methods fails because (dynamic) => dynamic is not a subtype
+    // of (T) => bool when invoked through dynamic dispatch.
+    registry.register('dart:core::Set::firstWhere#2', (args) {
+      final fn = args[1] as Function;
+      final orElse =
+          (args.length > 2 && args[2] != null) ? args[2] as Function : null;
+      for (final e in args[0] as Set) {
+        if (fn(e) as bool) return e;
+      }
+      if (orElse != null) return orElse();
+      throw StateError('No element');
+    });
+    registry.register('dart:core::Set::lastWhere#2', (args) {
+      final fn = args[1] as Function;
+      final orElse =
+          (args.length > 2 && args[2] != null) ? args[2] as Function : null;
+      Object? result;
+      var found = false;
+      for (final e in args[0] as Set) {
+        if (fn(e) as bool) {
+          result = e;
+          found = true;
+        }
+      }
+      if (found) return result;
+      if (orElse != null) return orElse();
+      throw StateError('No element');
+    });
+    registry.register('dart:core::Set::singleWhere#2', (args) {
+      final fn = args[1] as Function;
+      final orElse =
+          (args.length > 2 && args[2] != null) ? args[2] as Function : null;
+      Object? result;
+      var found = false;
+      for (final e in args[0] as Set) {
+        if (fn(e) as bool) {
+          if (found) throw StateError('Too many elements');
+          result = e;
+          found = true;
+        }
+      }
+      if (found) return result;
+      if (orElse != null) return orElse();
+      throw StateError('No element');
+    });
+    registry.register('dart:core::Set::takeWhile#1', (args) {
+      return (args[0] as Set)
+          .takeWhile((e) => (args[1] as Function)(e) as bool);
+    });
+    registry.register('dart:core::Set::skipWhile#1', (args) {
+      return (args[0] as Set)
+          .skipWhile((e) => (args[1] as Function)(e) as bool);
+    });
+    registry.register('dart:core::Set::toSet#0', (args) {
+      return (args[0] as Set).toSet();
+    });
+    registry.register('dart:core::Set::elementAt#1', (args) {
+      return (args[0] as Set).elementAt(args[1] as int);
+    });
+    registry.register('dart:core::Set::take#1', (args) {
+      return (args[0] as Set).take(args[1] as int);
+    });
+    registry.register('dart:core::Set::skip#1', (args) {
+      return (args[0] as Set).skip(args[1] as int);
+    });
+    registry.register('dart:core::Set::single#0', (args) {
+      return (args[0] as Set).single;
     });
   }
 }

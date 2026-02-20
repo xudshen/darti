@@ -33,6 +33,11 @@ abstract final class StringBindings {
       return (args[0] as String).length;
     });
 
+    // String.codeUnits getter
+    registry.register('dart:core::String::codeUnits#0', (args) {
+      return (args[0] as String).codeUnits;
+    });
+
     // ── Methods with 0 params (symbol #0, receiver only) ──
 
     // String.toString()
@@ -175,6 +180,71 @@ abstract final class StringBindings {
     registry.register('dart:core::String::replaceRange#3', (args) {
       return (args[0] as String)
           .replaceRange(args[1] as int, args[2] as int?, args[3] as String);
+    });
+
+    // ── Callback methods (depend on Match/Runes) ──
+
+    // replaceAllMapped(Pattern from, String Function(Match) replace) — 2 params
+    registry.register('dart:core::String::replaceAllMapped#2', (args) {
+      final self = args[0] as String;
+      final pattern = args[1] as Pattern;
+      final fn = args[2] as Function;
+      return self.replaceAllMapped(pattern, (m) => fn(m) as String);
+    });
+
+    // replaceFirstMapped(Pattern from, String Function(Match) replace,
+    //                    [int startIndex = 0]) — 3 params
+    registry.register('dart:core::String::replaceFirstMapped#3', (args) {
+      final self = args[0] as String;
+      final pattern = args[1] as Pattern;
+      final fn = args[2] as Function;
+      final start =
+          (args.length > 3 && args[3] != null) ? args[3] as int : 0;
+      return self.replaceFirstMapped(pattern, (m) => fn(m) as String, start);
+    });
+
+    // splitMapJoin(Pattern, {onMatch, onNonMatch}) — 3 params
+    registry.register('dart:core::String::splitMapJoin#3', (args) {
+      final self = args[0] as String;
+      final pattern = args[1] as Pattern;
+      final onMatch = args[2] as Function?;
+      final onNonMatch = args[3] as Function?;
+      return self.splitMapJoin(
+        pattern,
+        onMatch: onMatch != null ? (m) => onMatch(m) as String : null,
+        onNonMatch:
+            onNonMatch != null ? (s) => onNonMatch(s) as String : null,
+      );
+    });
+
+    // allMatches(String string, [int start = 0]) — Pattern interface, 2 params
+    // Kernel may resolve to either String:: or Pattern:: prefix.
+    allMatches(List<Object?> args) {
+      final self = args[0] as String;
+      final string = args[1] as String;
+      final start =
+          (args.length > 2 && args[2] != null) ? args[2] as int : 0;
+      return self.allMatches(string, start);
+    }
+
+    registry.register('dart:core::String::allMatches#2', allMatches);
+    registry.register('dart:core::Pattern::allMatches#2', allMatches);
+
+    // matchAsPrefix(String string, [int start = 0]) — Pattern interface, 2 params
+    matchAsPrefix(List<Object?> args) {
+      final self = args[0] as String;
+      final string = args[1] as String;
+      final start =
+          (args.length > 2 && args[2] != null) ? args[2] as int : 0;
+      return self.matchAsPrefix(string, start);
+    }
+
+    registry.register('dart:core::String::matchAsPrefix#2', matchAsPrefix);
+    registry.register('dart:core::Pattern::matchAsPrefix#2', matchAsPrefix);
+
+    // runes getter — returns Runes
+    registry.register('dart:core::String::runes#0', (args) {
+      return (args[0] as String).runes;
     });
 
     // ── Operators ──

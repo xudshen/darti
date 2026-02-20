@@ -257,6 +257,55 @@ abstract final class ListBindings {
     registry.register('dart:core::List::iterator#0', (args) {
       return (args[0] as List).iterator;
     });
+    registry.register('dart:core::List::removeWhere#1', (args) {
+      (args[0] as List).removeWhere((e) => (args[1] as Function)(e) as bool);
+      return null;
+    });
+    registry.register('dart:core::List::retainWhere#1', (args) {
+      (args[0] as List).retainWhere((e) => (args[1] as Function)(e) as bool);
+      return null;
+    });
+    registry.register('dart:core::List::expand#1', (args) {
+      return (args[0] as List)
+          .expand((e) => (args[1] as Function)(e) as Iterable);
+    });
+    registry.register('dart:core::List::reduce#1', (args) {
+      return (args[0] as List)
+          .reduce((a, b) => (args[1] as Function)(a, b));
+    });
+    registry.register('dart:core::List::firstWhere#2', (args) {
+      final fn = args[1] as Function;
+      if (args.length > 2 && args[2] != null) {
+        final orElse = args[2] as Function;
+        return (args[0] as List)
+            .firstWhere((e) => fn(e) as bool, orElse: () => orElse());
+      }
+      return (args[0] as List).firstWhere((e) => fn(e) as bool);
+    });
+    registry.register('dart:core::List::lastWhere#2', (args) {
+      final fn = args[1] as Function;
+      if (args.length > 2 && args[2] != null) {
+        final orElse = args[2] as Function;
+        return (args[0] as List)
+            .lastWhere((e) => fn(e) as bool, orElse: () => orElse());
+      }
+      return (args[0] as List).lastWhere((e) => fn(e) as bool);
+    });
+    registry.register('dart:core::List::singleWhere#2', (args) {
+      final fn = args[1] as Function;
+      if (args.length > 2 && args[2] != null) {
+        final orElse = args[2] as Function;
+        return (args[0] as List)
+            .singleWhere((e) => fn(e) as bool, orElse: () => orElse());
+      }
+      return (args[0] as List).singleWhere((e) => fn(e) as bool);
+    });
+    registry.register('dart:core::List::+#1', (args) {
+      return (args[0] as List) + (args[1] as List);
+    });
+    registry.register('dart:core::List::single#0', (args) {
+      return (args[0] as List).single;
+    });
 
     // ── Internal _GrowableList factories ──
     // Dart SDK lowers list literals [a, b, c] to _GrowableList._literalN(...)
@@ -530,6 +579,57 @@ abstract final class ListBindings {
     registry.register('dart:core::_GrowableList::every#1', (args) {
       final fn = args[1] as Function;
       return (args[0] as List).every((e) => fn(e) as bool);
+    });
+
+    // ── New _GrowableList mirrors for missing methods ──
+    registry.register('dart:core::_GrowableList::removeWhere#1', (args) {
+      (args[0] as List).removeWhere((e) => (args[1] as Function)(e) as bool);
+      return null;
+    });
+    registry.register('dart:core::_GrowableList::retainWhere#1', (args) {
+      (args[0] as List).retainWhere((e) => (args[1] as Function)(e) as bool);
+      return null;
+    });
+    registry.register('dart:core::_GrowableList::expand#1', (args) {
+      return (args[0] as List)
+          .expand((e) => (args[1] as Function)(e) as Iterable);
+    });
+    registry.register('dart:core::_GrowableList::reduce#1', (args) {
+      return (args[0] as List)
+          .reduce((a, b) => (args[1] as Function)(a, b));
+    });
+    registry.register('dart:core::_GrowableList::firstWhere#2', (args) {
+      final fn = args[1] as Function;
+      if (args.length > 2 && args[2] != null) {
+        final orElse = args[2] as Function;
+        return (args[0] as List)
+            .firstWhere((e) => fn(e) as bool, orElse: () => orElse());
+      }
+      return (args[0] as List).firstWhere((e) => fn(e) as bool);
+    });
+    registry.register('dart:core::_GrowableList::lastWhere#2', (args) {
+      final fn = args[1] as Function;
+      if (args.length > 2 && args[2] != null) {
+        final orElse = args[2] as Function;
+        return (args[0] as List)
+            .lastWhere((e) => fn(e) as bool, orElse: () => orElse());
+      }
+      return (args[0] as List).lastWhere((e) => fn(e) as bool);
+    });
+    registry.register('dart:core::_GrowableList::singleWhere#2', (args) {
+      final fn = args[1] as Function;
+      if (args.length > 2 && args[2] != null) {
+        final orElse = args[2] as Function;
+        return (args[0] as List)
+            .singleWhere((e) => fn(e) as bool, orElse: () => orElse());
+      }
+      return (args[0] as List).singleWhere((e) => fn(e) as bool);
+    });
+    registry.register('dart:core::_GrowableList::+#1', (args) {
+      return (args[0] as List) + (args[1] as List);
+    });
+    registry.register('dart:core::_GrowableList::single#0', (args) {
+      return (args[0] as List).single;
     });
 
     // _GrowableList.generate -- Kernel may resolve List.generate to _GrowableList.generate

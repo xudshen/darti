@@ -1,8 +1,6 @@
 /// Registers `Map` host bindings for the CALL_HOST pipeline.
 ///
-/// Covers Map instance methods, getters, and operators.
-/// Callback-based methods (forEach, map, etc.) are deferred to 5.3.3
-/// when DarticCallbackProxy is ready.
+/// Covers Map instance methods, getters, operators, and callback methods.
 ///
 /// See: docs/design/04-interop.md
 library;
@@ -98,6 +96,33 @@ abstract final class MapBindings {
             ? () => ifAbsentFn()
             : null,
       );
+    });
+
+    // ── Callback methods ──
+
+    registry.register('dart:core::Map::forEach#1', (args) {
+      final fn = args[1] as Function;
+      (args[0] as Map).forEach((k, v) => fn(k, v));
+      return null;
+    });
+    registry.register('dart:core::Map::map#1', (args) {
+      final fn = args[1] as Function;
+      return (args[0] as Map).map((k, v) => fn(k, v) as MapEntry);
+    });
+    // Manual iteration: Map.updateAll((k,v) => fn(k,v)) fails at runtime
+    // because (dynamic, dynamic) => dynamic is not a subtype of (K, V) => V.
+    registry.register('dart:core::Map::updateAll#1', (args) {
+      final fn = args[1] as Function;
+      final map = args[0] as Map;
+      for (final key in map.keys.toList()) {
+        map[key] = fn(key, map[key]);
+      }
+      return null;
+    });
+    registry.register('dart:core::Map::removeWhere#1', (args) {
+      final fn = args[1] as Function;
+      (args[0] as Map).removeWhere((k, v) => fn(k, v) as bool);
+      return null;
     });
   }
 }

@@ -2,6 +2,8 @@ import 'package:dartic/src/bridge/core_bindings.dart';
 import 'package:dartic/src/bridge/host_function_registry.dart';
 import 'package:test/test.dart';
 
+import '../helpers/compile_helper.dart';
+
 void main() {
   late HostFunctionRegistry registry;
 
@@ -237,6 +239,258 @@ void main() {
 
     test('Set.join', () {
       expect(invoke('dart:core::Set::join#1', [{1, 2, 3}, ',']), '1,2,3');
+    });
+  });
+
+  group('Map callback invoke', () {
+    test('Map::forEach#1', () {
+      final keys = <String>[];
+      invoke('dart:core::Map::forEach#1', [
+        {'a': 1, 'b': 2},
+        (k, v) => keys.add(k as String),
+      ]);
+      expect(keys, ['a', 'b']);
+    });
+
+    test('Map::map#1', () {
+      final result = invoke('dart:core::Map::map#1', [
+        {'a': 1},
+        (k, v) => MapEntry('${k}_mapped', (v as int) * 10),
+      ]);
+      expect(result, {'a_mapped': 10});
+    });
+
+    test('Map::updateAll#1', () {
+      final map = {'a': 1, 'b': 2};
+      invoke('dart:core::Map::updateAll#1', [
+        map,
+        (k, v) => (v as int) * 2,
+      ]);
+      expect(map, {'a': 2, 'b': 4});
+    });
+
+    test('Map::removeWhere#1', () {
+      final map = {'a': 1, 'b': 2, 'c': 3};
+      invoke('dart:core::Map::removeWhere#1', [
+        map,
+        (k, v) => (v as int) > 1,
+      ]);
+      expect(map, {'a': 1});
+    });
+  });
+
+  group('Set callback invoke', () {
+    test('Set::forEach#1', () {
+      final collected = <int>[];
+      invoke('dart:core::Set::forEach#1', [
+        {1, 2, 3},
+        (e) => collected.add(e as int),
+      ]);
+      expect(collected, [1, 2, 3]);
+    });
+
+    test('Set::map#1', () {
+      final result = invoke('dart:core::Set::map#1', [
+        {1, 2, 3},
+        (e) => (e as int) * 2,
+      ]);
+      expect((result as Iterable).toList(), [2, 4, 6]);
+    });
+
+    test('Set::where#1', () {
+      final result = invoke('dart:core::Set::where#1', [
+        {1, 2, 3, 4},
+        (e) => (e as int).isEven,
+      ]);
+      expect((result as Iterable).toList(), [2, 4]);
+    });
+
+    test('Set::any#1', () {
+      expect(
+        invoke('dart:core::Set::any#1', [
+          {1, 2, 3},
+          (e) => (e as int) > 2,
+        ]),
+        true,
+      );
+    });
+
+    test('Set::every#1', () {
+      expect(
+        invoke('dart:core::Set::every#1', [
+          {2, 4, 6},
+          (e) => (e as int).isEven,
+        ]),
+        true,
+      );
+      expect(
+        invoke('dart:core::Set::every#1', [
+          {2, 3, 6},
+          (e) => (e as int).isEven,
+        ]),
+        false,
+      );
+    });
+
+    test('Set::fold#2', () {
+      expect(
+        invoke('dart:core::Set::fold#2', [
+          {1, 2, 3},
+          0,
+          (prev, e) => (prev as int) + (e as int),
+        ]),
+        6,
+      );
+    });
+
+    test('Set::reduce#1', () {
+      expect(
+        invoke('dart:core::Set::reduce#1', [
+          {1, 2, 3},
+          (a, b) => (a as int) + (b as int),
+        ]),
+        6,
+      );
+    });
+
+    test('Set::expand#1', () {
+      final result = invoke('dart:core::Set::expand#1', [
+        {1, 2},
+        (e) => [e, (e as int) * 10],
+      ]);
+      expect((result as Iterable).toList(), [1, 10, 2, 20]);
+    });
+
+    test('Set::firstWhere#2 with orElse', () {
+      expect(
+        invoke('dart:core::Set::firstWhere#2', [
+          {1, 2, 3, 4},
+          (e) => (e as int).isEven,
+          null,
+        ]),
+        2,
+      );
+      // With orElse
+      expect(
+        invoke('dart:core::Set::firstWhere#2', [
+          {1, 3, 5},
+          (e) => (e as int).isEven,
+          () => -1,
+        ]),
+        -1,
+      );
+    });
+
+    test('Set::lastWhere#2', () {
+      expect(
+        invoke('dart:core::Set::lastWhere#2', [
+          {1, 2, 3, 4},
+          (e) => (e as int) < 3,
+          null,
+        ]),
+        2,
+      );
+    });
+
+    test('Set::singleWhere#2', () {
+      expect(
+        invoke('dart:core::Set::singleWhere#2', [
+          {1, 2, 3},
+          (e) => (e as int) == 2,
+          null,
+        ]),
+        2,
+      );
+    });
+
+    test('Set::takeWhile#1', () {
+      final result = invoke('dart:core::Set::takeWhile#1', [
+        {1, 2, 3, 4},
+        (e) => (e as int) < 3,
+      ]);
+      expect((result as Iterable).toList(), [1, 2]);
+    });
+
+    test('Set::skipWhile#1', () {
+      final result = invoke('dart:core::Set::skipWhile#1', [
+        {1, 2, 3, 4},
+        (e) => (e as int) < 3,
+      ]);
+      expect((result as Iterable).toList(), [3, 4]);
+    });
+
+    test('Set::toSet#0', () {
+      final original = {1, 2, 3};
+      final copy = invoke('dart:core::Set::toSet#0', [original]) as Set;
+      expect(copy, {1, 2, 3});
+      expect(identical(copy, original), false);
+    });
+
+    test('Set::elementAt#1', () {
+      expect(invoke('dart:core::Set::elementAt#1', [{10, 20, 30}, 1]), 20);
+    });
+
+    test('Set::take#1', () {
+      final result = invoke('dart:core::Set::take#1', [{1, 2, 3, 4}, 2]);
+      expect((result as Iterable).toList(), [1, 2]);
+    });
+
+    test('Set::skip#1', () {
+      final result = invoke('dart:core::Set::skip#1', [{1, 2, 3, 4}, 2]);
+      expect((result as Iterable).toList(), [3, 4]);
+    });
+
+    test('Set::single#0', () {
+      expect(invoke('dart:core::Set::single#0', [{42}]), 42);
+    });
+  });
+
+  group('Map callback e2e', () {
+    test('Map.forEach value sum', () async {
+      final result = await compileAndRunWithHost('''
+int main() {
+  Map<String, int> m = {'a': 1, 'b': 2, 'c': 3};
+  int sum = 0;
+  m.forEach((k, v) {
+    sum = sum + v;
+  });
+  return sum;
+}
+''');
+      expect(result, 6);
+    });
+
+    test('Map.removeWhere then check length', () async {
+      final result = await compileAndRunWithHost('''
+int main() {
+  Map<String, int> m = {'a': 1, 'b': 2, 'c': 3};
+  m.removeWhere((k, v) => v > 1);
+  return m.length;
+}
+''');
+      expect(result, 1);
+    });
+  });
+
+  group('Set callback e2e', () {
+    test('Set.where filter then toList', () async {
+      final result = await compileAndRunWithHost('''
+String main() {
+  Set<int> s = {1, 2, 3, 4, 5};
+  return s.where((e) => e > 3).toList().toString();
+}
+''');
+      expect(result, '[4, 5]');
+    });
+
+    test('Set.fold sum', () async {
+      final result = await compileAndRunWithHost('''
+int main() {
+  Set<int> s = {1, 2, 3};
+  return s.fold(0, (prev, e) => prev + e);
+}
+''');
+      expect(result, 6);
     });
   });
 

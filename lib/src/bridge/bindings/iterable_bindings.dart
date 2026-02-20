@@ -107,5 +107,54 @@ abstract final class IterableBindings {
       return (args[0] as Iterable)
           .every((e) => fn(e) as bool);
     });
+    registry.register('dart:core::Iterable::reduce#1', (args) {
+      return (args[0] as Iterable)
+          .reduce((a, b) => (args[1] as Function)(a, b));
+    });
+    registry.register('dart:core::Iterable::expand#1', (args) {
+      return (args[0] as Iterable)
+          .expand((e) => (args[1] as Function)(e) as Iterable);
+    });
+    registry.register('dart:core::Iterable::firstWhere#2', (args) {
+      final fn = args[1] as Function;
+      if (args.length > 2 && args[2] != null) {
+        final orElse = args[2] as Function;
+        return (args[0] as Iterable)
+            .firstWhere((e) => fn(e) as bool, orElse: () => orElse());
+      }
+      return (args[0] as Iterable).firstWhere((e) => fn(e) as bool);
+    });
+    registry.register('dart:core::Iterable::lastWhere#2', (args) {
+      final fn = args[1] as Function;
+      if (args.length > 2 && args[2] != null) {
+        final orElse = args[2] as Function;
+        return (args[0] as Iterable)
+            .lastWhere((e) => fn(e) as bool, orElse: () => orElse());
+      }
+      return (args[0] as Iterable).lastWhere((e) => fn(e) as bool);
+    });
+    registry.register('dart:core::Iterable::singleWhere#2', (args) {
+      final fn = args[1] as Function;
+      if (args.length > 2 && args[2] != null) {
+        final orElse = args[2] as Function;
+        return (args[0] as Iterable)
+            .singleWhere((e) => fn(e) as bool, orElse: () => orElse());
+      }
+      return (args[0] as Iterable).singleWhere((e) => fn(e) as bool);
+    });
+    registry.register('dart:core::Iterable::takeWhile#1', (args) {
+      return (args[0] as Iterable)
+          .takeWhile((e) => (args[1] as Function)(e) as bool);
+    });
+    registry.register('dart:core::Iterable::skipWhile#1', (args) {
+      return (args[0] as Iterable)
+          .skipWhile((e) => (args[1] as Function)(e) as bool);
+    });
+    registry.register('dart:core::Iterable::single#0', (args) {
+      return (args[0] as Iterable).single;
+    });
+    registry.register('dart:core::Iterable::followedBy#1', (args) {
+      return (args[0] as Iterable).followedBy(args[1] as Iterable);
+    });
   }
 }
