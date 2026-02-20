@@ -8,7 +8,9 @@
 library;
 
 import 'host_function_registry.dart';
+import 'bindings/big_int_bindings.dart';
 import 'bindings/bool_bindings.dart';
+import 'bindings/date_time_bindings.dart';
 import 'bindings/double_bindings.dart';
 import 'bindings/duration_bindings.dart';
 import 'bindings/error_bindings.dart';
@@ -17,10 +19,15 @@ import 'bindings/invocation_bindings.dart';
 import 'bindings/iterable_bindings.dart';
 import 'bindings/list_bindings.dart';
 import 'bindings/map_bindings.dart';
+import 'bindings/misc_bindings.dart';
 import 'bindings/num_bindings.dart';
 import 'bindings/object_bindings.dart';
+import 'bindings/regexp_bindings.dart';
+import 'bindings/runes_bindings.dart';
 import 'bindings/set_bindings.dart';
 import 'bindings/string_bindings.dart';
+import 'bindings/string_buffer_bindings.dart';
+import 'bindings/uri_bindings.dart';
 
 /// Registers all dart:core host function bindings into [registry].
 ///
@@ -45,6 +52,13 @@ abstract final class CoreBindings {
     DurationBindings.register(registry);
     ErrorBindings.register(registry);
     InvocationBindings.register(registry);
+    BigIntBindings.register(registry);
+    DateTimeBindings.register(registry);
+    MiscBindings.register(registry);
+    RegExpBindings.register(registry);
+    RunesBindings.register(registry);
+    StringBufferBindings.register(registry);
+    UriBindings.register(registry);
   }
 
   // ── print ──

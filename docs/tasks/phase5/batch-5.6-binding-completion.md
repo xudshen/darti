@@ -431,23 +431,28 @@ feat(bridge): add RegExp, DateTime, Uri, BigInt and other dart:core bindings (5.
 
 ## 核心发现
 
-_(执行时填写)_
+1. **Dynamic type coercion for Set/Map callbacks**: `Set.reduce`, `Set.firstWhere/lastWhere/singleWhere` 和 `Map.updateAll` 不能直接委托给类型化方法（`(dynamic, dynamic) => dynamic is not a subtype of (T, T) => T`），需手动迭代实现
+2. **Kernel 对 String 的 Pattern 接口方法解析**: `'str'.allMatches(...)` 在 Kernel AST 中解析为 `dart:core::Pattern::allMatches#2`（非 `String::`），需同时注册 `String::` 和 `Pattern::` 前缀
+3. **Kernel 对 Uri.parse 的签名**: Kernel 解析 `Uri.parse` 带 3 个参数 (uri, start, end)，需注册 `#1` 和 `#3` 两个变体
+4. **BigInt.sign 返回 int**: 现代 Dart 中 `BigInt.sign` 返回 `int`（非 `BigInt`）
+5. **LateInitializationError 是 dart:_internal::LateError**: 非 dart:core 公开类，由 VM 内部创建，不需要用户绑定
+6. **Iterable.generate e2e 测试的 unwind 问题**: 使用 `Iterable.generate` 的 lazy iterable 通过 callback 方法（reduce/takeWhile/skipWhile/firstWhere/single/followedBy）在解释器 unwind handler 中触发 `RangeError (length)`，这是解释器层面的已知局限，与绑定层无关
 
 ## Batch 完成检查
 
-- [ ] 5.6.1 Map callback 方法（forEach, map, updateAll, removeWhere）
-- [ ] 5.6.2 Set callback + 缺失方法（~16 个新 binding）
-- [ ] 5.6.3 List/Iterable 缺失方法 + String.codeUnits
-- [ ] 5.6.4 RegExp + Match/RegExpMatch 绑定
-- [ ] 5.6.5 StringBuffer + Runes/RuneIterator 绑定
-- [ ] 5.6.6 String callback 方法补齐
-- [ ] 5.6.7 DateTime 绑定
-- [ ] 5.6.8 Uri 绑定
-- [ ] 5.6.9 BigInt 绑定
-- [ ] 5.6.10 Stopwatch + StackTrace + Symbol + Expando + MapEntry + Iterator 绑定
-- [ ] 5.6.11 Error/Exception 绑定补全
-- [ ] `fvm dart analyze` 零警告
-- [ ] `fvm dart test` 全部通过
+- [x] 5.6.1 Map callback 方法（forEach, map, updateAll, removeWhere）
+- [x] 5.6.2 Set callback + 缺失方法（~18 个新 binding）
+- [x] 5.6.3 List/Iterable 缺失方法 + String.codeUnits
+- [x] 5.6.4 RegExp + Match/RegExpMatch 绑定
+- [x] 5.6.5 StringBuffer + Runes/RuneIterator 绑定
+- [x] 5.6.6 String callback 方法补齐
+- [x] 5.6.7 DateTime 绑定
+- [x] 5.6.8 Uri 绑定
+- [x] 5.6.9 BigInt 绑定
+- [x] 5.6.10 Stopwatch + StackTrace + Symbol + Expando + MapEntry + Iterator 绑定
+- [x] 5.6.11 Error/Exception 绑定补全
+- [x] `fvm dart analyze` 零警告
+- [ ] `fvm dart test` 全部通过（578 passed, 7 pre-existing failures in interpreter/compiler layer）
 - [ ] commit 已提交
 - [ ] overview.md 已更新
 - [ ] code review 已完成
