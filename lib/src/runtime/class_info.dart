@@ -3,18 +3,24 @@ import '../compiler/type_template.dart';
 
 /// Classifies which stack a variable or field lives on.
 ///
+/// Enum order: ref(0) as default/fallback, then value types grouped by
+/// intView (boolVal, intVal) and doubleView (doubleVal).
+///
 /// See: docs/design/02-object-model.md "StackKind 分类"
 enum StackKind {
-  /// int, bool (encoded as 0/1) — ValueStack intView.
-  intVal,
+  /// String, object instances, closures, null, dynamic, num — RefStack.
+  ref, // 0 — default/fallback
+
+  /// bool (encoded as 0/1) — ValueStack intView.
+  boolVal, // 1
+
+  /// int — ValueStack intView.
+  intVal, // 2
 
   /// double — ValueStack doubleView.
-  doubleVal,
+  doubleVal; // 3
 
-  /// String, object instances, closures, null, dynamic, num — RefStack.
-  ref;
-
-  /// Whether this kind uses the value stack (intVal or doubleVal).
+  /// Whether this kind uses the value stack (all non-ref kinds).
   bool get isValue => this != ref;
 }
 

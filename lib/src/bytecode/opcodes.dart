@@ -7,7 +7,7 @@
 library;
 
 abstract final class Op {
-  // ── Load/Store (0x00-0x0F) ──
+  // ── Load/Store (0x00-0x0B) ──
   static const nop = 0x00;
   static const loadConst = 0x01;
   static const loadNull = 0x02;
@@ -20,10 +20,6 @@ abstract final class Op {
   static const moveVal = 0x09;
   static const loadUpvalue = 0x0A;
   static const storeUpvalue = 0x0B;
-  static const boxInt = 0x0C;
-  static const boxDouble = 0x0D;
-  static const unboxInt = 0x0E;
-  static const unboxDouble = 0x0F;
 
   // ── Integer Arithmetic (0x10-0x1F) ──
   static const addInt = 0x10;
@@ -41,14 +37,23 @@ abstract final class Op {
   static const ushr = 0x1C;
   static const addIntImm = 0x1D;
 
-  // ── Float Arithmetic (0x20-0x2F) ──
+  // ── Float Arithmetic (0x20-0x24) ──
   static const addDbl = 0x20;
   static const subDbl = 0x21;
   static const mulDbl = 0x22;
   static const divDbl = 0x23;
   static const negDbl = 0x24;
+
+  // ── Type Conversion & Boxing (0x25-0x2D) ──
   static const intToDbl = 0x25;
   static const dblToInt = 0x26;
+  static const boxInt = 0x27;
+  static const boxDouble = 0x28;
+  static const boxBool = 0x29;
+  static const unboxInt = 0x2A;
+  static const unboxDouble = 0x2B;
+  static const unboxBool = 0x2C;
+  static const notBool = 0x2D;
 
   // ── Comparison (0x30-0x3F) ──
   static const ltInt = 0x30;

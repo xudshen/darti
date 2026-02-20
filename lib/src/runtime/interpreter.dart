@@ -382,7 +382,7 @@ class DarticInterpreter {
       final op = instr & 0xFF;
 
       switch (op) {
-        // ── Load/Store (0x00-0x0F) ──
+        // ── Load/Store (0x00-0x0B) ──
 
         case Op.nop: // NOP
           break;

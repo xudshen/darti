@@ -29,13 +29,13 @@ void main() {}
       expect(f.refRegCount, 3);
     });
 
-    test('bool parameter -> StackKind.intVal (value stack)', () async {
+    test('bool parameter -> StackKind.boolVal (value stack)', () async {
       final module = await compileDart('''
 bool identity(bool x) => x;
 void main() {}
 ''');
       final f = findFunc(module, 'identity');
-      // bool param goes to value stack (encoded as 0/1 int).
+      // bool param goes to value stack (boolVal, encoded as 0/1 int).
       expect(f.valueRegCount, greaterThanOrEqualTo(1));
       expect(f.paramCount, 1);
       // 3 reserved ref regs (ITA+FTA+this) but no ref params.
@@ -65,17 +65,22 @@ void main() {}
       expect(StackKind.doubleVal.isValue, isTrue);
     });
 
+    test('boolVal.isValue returns true', () {
+      expect(StackKind.boolVal.isValue, isTrue);
+    });
+
     test('ref.isValue returns false', () {
       expect(StackKind.ref.isValue, isFalse);
     });
   });
 
   group('StackKind enum', () {
-    test('has exactly three values: intVal, doubleVal, ref', () {
-      expect(StackKind.values.length, 3);
+    test('has exactly four values: ref, boolVal, intVal, doubleVal', () {
+      expect(StackKind.values.length, 4);
+      expect(StackKind.values, contains(StackKind.ref));
+      expect(StackKind.values, contains(StackKind.boolVal));
       expect(StackKind.values, contains(StackKind.intVal));
       expect(StackKind.values, contains(StackKind.doubleVal));
-      expect(StackKind.values, contains(StackKind.ref));
     });
   });
 }

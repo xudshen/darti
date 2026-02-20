@@ -3,7 +3,7 @@ import 'package:test/test.dart';
 
 void main() {
   group('Op values', () {
-    // Load/Store group: 0x00-0x0F
+    // Load/Store group: 0x00-0x0B
     test('load/store opcodes are in correct range', () {
       expect(Op.nop, 0x00);
       expect(Op.loadConst, 0x01);
@@ -17,10 +17,6 @@ void main() {
       expect(Op.moveVal, 0x09);
       expect(Op.loadUpvalue, 0x0A);
       expect(Op.storeUpvalue, 0x0B);
-      expect(Op.boxInt, 0x0C);
-      expect(Op.boxDouble, 0x0D);
-      expect(Op.unboxInt, 0x0E);
-      expect(Op.unboxDouble, 0x0F);
     });
 
     // Integer arithmetic group: 0x10-0x1F
@@ -41,15 +37,26 @@ void main() {
       expect(Op.addIntImm, 0x1D);
     });
 
-    // Float arithmetic group: 0x20-0x2F
+    // Float arithmetic group: 0x20-0x24
     test('float arithmetic opcodes are in correct range', () {
       expect(Op.addDbl, 0x20);
       expect(Op.subDbl, 0x21);
       expect(Op.mulDbl, 0x22);
       expect(Op.divDbl, 0x23);
       expect(Op.negDbl, 0x24);
+    });
+
+    // Type Conversion & Boxing group: 0x25-0x2D
+    test('type conversion and boxing opcodes are in correct range', () {
       expect(Op.intToDbl, 0x25);
       expect(Op.dblToInt, 0x26);
+      expect(Op.boxInt, 0x27);
+      expect(Op.boxDouble, 0x28);
+      expect(Op.boxBool, 0x29);
+      expect(Op.unboxInt, 0x2A);
+      expect(Op.unboxDouble, 0x2B);
+      expect(Op.unboxBool, 0x2C);
+      expect(Op.notBool, 0x2D);
     });
 
     // Comparison group: 0x30-0x3F

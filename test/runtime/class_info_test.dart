@@ -100,11 +100,23 @@ void main() {
   });
 
   group('StackKind', () {
-    test('three values: intVal, doubleVal, ref', () {
-      expect(StackKind.values.length, 3);
+    test('four values: ref, boolVal, intVal, doubleVal', () {
+      expect(StackKind.values.length, 4);
+      expect(StackKind.values, contains(StackKind.ref));
+      expect(StackKind.values, contains(StackKind.boolVal));
       expect(StackKind.values, contains(StackKind.intVal));
       expect(StackKind.values, contains(StackKind.doubleVal));
-      expect(StackKind.values, contains(StackKind.ref));
+    });
+
+    test('enum indices: ref=0, boolVal=1, intVal=2, doubleVal=3', () {
+      expect(StackKind.ref.index, 0);
+      expect(StackKind.boolVal.index, 1);
+      expect(StackKind.intVal.index, 2);
+      expect(StackKind.doubleVal.index, 3);
+    });
+
+    test('boolVal.isValue returns true', () {
+      expect(StackKind.boolVal.isValue, isTrue);
     });
   });
 

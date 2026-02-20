@@ -265,7 +265,7 @@ void main() {
     });
   });
 
-  // ── BOX_INT (0x0C): refStack[A] = valueStack[B] (box int) ──
+  // ── BOX_INT: refStack[A] = valueStack[B] (box int) ──
 
   group('BOX_INT', () {
     test('boxes int from valueStack to refStack', () {
@@ -284,7 +284,7 @@ void main() {
     });
   });
 
-  // ── BOX_DOUBLE (0x0D): refStack[A] = doubleView[B] (box double) ──
+  // ── BOX_DOUBLE: refStack[A] = doubleView[B] (box double) ──
 
   group('BOX_DOUBLE', () {
     test('boxes double from valueStack to refStack', () {
@@ -307,7 +307,7 @@ void main() {
     });
   });
 
-  // ── UNBOX_INT (0x0E): valueStack[A] = (refStack[B] as int) ──
+  // ── UNBOX_INT: valueStack[A] = (refStack[B] as int) ──
 
   group('UNBOX_INT', () {
     test('unboxes int from refStack to valueStack', () {
@@ -349,7 +349,7 @@ void main() {
     });
   });
 
-  // ── UNBOX_DOUBLE (0x0F): doubleView[A] = (refStack[B] as double) ──
+  // ── UNBOX_DOUBLE: doubleView[A] = (refStack[B] as double) ──
 
   group('UNBOX_DOUBLE', () {
     test('unboxes double from refStack to valueStack', () {
