@@ -499,18 +499,18 @@ class DarticCompiler {
 
   /// Computes [DarticFuncProto.returnKind] for invokeClosure result boxing.
   ///
-  /// Returns: 0=intVal, 1=doubleVal, 2=ref, 3=boolVal.
+  /// Returns: StackKind.xxx.index (ref=0, boolVal=1, intVal=2, doubleVal=3).
   /// Bool is distinguished from int because the value stack stores both
   /// as int64, but the host VM expects a Dart [bool].
   int _classifyReturnKind(ir.DartType returnType) {
     if (returnType is ir.InterfaceType &&
         returnType.nullability != ir.Nullability.nullable) {
       final cls = returnType.classNode;
-      if (cls == _coreTypes.boolClass) return 3; // boolVal
-      if (cls == _coreTypes.intClass) return 0; // intVal
-      if (cls == _coreTypes.doubleClass) return 1; // doubleVal
+      if (cls == _coreTypes.boolClass) return StackKind.boolVal.index;
+      if (cls == _coreTypes.intClass) return StackKind.intVal.index;
+      if (cls == _coreTypes.doubleClass) return StackKind.doubleVal.index;
     }
-    return 2; // ref
+    return StackKind.ref.index;
   }
 
   // ── Procedure compilation ──
@@ -655,11 +655,14 @@ class DarticCompiler {
     return (resultReg, ResultLoc.value);
   }
 
-  /// Emits UNBOX_INT or UNBOX_DOUBLE to move a ref-stack value to the value
-  /// stack. Returns the new value-stack register.
+  /// Emits UNBOX_INT, UNBOX_DOUBLE, or UNBOX_BOOL to move a ref-stack value
+  /// to the value stack. Returns the new value-stack register.
   int _emitUnbox(int refReg, StackKind kind) {
-    final unboxOp =
-        kind == StackKind.doubleVal ? Op.unboxDouble : Op.unboxInt;
+    final unboxOp = switch (kind) {
+      StackKind.doubleVal => Op.unboxDouble,
+      StackKind.boolVal   => Op.unboxBool,
+      _                   => Op.unboxInt,
+    };
     final valReg = _allocValueReg();
     _emitter.emit(encodeABC(unboxOp, valReg, refReg, 0));
     return valReg;
@@ -674,7 +677,7 @@ class DarticCompiler {
 
   /// Ensures a boolean expression result is on the value stack.
   int _ensureBoolValue(int reg, ResultLoc loc) =>
-      _ensureValue(reg, loc, StackKind.intVal);
+      _ensureValue(reg, loc, StackKind.boolVal);
 
   /// Coerces an argument register to match the expected parameter [paramKind].
   /// Returns the (possibly new) register and its location.
@@ -742,37 +745,30 @@ class DarticCompiler {
   int _ensureRef(int reg, ResultLoc loc, ir.DartType fieldType) {
     if (loc == ResultLoc.ref) return reg;
     final refReg = _allocRefReg();
-    final boxOp = _classifyStackKind(fieldType) == StackKind.doubleVal
-        ? Op.boxDouble
-        : Op.boxInt;
+    final boxOp = switch (_classifyStackKind(fieldType)) {
+      StackKind.doubleVal => Op.boxDouble,
+      StackKind.boolVal   => Op.boxBool,
+      _                   => Op.boxInt,
+    };
     _emitter.emit(encodeABC(boxOp, refReg, reg, 0));
     return refReg;
   }
 
   /// Boxes a value-stack register to the ref stack, preserving the Dart
-  /// runtime type. Bools (stored as int 0/1) are converted to actual `bool`
-  /// objects via a conditional pattern; ints and doubles use BOX_INT/BOX_DOUBLE.
+  /// runtime type. Uses BOX_BOOL for bools, BOX_DOUBLE for doubles,
+  /// and BOX_INT for ints.
   ///
   /// Returns the ref-stack register containing the boxed value.
   int _emitBoxToRef(int valueReg, ir.DartType? type) {
     final refReg = _allocRefReg();
-    if (type != null && _isDoubleType(type)) {
-      _emitter.emit(encodeABC(Op.boxDouble, refReg, valueReg, 0));
-    } else if (type != null && _isBoolType(type)) {
-      // Bools are stored as int 0/1 on the value stack. BOX_INT would create
-      // an int object, not a bool. Emit a conditional to produce a real bool:
-      //   JUMP_IF_FALSE valueReg, +2
-      //   LOAD_CONST refReg, <true>
-      //   JUMP +1
-      //   LOAD_CONST refReg, <false>
-      final trueIdx = _constantPool.addRef(true);
-      final falseIdx = _constantPool.addRef(false);
-      _emitter.emit(encodeAsBx(Op.jumpIfFalse, valueReg, 2));
-      _emitter.emit(encodeABx(Op.loadConst, refReg, trueIdx));
-      _emitter.emit(encodeAsBx(Op.jump, 0, 1));
-      _emitter.emit(encodeABx(Op.loadConst, refReg, falseIdx));
-    } else {
-      _emitter.emit(encodeABC(Op.boxInt, refReg, valueReg, 0));
+    final kind = type != null ? _classifyStackKind(type) : StackKind.intVal;
+    switch (kind) {
+      case StackKind.doubleVal:
+        _emitter.emit(encodeABC(Op.boxDouble, refReg, valueReg, 0));
+      case StackKind.boolVal:
+        _emitter.emit(encodeABC(Op.boxBool, refReg, valueReg, 0));
+      default:
+        _emitter.emit(encodeABC(Op.boxInt, refReg, valueReg, 0));
     }
     return refReg;
   }

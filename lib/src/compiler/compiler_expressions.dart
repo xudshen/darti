@@ -128,9 +128,7 @@ extension on DarticCompiler {
     var (operandReg, operandLoc) = _compileExpression(expr.operand);
     operandReg = _ensureBoolValue(operandReg, operandLoc);
     final resultReg = _allocValueReg();
-    // Load 1 into result, then XOR with operand: result = operand ^ 1
-    _emitter.emit(encodeAsBx(Op.loadInt, resultReg, 1));
-    _emitter.emit(encodeABC(Op.bitXor, resultReg, operandReg, resultReg));
+    _emitter.emit(encodeABC(Op.notBool, resultReg, operandReg, 0));
     return (resultReg, ResultLoc.value);
   }
 

@@ -118,7 +118,7 @@ void main() {}
   // ── Not ──
 
   group('Not expression compilation', () {
-    test('!true → BIT_XOR produces 0', () async {
+    test('!true → NOT_BOOL produces 0', () async {
       final module = await compileDart('''
 bool f() => !true;
 void main() {}
@@ -126,12 +126,12 @@ void main() {}
       final f = findFunc(module, 'f');
       final code = f.bytecode;
 
-      // Should have BIT_XOR for boolean negation.
-      final xorIdx = findOp(code, Op.bitXor);
-      expect(xorIdx, isNot(-1), reason: 'BIT_XOR not found for !true');
+      // Should have NOT_BOOL for boolean negation.
+      final notIdx = findOp(code, Op.notBool);
+      expect(notIdx, isNot(-1), reason: 'NOT_BOOL not found for !true');
     });
 
-    test('!false → BIT_XOR produces 1', () async {
+    test('!false → NOT_BOOL produces 1', () async {
       final module = await compileDart('''
 bool g() => !false;
 void main() {}
@@ -139,8 +139,8 @@ void main() {}
       final g = findFunc(module, 'g');
       final code = g.bytecode;
 
-      final xorIdx = findOp(code, Op.bitXor);
-      expect(xorIdx, isNot(-1), reason: 'BIT_XOR not found for !false');
+      final notIdx = findOp(code, Op.notBool);
+      expect(notIdx, isNot(-1), reason: 'NOT_BOOL not found for !false');
     });
 
     test('Not does not modify operand register in-place', () async {
@@ -152,11 +152,11 @@ void main() {}
       final f = findFunc(module, 'f');
       final code = f.bytecode;
 
-      final xorIdx = findOp(code, Op.bitXor);
-      expect(xorIdx, isNot(-1));
+      final notIdx = findOp(code, Op.notBool);
+      expect(notIdx, isNot(-1));
       // A field in ABC: result reg (A) != operand reg (B)
-      final resultReg = decodeA(code[xorIdx]);
-      final operandReg = decodeB(code[xorIdx]);
+      final resultReg = decodeA(code[notIdx]);
+      final operandReg = decodeB(code[notIdx]);
       expect(resultReg, isNot(operandReg),
           reason: 'Not should allocate a new result register');
     });
@@ -181,7 +181,7 @@ void main() {}
 
     test('x != null → Not(EqualsNull(x)) pattern', () async {
       // CFE represents `x != null` as `Not(EqualsNull(x))`.
-      // EqualsNull emits JUMP_IF_NNULL, Not emits BIT_XOR.
+      // EqualsNull emits JUMP_IF_NNULL, Not emits NOT_BOOL.
       final module = await compileDart('''
 bool f(Object? x) => x != null;
 void main() {}
@@ -189,11 +189,11 @@ void main() {}
       final f = findFunc(module, 'f');
       final code = f.bytecode;
 
-      // Should contain JUMP_IF_NNULL (from EqualsNull) + BIT_XOR (from Not).
+      // Should contain JUMP_IF_NNULL (from EqualsNull) + NOT_BOOL (from Not).
       expect(findOp(code, Op.jumpIfNnull), isNot(-1),
           reason: 'JUMP_IF_NNULL expected from EqualsNull in Not(EqualsNull)');
-      expect(findOp(code, Op.bitXor), isNot(-1),
-          reason: 'BIT_XOR expected from Not wrapping EqualsNull');
+      expect(findOp(code, Op.notBool), isNot(-1),
+          reason: 'NOT_BOOL expected from Not wrapping EqualsNull');
     });
 
     test('x == null bytecode structure', () async {
@@ -228,7 +228,7 @@ void main() {}
     test('x != null bytecode structure (Not wrapping EqualsNull)', () async {
       // CFE represents `x != null` as Not(EqualsNull(x)).
       // EqualsNull: LOAD_FALSE → JUMP_IF_NNULL +1 → LOAD_TRUE
-      // Not: LOAD_INT 1 → BIT_XOR (flips the 0/1 result)
+      // Not: NOT_BOOL (flips the 0/1 result)
       final module = await compileDart('''
 bool f(Object? x) => x != null;
 void main() {}
@@ -240,10 +240,10 @@ void main() {}
       final jumpIdx = findOp(code, Op.jumpIfNnull);
       expect(jumpIdx, isNot(-1));
 
-      // Verify the Not part (BIT_XOR) follows.
-      final xorIdx = findOp(code, Op.bitXor, start: jumpIdx + 1);
-      expect(xorIdx, isNot(-1),
-          reason: 'BIT_XOR should follow the EqualsNull pattern');
+      // Verify the Not part (NOT_BOOL) follows.
+      final notIdx = findOp(code, Op.notBool, start: jumpIdx + 1);
+      expect(notIdx, isNot(-1),
+          reason: 'NOT_BOOL should follow the EqualsNull pattern');
     });
   });
 
@@ -522,14 +522,14 @@ int main() {
       expect(interp.entryResult, 100000);
     });
 
-    test('!true and !false compile with BIT_XOR', () async {
+    test('!true and !false compile with NOT_BOOL', () async {
       final module = await compileDart('''
 bool f() => !true;
 bool g() => !false;
 int main() => 42;
 ''');
-      expect(findOp(findFunc(module, 'f').bytecode, Op.bitXor), isNot(-1));
-      expect(findOp(findFunc(module, 'g').bytecode, Op.bitXor), isNot(-1));
+      expect(findOp(findFunc(module, 'f').bytecode, Op.notBool), isNot(-1));
+      expect(findOp(findFunc(module, 'g').bytecode, Op.notBool), isNot(-1));
     });
 
     test('int == int compiles with EQ_INT', () async {

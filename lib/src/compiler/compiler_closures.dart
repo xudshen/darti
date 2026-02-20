@@ -287,11 +287,12 @@ extension on DarticCompiler {
     if (binding.kind.isValue) {
       // Allocate a ref register and emit BOX instruction.
       final refReg = _allocRefReg();
-      if (binding.kind == StackKind.doubleVal) {
-        _emitter.emit(encodeABC(Op.boxDouble, refReg, binding.reg, 0));
-      } else {
-        _emitter.emit(encodeABC(Op.boxInt, refReg, binding.reg, 0));
-      }
+      final boxOp = switch (binding.kind) {
+        StackKind.doubleVal => Op.boxDouble,
+        StackKind.boolVal   => Op.boxBool,
+        _                   => Op.boxInt,
+      };
+      _emitter.emit(encodeABC(boxOp, refReg, binding.reg, 0));
 
       _capturedVarRefRegs[varDecl] = refReg;
 

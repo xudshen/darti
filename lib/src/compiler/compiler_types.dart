@@ -92,9 +92,8 @@ extension on DarticCompiler {
 
   /// Classifies a DartType for scope-level register allocation.
   ///
-  /// Canonical type classification: int/bool -> intVal (value stack intView),
-  /// double -> doubleVal (value stack doubleView),
-  /// everything else -> ref (ref stack).
+  /// Canonical type classification: int -> intVal, bool -> boolVal,
+  /// double -> doubleVal (value stack), everything else -> ref (ref stack).
   StackKind _classifyStackKind(ir.DartType type) {
     if (type is ir.InterfaceType) {
       // Nullable value types (int?, bool?, double?) must go on the ref stack
@@ -102,7 +101,7 @@ extension on DarticCompiler {
       if (type.nullability == ir.Nullability.nullable) return StackKind.ref;
       final cls = type.classNode;
       if (cls == _coreTypes.intClass) return StackKind.intVal;
-      if (cls == _coreTypes.boolClass) return StackKind.intVal;
+      if (cls == _coreTypes.boolClass) return StackKind.boolVal;
       if (cls == _coreTypes.doubleClass) return StackKind.doubleVal;
     }
     return StackKind.ref;
