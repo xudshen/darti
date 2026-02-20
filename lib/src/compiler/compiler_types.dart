@@ -61,9 +61,6 @@ extension on DarticCompiler {
   bool _isDoubleType(ir.DartType type) =>
       type is ir.InterfaceType && type.classNode == _coreTypes.doubleClass;
 
-  bool _isBoolType(ir.DartType type) =>
-      type is ir.InterfaceType && type.classNode == _coreTypes.boolClass;
-
   ir.DartType? _inferConstantType(ir.Constant constant) => switch (constant) {
         ir.IntConstant() => _coreTypes.intNonNullableRawType,
         ir.DoubleConstant() => _coreTypes.doubleNonNullableRawType,

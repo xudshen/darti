@@ -173,13 +173,8 @@ WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不
 0x09  MOVE_VAL      A, B          valueStack[A] = valueStack[B]
 0x0A  LOAD_UPVALUE  A, Bx         refStack[A] = upvalues[Bx].value
 0x0B  STORE_UPVALUE A, Bx         upvalues[Bx].value = refStack[A]
-0x0C  BOX_INT       A, B          refStack[A] = valueStack[B] (装箱 int)
-0x0D  BOX_DOUBLE    A, B          refStack[A] = valueStack[B] (装箱 double, 通过 doubleView)
-0x0E  UNBOX_INT     A, B          valueStack[A] = unboxInt(refStack[B]) (拆箱；bool → 0/1)
-0x0F  UNBOX_DOUBLE  A, B          valueStack[A] = (refStack[B] as double) (拆箱, 写 doubleView)
+0x0C-0x0F  （预留，box/unbox 已迁至 Type Conversion 区段 0x27-0x2C）
 ```
-
-**UNBOX_INT 的 bool 处理**：泛型字段（如 `Box<bool>.value`）在引用栈上存储的是 Dart `bool` 对象（而非 `int`）。`UNBOX_INT` 在运行时检测此情况，将 `true` 转换为 `1`、`false` 转换为 `0`，等价于 `refStack[B] is bool ? (refStack[B] ? 1 : 0) : refStack[B] as int`。这确保编译器可以统一使用 `UNBOX_INT` 拆箱所有值栈 intView 类型（int 和 bool）。
 
 ### 整数算术 (0x10-0x1F)
 
@@ -211,8 +206,17 @@ WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不
 0x24  NEG_DBL       A, B          doubleView[A] = -doubleView[B]
 0x25  INT_TO_DBL    A, B          doubleView[A] = valueStack[B].toDouble()
 0x26  DBL_TO_INT    A, B          valueStack[A] = doubleView[B].toInt()
-0x27-0x2F 预留
+0x27  BOX_INT       A, B          refStack[A] = valueStack[B] (装箱 int)
+0x28  BOX_DOUBLE    A, B          refStack[A] = doubleView[B] (装箱 double)
+0x29  BOX_BOOL      A, B          refStack[A] = (valueStack[B] != 0) (装箱 bool: 0/1 → false/true)
+0x2A  UNBOX_INT     A, B          valueStack[A] = refStack[B] as int (拆箱 int)
+0x2B  UNBOX_DOUBLE  A, B          doubleView[A] = refStack[B] as double (拆箱 double)
+0x2C  UNBOX_BOOL    A, B          valueStack[A] = (refStack[B] as bool) ? 1 : 0 (拆箱 bool)
+0x2D  NOT_BOOL      A, B          valueStack[A] = valueStack[B] ^ 1 (布尔取反)
+0x2E-0x2F 预留
 ```
+
+**BOX/UNBOX 分离 bool**：编译器通过 `StackKind.boolVal` 区分 bool 和 int，使用对应的 BOX_BOOL/UNBOX_BOOL 指令。UNBOX_INT 不再需要运行时 `is bool` 分支检查，只处理纯 int 值。
 
 ### 比较 (0x30-0x3F)
 

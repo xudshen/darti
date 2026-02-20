@@ -31,11 +31,12 @@
 
 编译器为每个变量和临时值分配一个 StackKind 标记，决定该值存放在值栈还是引用栈：
 
-| StackKind | 存放位置 | 对应 Dart 类型 |
-|-----------|---------|---------------|
-| `intVal` | ValueStack（intView） | int、bool（编码为 0/1） |
-| `doubleVal` | ValueStack（doubleView） | double |
-| `ref` | RefStack | String、对象实例、闭包、null、dynamic、num 等引用类型 |
+| StackKind | index | 存放位置 | 对应 Dart 类型 |
+|-----------|-------|---------|---------------|
+| `ref` | 0 | RefStack | String、对象实例、闭包、null、dynamic、num 等引用类型（默认/fallback） |
+| `boolVal` | 1 | ValueStack（intView） | bool（编码为 0/1） |
+| `intVal` | 2 | ValueStack（intView） | int |
+| `doubleVal` | 3 | ValueStack（doubleView） | double |
 
 **关键规则**：`dynamic` 和 `num` 类型的变量始终走引用栈（装箱路径），因为编译器无法在编译期确定其具体类型。被上值捕获的原始类型（int/double/bool）也强制标记为 `ref`，因为上值的间接访问机制仅支持引用栈（详见"上值对象"节）。
 
@@ -150,7 +151,7 @@ MethodTable 根据方法数量采用两种内部实现（阈值策略，详见 C
 | 属性 | 类型 | 说明 |
 |------|------|------|
 | offset | int | 字段在 refFields 或 valueFields 中的偏移 |
-| kind | StackKind | `intVal`/`doubleVal`（值栈类型）或 `ref`（引用栈类型） |
+| kind | StackKind | `boolVal`/`intVal`/`doubleVal`（值栈类型）或 `ref`（引用栈类型） |
 
 ### 函数原型
 
