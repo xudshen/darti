@@ -172,6 +172,6 @@ feat: add collection literals, string interpolation, callback proxy, and dynamic
 - [x] 5.3.4 HostClassWrapper 动态分发 + Spread 编译
 - [x] `fvm dart analyze` 零警告
 - [x] `fvm dart test` 全部通过（1864 tests）
-- [ ] commit 已提交
-- [ ] overview.md 已更新
-- [ ] code review 已完成
+- [x] commit 已提交 (4004be4 + bc2798a review fix)
+- [x] overview.md 已更新
+- [x] code review 已完成
