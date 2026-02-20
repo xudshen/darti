@@ -2,13 +2,14 @@ import 'dart:typed_data';
 
 import '../bridge/callback_proxy.dart';
 import '../bridge/host_bindings.dart';
-import '../bridge/host_class_wrapper.dart';
+import '../bridge/dynamic_dispatch.dart';
 import '../bytecode/module.dart';
 import '../bytecode/opcodes.dart';
 import '../compiler/type_template.dart';
 import 'call_stack.dart';
 import 'class_info.dart' show StackKind;
 import 'closure.dart';
+import 'dartic_invocation.dart';
 import 'dartic_type.dart';
 import 'error.dart';
 import 'global_table.dart';
@@ -87,7 +88,7 @@ class DarticInterpreter {
 
   /// Dynamic dispatch registry for host (VM-native) objects.
   /// Initialized per-execution from [hostBindings].
-  HostClassRegistry? _hostClassRegistry;
+  HostDispatchRegistry? _hostClassRegistry;
 
   /// Executes [module] starting from its entry function.
   ///
@@ -107,7 +108,7 @@ class DarticInterpreter {
 
     // Initialize dynamic dispatch registry for host objects.
     if (hostBindings != null) {
-      _hostClassRegistry = HostClassRegistry(hostBindings!);
+      _hostClassRegistry = HostDispatchRegistry(hostBindings!);
     }
 
     // Set up global table and run initializers.
@@ -319,6 +320,121 @@ class DarticInterpreter {
     return result;
   }
 
+  /// Calls a DarticObject method synchronously with proper result boxing.
+  ///
+  /// Used by dynamic dispatch (INVOKE_DYN, GET_FIELD_DYN, SET_FIELD_DYN)
+  /// when dispatching to DarticObject methods. Runs a nested dispatch loop
+  /// via HOST_BOUNDARY, ensuring value-type returns (int, double, bool) are
+  /// properly boxed to Object? for the ref-stack result expected by dynamic
+  /// dispatch instructions.
+  Object? _callDarticMethod(
+    DarticModule module,
+    DarticFuncProto method,
+    Object receiver,
+    List<Object?> args,
+  ) {
+    final vs = valueStack;
+    final rs = refStack;
+
+    if (vs.sp + method.valueRegCount > vs.capacity ||
+        rs.sp + method.refRegCount > rs.capacity) {
+      throw DarticError('Stack overflow');
+    }
+    if (callStack.depth + 2 >= callStack.maxFrames) {
+      throw DarticError('Maximum call depth exceeded');
+    }
+
+    final savedVSP = vs.sp;
+    final savedRSP = rs.sp;
+
+    // Push HOST_BOUNDARY sentinel frame.
+    callStack.pushFrame(
+      funcId: CallStack.sentinelHostBoundary,
+      returnPC: 0,
+      savedFP: callStack.fp,
+      savedVSP: savedVSP,
+      savedRSP: savedRSP,
+      resultReg: 0,
+    );
+    _upvalueStack.add(null);
+
+    // Allocate callee frame.
+    final vBase = vs.sp;
+    final rBase = rs.sp;
+    vs.sp += method.valueRegCount;
+    rs.sp += method.refRegCount;
+
+    // Place receiver at rBase+2 (this).
+    rs.write(rBase + 2, receiver);
+
+    // Route args through paramKinds.
+    final paramKinds = method.paramKinds;
+    if (paramKinds != null) {
+      var valArgIdx = 0;
+      var refArgIdx = 3; // After ITA(0), FTA(1), this(2)
+      for (var i = 0; i < args.length; i++) {
+        final kind =
+            i < paramKinds.length ? paramKinds[i] : StackKind.ref.index;
+        if (kind == StackKind.ref.index) {
+          rs.write(rBase + refArgIdx, args[i]);
+          refArgIdx++;
+        } else if (kind == StackKind.intVal.index) {
+          vs.writeInt(vBase + valArgIdx, args[i] as int);
+          valArgIdx++;
+        } else if (kind == StackKind.boolVal.index) {
+          final v = args[i];
+          vs.writeInt(
+              vBase + valArgIdx, v is bool ? (v ? 1 : 0) : v as int);
+          valArgIdx++;
+        } else {
+          // StackKind.doubleVal
+          vs.writeDouble(
+              vBase + valArgIdx, (args[i] as num).toDouble());
+          valArgIdx++;
+        }
+      }
+    } else {
+      // Legacy fallback: write all args to ref stack at rBase+3+.
+      for (var i = 0; i < args.length; i++) {
+        rs.write(rBase + 3 + i, args[i]);
+      }
+    }
+
+    // Push callee frame.
+    callStack.pushFrame(
+      funcId: method.funcId,
+      returnPC: 0,
+      savedFP: callStack.fp,
+      savedVSP: vBase,
+      savedRSP: rBase,
+      resultReg: 0,
+    );
+
+    // Execute nested dispatch loop.
+    try {
+      _executeLoop(module, vBase, rBase, method.bytecode, 0, null);
+    } on Object {
+      // Exception propagated past HOST_BOUNDARY — restore stacks.
+      vs.sp = savedVSP;
+      rs.sp = savedRSP;
+      if (callStack.isHostBoundary) {
+        callStack.popFrame();
+        _upvalueStack.removeLast();
+      }
+      rethrow;
+    }
+
+    // Read boxed result.
+    final result = _callbackResult;
+    _callbackResult = null;
+
+    // Pop HOST_BOUNDARY sentinel.
+    callStack.popFrame();
+    _upvalueStack.removeLast();
+
+    return result;
+  }
+
   /// Core dispatch loop shared by [_executeEntry] and [invokeClosure].
   ///
   /// Runs bytecode until HALT, HOST_BOUNDARY RETURN, or fuel exhaustion.
@@ -378,6 +494,85 @@ class DarticInterpreter {
         code = module.functions[callStack.funcId].bytecode;
         currentUpvalues = _upvalueStack.removeLast();
       }
+    }
+
+    // Cache the name index for 'noSuchMethod' — looked up lazily.
+    var cachedNsmNameIdx = -2; // -2 = not yet computed
+    int nsmNameIdx() {
+      if (cachedNsmNameIdx == -2) {
+        cachedNsmNameIdx = cp.lookupNameIndex('noSuchMethod');
+      }
+      return cachedNsmNameIdx;
+    }
+
+    // Helper: dispatch noSuchMethod on a receiver.
+    //
+    // For DarticObject: looks up 'noSuchMethod' in the class method table.
+    //   - If found (user override): pushes a call frame for the override,
+    //     places the Invocation at rBase+3, and returns true. The caller
+    //     must NOT write the result register — the RETURN instruction will.
+    //   - If not found (no override): calls the host-side Object.noSuchMethod
+    //     which throws NoSuchMethodError. Routes through unwindToHandler.
+    //
+    // For host objects: calls Object.noSuchMethod on the receiver (which
+    //   throws NoSuchMethodError). Routes through unwindToHandler.
+    //
+    // Returns true if a user-defined noSuchMethod was dispatched as a
+    // frame push (caller should `continue` the dispatch loop).
+    // Returns false if the exception was routed to an exception handler
+    // (caller should jump to the returned PC).
+    (bool pushed, int handlerPC) dispatchNoSuchMethod(
+      Object receiver,
+      Invocation invocation,
+      int resultReg,
+    ) {
+      if (receiver is DarticObject) {
+        final idx = nsmNameIdx();
+        if (idx >= 0) {
+          final classInfo = module.classes[receiver.classId];
+          final nsmMethod = classInfo.methods[idx];
+          if (nsmMethod != null) {
+            // User has overridden noSuchMethod — push frame.
+            if (vs.sp + nsmMethod.valueRegCount > vs.capacity ||
+                rs.sp + nsmMethod.refRegCount > rs.capacity) {
+              throw DarticError('Stack overflow');
+            }
+            if (callStack.depth >= callStack.maxFrames) {
+              throw DarticError('Maximum call depth exceeded');
+            }
+            callStack.pushFrame(
+              funcId: nsmMethod.funcId,
+              returnPC: pc,
+              savedFP: callStack.fp,
+              savedVSP: vBase,
+              savedRSP: rBase,
+              resultReg: resultReg,
+            );
+            _upvalueStack.add(currentUpvalues);
+            currentUpvalues = null;
+            vBase = vs.sp;
+            rBase = rs.sp;
+            vs.sp += nsmMethod.valueRegCount;
+            rs.sp += nsmMethod.refRegCount;
+            // Place receiver at callee's rsp+2 (this), invocation at rsp+3.
+            rs.write(rBase + 2, receiver);
+            rs.write(rBase + 3, invocation);
+            code = nsmMethod.bytecode;
+            pc = 0;
+            return (true, 0);
+          }
+        }
+      }
+      // No user override or host object: throw NoSuchMethodError.
+      try {
+        // ignore: unnecessary_cast
+        (receiver as dynamic).noSuchMethod(invocation);
+      } on Object catch (e, st) {
+        final handlerPC = unwindToHandler(pc - 1, e, st);
+        return (false, handlerPC);
+      }
+      // Should not reach here, but if it does, rethrow.
+      throw NoSuchMethodError.withInvocation(receiver, invocation);
     }
 
     while (_fuel-- > 0) {
@@ -879,7 +1074,7 @@ class DarticInterpreter {
                 'NoSuchMethodError: method "$methodName" called on null',
               );
             }
-            // Non-DarticObject: try HostClassWrapper dynamic dispatch.
+            // Non-DarticObject: try HostDispatcher dynamic dispatch.
             // NOTE: only zero-arg getters are supported here — method calls on
             // host objects with arguments should go through CALL_HOST (compiler
             // routes them there for statically-typed receivers) or INVOKE_DYN
@@ -889,15 +1084,26 @@ class DarticInterpreter {
             if (vcWrapper != null) {
               final vcResult =
                   vcWrapper.getProperty(receiver, methodName);
-              if (!identical(vcResult, BindingsClassWrapper.notFound)) {
+              if (!identical(vcResult, BindingLookupDispatcher.notFound)) {
                 rs.write(rBase + a, vcResult);
                 continue;
               }
             }
-            throw DarticError(
-              'NoSuchMethodError: method "$methodName" not found on '
-              '${receiver.runtimeType}',
-            );
+            // noSuchMethod fallback for host objects.
+            final vcInvocation = ic.argCount == 0
+                ? DarticInvocation.getter(Symbol(methodName))
+                : DarticInvocation.method(
+                    Symbol(methodName),
+                    List<Object?>.generate(
+                      ic.argCount,
+                      (i) => rs.read(rBase + b + 3 + i),
+                    ),
+                  );
+            final (vcPushed, vcHandlerPC) =
+                dispatchNoSuchMethod(receiver, vcInvocation, a);
+            if (vcPushed) continue;
+            pc = vcHandlerPC;
+            continue;
           }
 
           // IC dispatch: look up the current function's IC table.
@@ -912,11 +1118,22 @@ class DarticInterpreter {
             final classInfo = module.classes[receiver.classId];
             final method = classInfo.methods[ic.methodNameIndex];
             if (method == null) {
+              // noSuchMethod fallback for DarticObject.
               final name = module.constantPool.getName(ic.methodNameIndex);
-              throw DarticError(
-                'NoSuchMethodError: method "$name" not found on '
-                '${classInfo.name}',
-              );
+              final nsmInvocation = ic.argCount == 0
+                  ? DarticInvocation.getter(Symbol(name))
+                  : DarticInvocation.method(
+                      Symbol(name),
+                      List<Object?>.generate(
+                        ic.argCount,
+                        (i) => rs.read(rBase + b + 3 + i),
+                      ),
+                    );
+              final (nsmPushed, nsmHandlerPC) =
+                  dispatchNoSuchMethod(receiver, nsmInvocation, a);
+              if (nsmPushed) continue;
+              pc = nsmHandlerPC;
+              continue;
             }
             callee = method;
             // Update IC cache.
@@ -1340,21 +1557,67 @@ class DarticInterpreter {
               'NoSuchMethodError: getter "$name" called on null',
             );
           }
+
+          // DarticObject: look up field, then getter method.
+          if (receiver is DarticObject) {
+            final gfdClassInfo = module.classes[receiver.classId];
+            final nameIdx = cp.lookupNameIndex(name);
+            // Try field lookup first.
+            if (nameIdx >= 0) {
+              final fieldLayout = gfdClassInfo.fields[nameIdx];
+              if (fieldLayout != null) {
+                final fieldVal = fieldLayout.kind == StackKind.ref
+                    ? receiver.refFields[fieldLayout.offset]
+                    : fieldLayout.kind == StackKind.doubleVal
+                        ? receiver
+                            .valueFields
+                            .buffer
+                            .asFloat64List()[fieldLayout.offset]
+                        : fieldLayout.kind == StackKind.boolVal
+                            ? receiver.valueFields[fieldLayout.offset] != 0
+                            : receiver.valueFields[fieldLayout.offset];
+                rs.write(rBase + a, fieldVal);
+                continue;
+              }
+              // Try getter method — call via _callDarticMethod for boxing.
+              final getter = gfdClassInfo.methods[nameIdx];
+              if (getter != null) {
+                try {
+                  final gfdResult =
+                      _callDarticMethod(module, getter, receiver, const []);
+                  rs.write(rBase + a, gfdResult);
+                } on Object catch (e, st) {
+                  pc = unwindToHandler(pc - 1, e, st);
+                }
+                continue;
+              }
+            }
+            // noSuchMethod fallback.
+            final gfdInvocation = DarticInvocation.getter(Symbol(name));
+            final (gfdPushed, gfdHandlerPC) =
+                dispatchNoSuchMethod(receiver, gfdInvocation, a);
+            if (gfdPushed) continue;
+            pc = gfdHandlerPC;
+            continue;
+          }
+
+          // Host object: try HostDispatcher.
           final wrapper = _hostClassRegistry?.lookup(receiver);
           if (wrapper != null) {
             final result = wrapper.getProperty(receiver, name);
-            if (identical(result, BindingsClassWrapper.notFound)) {
-              throw DarticError(
-                'NoSuchMethodError: getter "$name" not found on '
-                '${receiver.runtimeType}',
-              );
+            if (!identical(result, BindingLookupDispatcher.notFound)) {
+              rs.write(rBase + a, result);
+              continue;
             }
-            rs.write(rBase + a, result);
-          } else {
-            throw DarticError(
-              'NoSuchMethodError: getter "$name" not found on '
-              '${receiver.runtimeType}',
-            );
+          }
+          // noSuchMethod fallback for host objects.
+          {
+            final gfdHostInv = DarticInvocation.getter(Symbol(name));
+            final (gfdHostPushed, gfdHostPC) =
+                dispatchNoSuchMethod(receiver, gfdHostInv, a);
+            if (gfdHostPushed) continue;
+            pc = gfdHostPC;
+            continue;
           }
 
         case Op.setFieldDyn: // SET_FIELD_DYN A, B, C — refStack[A].setProperty(names[C], refStack[B])
@@ -1369,22 +1632,72 @@ class DarticInterpreter {
               'NoSuchMethodError: setter "$name" called on null',
             );
           }
-          // Dynamic set dispatches through HostClassWrapper.
+
+          // DarticObject: look up field, then setter method.
+          if (receiver is DarticObject) {
+            final sfdClassInfo = module.classes[receiver.classId];
+            final nameIdx = cp.lookupNameIndex(name);
+            // Try field write first.
+            if (nameIdx >= 0) {
+              final fieldLayout = sfdClassInfo.fields[nameIdx];
+              if (fieldLayout != null) {
+                if (fieldLayout.kind == StackKind.ref) {
+                  receiver.refFields[fieldLayout.offset] = value;
+                } else if (fieldLayout.kind == StackKind.doubleVal) {
+                  receiver
+                      .valueFields
+                      .buffer
+                      .asFloat64List()[fieldLayout.offset] =
+                      (value as num).toDouble();
+                } else if (fieldLayout.kind == StackKind.boolVal) {
+                  receiver.valueFields[fieldLayout.offset] =
+                      (value is bool ? (value ? 1 : 0) : value as int);
+                } else {
+                  receiver.valueFields[fieldLayout.offset] = value as int;
+                }
+                continue;
+              }
+              // Try setter method (convention: "name=") — call via helper.
+              final setterNameIdx = cp.lookupNameIndex('$name=');
+              if (setterNameIdx >= 0) {
+                final setter = sfdClassInfo.methods[setterNameIdx];
+                if (setter != null) {
+                  try {
+                    _callDarticMethod(module, setter, receiver, [value]);
+                  } on Object catch (e, st) {
+                    pc = unwindToHandler(pc - 1, e, st);
+                  }
+                  continue;
+                }
+              }
+            }
+            // noSuchMethod fallback. Use b (value reg) as dummy result to
+            // avoid overwriting the receiver register a.
+            final sfdInvocation = DarticInvocation.setter(Symbol(name), value);
+            final (sfdPushed, sfdHandlerPC) =
+                dispatchNoSuchMethod(receiver, sfdInvocation, b);
+            if (sfdPushed) continue;
+            pc = sfdHandlerPC;
+            continue;
+          }
+
+          // Host object: dynamic set dispatches through HostDispatcher.
           final setWrapper = _hostClassRegistry?.lookup(receiver);
           if (setWrapper != null) {
             final setResult =
                 setWrapper.invokeMethod(receiver, '$name=', [value]);
-            if (identical(setResult, BindingsClassWrapper.notFound)) {
-              throw DarticError(
-                'NoSuchMethodError: setter "$name" not found on '
-                '${receiver.runtimeType}',
-              );
+            if (!identical(setResult, BindingLookupDispatcher.notFound)) {
+              continue;
             }
-          } else {
-            throw DarticError(
-              'NoSuchMethodError: setter "$name" not found on '
-              '${receiver.runtimeType}',
-            );
+          }
+          // noSuchMethod fallback for host objects. Use b as dummy result reg.
+          {
+            final sfdHostInv = DarticInvocation.setter(Symbol(name), value);
+            final (sfdHostPushed, sfdHostPC) =
+                dispatchNoSuchMethod(receiver, sfdHostInv, b);
+            if (sfdHostPushed) continue;
+            pc = sfdHostPC;
+            continue;
           }
 
         case Op.invokeDyn: // INVOKE_DYN A, B, C — refStack[A] = dynamicDispatch(refStack[A+1], names[C], args)
@@ -1398,10 +1711,49 @@ class DarticInterpreter {
               'NoSuchMethodError: method "$name" called on null',
             );
           }
+
+          final explicitArgCount = b - 1;
+
+          // DarticObject: look up method in class info.
+          if (receiver is DarticObject) {
+            final idClassInfo = module.classes[receiver.classId];
+            final nameIdx = cp.lookupNameIndex(name);
+            if (nameIdx >= 0) {
+              final method = idClassInfo.methods[nameIdx];
+              if (method != null) {
+                // Found method — call via _callDarticMethod for proper boxing.
+                final idMethodArgs = List<Object?>.generate(
+                  explicitArgCount,
+                  (i) => rs.read(rBase + a + 2 + i),
+                );
+                try {
+                  final idMethodResult = _callDarticMethod(
+                      module, method, receiver, idMethodArgs);
+                  rs.write(rBase + a, idMethodResult);
+                } on Object catch (e, st) {
+                  pc = unwindToHandler(pc - 1, e, st);
+                }
+                continue;
+              }
+            }
+            // noSuchMethod fallback for DarticObject.
+            final idDynArgs = List<Object?>.generate(
+              explicitArgCount,
+              (i) => rs.read(rBase + a + 2 + i),
+            );
+            final idInvocation =
+                DarticInvocation.method(Symbol(name), idDynArgs);
+            final (idPushed, idHandlerPC) =
+                dispatchNoSuchMethod(receiver, idInvocation, a);
+            if (idPushed) continue;
+            pc = idHandlerPC;
+            continue;
+          }
+
+          // Host object: try HostDispatcher.
           final dynWrapper = _hostClassRegistry?.lookup(receiver);
           if (dynWrapper != null) {
             // Collect explicit args from consecutive ref regs after receiver.
-            final explicitArgCount = b - 1;
             final dynArgs = List<Object?>.generate(
               explicitArgCount,
               (i) => rs.read(rBase + a + 2 + i),
@@ -1424,18 +1776,32 @@ class DarticInterpreter {
             }
             final dynResult =
                 dynWrapper.invokeMethod(receiver, name, dynArgs);
-            if (identical(dynResult, BindingsClassWrapper.notFound)) {
-              throw DarticError(
-                'NoSuchMethodError: method "$name" not found on '
-                '${receiver.runtimeType}',
-              );
+            if (!identical(dynResult, BindingLookupDispatcher.notFound)) {
+              rs.write(rBase + a, dynResult);
+              continue;
             }
-            rs.write(rBase + a, dynResult);
-          } else {
-            throw DarticError(
-              'NoSuchMethodError: method "$name" not found on '
-              '${receiver.runtimeType}',
+            // noSuchMethod fallback for host object with wrapper.
+            final idHostInv =
+                DarticInvocation.method(Symbol(name), dynArgs);
+            final (idHostPushed, idHostPC) =
+                dispatchNoSuchMethod(receiver, idHostInv, a);
+            if (idHostPushed) continue;
+            pc = idHostPC;
+            continue;
+          }
+          // No wrapper — noSuchMethod fallback.
+          {
+            final idNoWrapArgs = List<Object?>.generate(
+              explicitArgCount,
+              (i) => rs.read(rBase + a + 2 + i),
             );
+            final idNoWrapInv =
+                DarticInvocation.method(Symbol(name), idNoWrapArgs);
+            final (idNoWrapPushed, idNoWrapPC) =
+                dispatchNoSuchMethod(receiver, idNoWrapInv, a);
+            if (idNoWrapPushed) continue;
+            pc = idNoWrapPC;
+            continue;
           }
 
         // ── System ──

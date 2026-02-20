@@ -174,10 +174,14 @@ class DarticFuncProto {
 ///
 /// See: docs/design/01-bytecode-isa.md "内联缓存"
 class ICEntry {
-  ICEntry({required this.methodNameIndex});
+  ICEntry({required this.methodNameIndex, this.argCount = 0});
 
   /// Method name index in the constant pool `names` partition.
   final int methodNameIndex;
+
+  /// Number of arguments (excluding the receiver).
+  /// Used to construct [Invocation] for noSuchMethod fallback.
+  final int argCount;
 
   /// Cached class ID for monomorphic dispatch (-1 = uncached).
   int cachedClassId = -1;
@@ -186,7 +190,7 @@ class ICEntry {
   int cachedFuncId = 0;
 
   @override
-  String toString() => 'ICEntry(name=$methodNameIndex, '
+  String toString() => 'ICEntry(name=$methodNameIndex, args=$argCount, '
       'cached=${cachedClassId == -1 ? "miss" : "cls$cachedClassId"})';
 }
 

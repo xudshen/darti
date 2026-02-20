@@ -1,19 +1,19 @@
 import 'package:dartic/src/bridge/core_bindings.dart';
 import 'package:dartic/src/bridge/host_bindings.dart';
-import 'package:dartic/src/bridge/host_class_wrapper.dart';
+import 'package:dartic/src/bridge/dynamic_dispatch.dart';
 import 'package:test/test.dart';
 
 void main() {
   late HostBindings bindings;
-  late HostClassRegistry registry;
+  late HostDispatchRegistry registry;
 
   setUp(() {
     bindings = HostBindings();
     CoreBindings.registerAll(bindings);
-    registry = HostClassRegistry(bindings);
+    registry = HostDispatchRegistry(bindings);
   });
 
-  group('HostClassRegistry.lookup', () {
+  group('HostDispatchRegistry.lookup', () {
     test('returns wrapper for String', () {
       expect(registry.lookup('hello'), isNotNull);
     });
@@ -43,7 +43,7 @@ void main() {
     });
   });
 
-  group('BindingsClassWrapper.getProperty', () {
+  group('BindingLookupDispatcher.getProperty', () {
     test('String.length', () {
       final wrapper = registry.lookup('hello')!;
       expect(wrapper.getProperty('hello', 'length'), equals(5));
@@ -74,7 +74,7 @@ void main() {
     });
   });
 
-  group('BindingsClassWrapper.invokeMethod', () {
+  group('BindingLookupDispatcher.invokeMethod', () {
     test('List.contains', () {
       final list = [1, 2, 3];
       final wrapper = registry.lookup(list)!;

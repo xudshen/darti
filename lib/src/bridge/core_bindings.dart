@@ -13,6 +13,7 @@ import 'bindings/double_bindings.dart';
 import 'bindings/duration_bindings.dart';
 import 'bindings/error_bindings.dart';
 import 'bindings/int_bindings.dart';
+import 'bindings/invocation_bindings.dart';
 import 'bindings/iterable_bindings.dart';
 import 'bindings/list_bindings.dart';
 import 'bindings/map_bindings.dart';
@@ -43,6 +44,7 @@ abstract final class CoreBindings {
     SetBindings.register(bindings);
     DurationBindings.register(bindings);
     ErrorBindings.register(bindings);
+    InvocationBindings.register(bindings);
   }
 
   // ── print ──

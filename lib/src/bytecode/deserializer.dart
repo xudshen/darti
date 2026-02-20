@@ -166,11 +166,15 @@ class DarticDeserializer {
       ),
     );
 
-    // IC table -- only methodNameIndex is persisted; runtime state resets
+    // IC table -- methodNameIndex + argCount persisted; runtime state resets
     final icCount = r.readUint32();
     final icTable = List.generate(
       icCount,
-      (_) => ICEntry(methodNameIndex: r.readUint32()),
+      (_) {
+        final nameIdx = r.readUint32();
+        final argCount = r.readUint32();
+        return ICEntry(methodNameIndex: nameIdx, argCount: argCount);
+      },
     );
 
     // upvalue descriptors

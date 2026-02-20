@@ -295,7 +295,7 @@ extension on DarticCompiler {
     // Emit CALL_VIRTUAL with method name '=='.
     final methodNameIdx = _constantPool.addName('==');
     final icIndex = _icEntries.length;
-    _icEntries.add(ICEntry(methodNameIndex: methodNameIdx));
+    _icEntries.add(ICEntry(methodNameIndex: methodNameIdx, argCount: 1));
     _emitter.emit(
         encodeABC(Op.callVirtual, resultReg, receiverReg, icIndex));
 
@@ -1105,7 +1105,8 @@ extension on DarticCompiler {
     // 6. Allocate IC entry and emit CALL_VIRTUAL.
     final methodNameIdx = _constantPool.addName(methodName);
     final icIndex = _icEntries.length;
-    _icEntries.add(ICEntry(methodNameIndex: methodNameIdx));
+    _icEntries.add(
+        ICEntry(methodNameIndex: methodNameIdx, argCount: argTemps.length));
 
     _emitter.emit(
         encodeABC(Op.callVirtual, resultReg, receiverReg, icIndex));
@@ -1459,7 +1460,7 @@ extension on DarticCompiler {
     final methodName = expr.name.text; // Getter uses the property name.
     final methodNameIdx = _constantPool.addName(methodName);
     final icIndex = _icEntries.length;
-    _icEntries.add(ICEntry(methodNameIndex: methodNameIdx));
+    _icEntries.add(ICEntry(methodNameIndex: methodNameIdx, argCount: 0));
 
     _emitter.emit(
         encodeABC(Op.callVirtual, resultReg, receiverReg, icIndex));
@@ -1592,7 +1593,7 @@ extension on DarticCompiler {
     final methodName = '${expr.name.text}=';
     final methodNameIdx = _constantPool.addName(methodName);
     final icIndex = _icEntries.length;
-    _icEntries.add(ICEntry(methodNameIndex: methodNameIdx));
+    _icEntries.add(ICEntry(methodNameIndex: methodNameIdx, argCount: 1));
     _emitter.emit(
         encodeABC(Op.callVirtual, dummyResult, receiverReg, icIndex));
 

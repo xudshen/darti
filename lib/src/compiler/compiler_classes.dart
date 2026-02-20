@@ -89,6 +89,24 @@ extension on DarticCompiler {
     }
     _instanceFieldLayouts[cls] = fieldLayouts;
 
+    // Build name-indexed field layout for runtime dynamic access.
+    // This maps constant-pool name indices to FieldLayout, enabling
+    // GET_FIELD_DYN / SET_FIELD_DYN to resolve fields by name at runtime.
+    final nameIndexedFields = <int, FieldLayout>{};
+    for (final field in cls.fields) {
+      if (field.isStatic) continue;
+      final nameIdx = _constantPool.addName(field.name.text);
+      final layout = fieldLayouts[field.getterReference]!;
+      nameIndexedFields[nameIdx] = layout;
+    }
+    // Include inherited fields.
+    if (superClass != null && _classToClassId.containsKey(superClass)) {
+      final superInfo = _classInfos[_classToClassId[superClass]!];
+      for (final entry in superInfo.fields.entries) {
+        nameIndexedFields.putIfAbsent(entry.key, () => entry.value);
+      }
+    }
+
     // Compute Dart 3 class modifier flags from Kernel Class node.
     var modifiers = ClassModifiers.none;
     if (cls.isSealed) modifiers |= ClassModifiers.sealed;
@@ -130,6 +148,9 @@ extension on DarticCompiler {
         classInfo.supertypeIds.addAll(_classInfos[implClassId].supertypeIds);
       }
     }
+
+    // Populate runtime field table for dynamic access.
+    classInfo.fields.addAll(nameIndexedFields);
 
     // Register constructors -> assign funcIds.
     for (final ctor in cls.constructors) {

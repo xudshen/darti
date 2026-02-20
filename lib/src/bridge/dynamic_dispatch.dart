@@ -1,9 +1,9 @@
-/// HostClassWrapper — dynamic dispatch for host (VM-native) objects.
+/// Dynamic dispatch for host (VM-native) objects.
 ///
 /// When the interpreter encounters a dynamic property access or method call
 /// on a non-DarticObject receiver (e.g., `dynamic x = [1,2]; x.length`),
-/// the HostClassRegistry resolves the receiver's type to a wrapper, which
-/// dispatches by property/method name through the existing HostBindings.
+/// the [HostDispatchRegistry] resolves the receiver's type to a dispatcher,
+/// which routes by property/method name through the existing [HostBindings].
 ///
 /// See: docs/design/04-interop.md "HostClassWrapper"
 library;
@@ -11,7 +11,11 @@ library;
 import 'host_bindings.dart';
 
 /// Abstract base for host class property/method dispatch.
-abstract class HostClassWrapper {
+///
+/// Each implementation handles one or more host types. Phase 7's
+/// BridgeGenerator will produce hardcoded-switch subclasses; the current
+/// [BindingLookupDispatcher] uses name-based HostBindings lookup.
+abstract class HostDispatcher {
   /// Gets a named property from [host] (getter dispatch).
   Object? getProperty(Object host, String name);
 
@@ -19,13 +23,13 @@ abstract class HostClassWrapper {
   Object? invokeMethod(Object host, String name, List<Object?> args);
 }
 
-/// HostClassWrapper backed by HostBindings lookup.
+/// [HostDispatcher] backed by HostBindings name lookup.
 ///
 /// Constructs binding keys from a list of class name prefixes and looks up
 /// methods/getters in the existing HostBindings registry. This avoids
-/// duplicating dispatch logic that's already in the bridge wrappers.
-class BindingsClassWrapper implements HostClassWrapper {
-  BindingsClassWrapper(this._bindings, this._prefixes);
+/// duplicating dispatch logic that's already in the binding registrations.
+class BindingLookupDispatcher implements HostDispatcher {
+  BindingLookupDispatcher(this._bindings, this._prefixes);
 
   final HostBindings _bindings;
 
@@ -34,7 +38,7 @@ class BindingsClassWrapper implements HostClassWrapper {
   final List<String> _prefixes;
 
   /// Sentinel used to distinguish "method not found" from "method returned null".
-  static const notFound = #_bindingsClassWrapperNotFound;
+  static const notFound = #_bindingLookupDispatcherNotFound;
 
   @override
   Object? getProperty(Object host, String name) {
@@ -60,61 +64,88 @@ class BindingsClassWrapper implements HostClassWrapper {
   }
 }
 
-/// Registry mapping receiver types to [HostClassWrapper] instances.
+/// [HostDispatcher] for [Invocation] objects passed to noSuchMethod.
+///
+/// Dispatches property access directly without going through HostBindings,
+/// since Invocation is a core Dart abstract class with known properties.
+class _InvocationDispatcher implements HostDispatcher {
+  @override
+  Object? getProperty(Object host, String name) {
+    final inv = host as Invocation;
+    return switch (name) {
+      'memberName' => inv.memberName,
+      'positionalArguments' => inv.positionalArguments,
+      'namedArguments' => inv.namedArguments,
+      'typeArguments' => inv.typeArguments,
+      'isMethod' => inv.isMethod,
+      'isGetter' => inv.isGetter,
+      'isSetter' => inv.isSetter,
+      _ => BindingLookupDispatcher.notFound,
+    };
+  }
+
+  @override
+  Object? invokeMethod(Object host, String name, List<Object?> args) {
+    return BindingLookupDispatcher.notFound;
+  }
+}
+
+/// Registry mapping receiver types to [HostDispatcher] instances.
 ///
 /// Uses `is` checks for reliable subtype matching (e.g., `_GrowableList is List`).
-class HostClassRegistry {
-  HostClassRegistry(HostBindings bindings) {
-    _list = BindingsClassWrapper(bindings, [
+class HostDispatchRegistry {
+  HostDispatchRegistry(HostBindings bindings) {
+    _list = BindingLookupDispatcher(bindings, [
       'dart:core::List::',
       'dart:core::_GrowableList::',
       'dart:core::Iterable::',
     ]);
-    _map = BindingsClassWrapper(bindings, [
+    _map = BindingLookupDispatcher(bindings, [
       'dart:core::Map::',
       'dart:collection::LinkedHashMap::',
     ]);
-    _set = BindingsClassWrapper(bindings, [
+    _set = BindingLookupDispatcher(bindings, [
       'dart:core::Set::',
       'dart:_compact_hash::_Set::',
       'dart:core::Iterable::',
     ]);
-    _string = BindingsClassWrapper(bindings, [
+    _string = BindingLookupDispatcher(bindings, [
       'dart:core::String::',
     ]);
-    _int = BindingsClassWrapper(bindings, [
+    _int = BindingLookupDispatcher(bindings, [
       'dart:core::int::',
       'dart:core::num::',
     ]);
-    _double = BindingsClassWrapper(bindings, [
+    _double = BindingLookupDispatcher(bindings, [
       'dart:core::double::',
       'dart:core::num::',
     ]);
-    _bool = BindingsClassWrapper(bindings, [
+    _bool = BindingLookupDispatcher(bindings, [
       'dart:core::bool::',
     ]);
-    _iterable = BindingsClassWrapper(bindings, [
+    _iterable = BindingLookupDispatcher(bindings, [
       'dart:core::Iterable::',
     ]);
-    _duration = BindingsClassWrapper(bindings, [
+    _duration = BindingLookupDispatcher(bindings, [
       'dart:core::Duration::',
     ]);
   }
 
-  late final HostClassWrapper _list;
-  late final HostClassWrapper _map;
-  late final HostClassWrapper _set;
-  late final HostClassWrapper _string;
-  late final HostClassWrapper _int;
-  late final HostClassWrapper _double;
-  late final HostClassWrapper _bool;
-  late final HostClassWrapper _iterable;
-  late final HostClassWrapper _duration;
+  late final HostDispatcher _list;
+  late final HostDispatcher _map;
+  late final HostDispatcher _set;
+  late final HostDispatcher _string;
+  late final HostDispatcher _int;
+  late final HostDispatcher _double;
+  late final HostDispatcher _bool;
+  late final HostDispatcher _iterable;
+  late final HostDispatcher _duration;
+  final HostDispatcher _invocation = _InvocationDispatcher();
 
-  /// Looks up the [HostClassWrapper] for [receiver] based on its runtime type.
+  /// Looks up the [HostDispatcher] for [receiver] based on its runtime type.
   ///
-  /// Returns null if no wrapper is registered for the receiver's type.
-  HostClassWrapper? lookup(Object receiver) {
+  /// Returns null if no dispatcher is registered for the receiver's type.
+  HostDispatcher? lookup(Object receiver) {
     // Order matters: check concrete types before interfaces.
     if (receiver is String) return _string;
     if (receiver is int) return _int;
@@ -125,6 +156,7 @@ class HostClassRegistry {
     if (receiver is Set) return _set;
     if (receiver is Duration) return _duration;
     if (receiver is Iterable) return _iterable;
+    if (receiver is Invocation) return _invocation;
     return null;
   }
 }

@@ -128,10 +128,11 @@ class DarticSerializer {
       w.writeUint32(handler.stackTraceReg);
     }
 
-    // IC table -- only methodNameIndex is persisted; runtime state resets
+    // IC table -- methodNameIndex + argCount persisted; runtime state resets
     w.writeUint32(func.icTable.length);
     for (final entry in func.icTable) {
       w.writeUint32(entry.methodNameIndex);
+      w.writeUint32(entry.argCount);
     }
 
     // upvalue descriptors

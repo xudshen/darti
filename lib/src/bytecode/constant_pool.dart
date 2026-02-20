@@ -109,6 +109,10 @@ class ConstantPool {
   String getName(int index) => _names[index];
   int get nameCount => _names.length;
 
+  /// Reverse-looks up the index of [name] in the names partition.
+  /// Returns -1 if the name has not been added.
+  int lookupNameIndex(String name) => _nameDedup[name] ?? -1;
+
   // ── read-only accessors (for serialization) ──
 
   /// Returns an unmodifiable view of the refs partition.
