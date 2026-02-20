@@ -52,17 +52,11 @@ class DarticModule {
   ///
   /// Each entry is a [BindingEntry] containing the symbol name and arg count.
   /// CALL_HOST's Bx operand indexes into this table. At module load time,
-  /// the interpreter resolves these names via [HostBindings] to fill
-  /// [bindingIdMap].
+  /// the interpreter resolves these names via [HostBindings] and stores the
+  /// resolved ID map internally.
   ///
   /// See: docs/design/05-compiler.md "绑定名称表"
   final List<BindingEntry> bindingNames;
-
-  /// Runtime-resolved binding ID map: local index → HostBindings runtime ID.
-  ///
-  /// Filled by the interpreter during [execute] via
-  /// `HostBindings.resolveBindingTable`. Length matches [bindingNames].
-  List<int> bindingIdMap = const [];
 }
 
 /// Maps core Dart types to their compiler-assigned classIds.

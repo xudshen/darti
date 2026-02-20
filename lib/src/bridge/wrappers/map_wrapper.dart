@@ -83,9 +83,11 @@ abstract final class MapBindings {
       );
     });
     bindings.register('dart:core::Map::addEntries#1', (args) {
-      (args[0] as Map).addEntries(args[1] as Iterable<MapEntry>);
+      (args[0] as Map).addEntries((args[1] as Iterable).cast<MapEntry>());
       return null;
     });
+    // #N convention: N = total arg count excluding receiver.
+    // update#3 = update(key, update, {ifAbsent}) → 3 args after receiver.
     bindings.register('dart:core::Map::update#3', (args) {
       final updateFn = args[2] as Function;
       final ifAbsentFn = args.length > 3 ? args[3] as Function? : null;

@@ -67,7 +67,9 @@ abstract final class IterableBindings {
 
     bindings.register('dart:core::Iterable::forEach#1', (args) {
       final fn = args[1] as Function;
-      (args[0] as Iterable).forEach((e) => fn(e));
+      for (final e in args[0] as Iterable) {
+        fn(e);
+      }
       return null;
     });
     bindings.register('dart:core::Iterable::map#1', (args) {

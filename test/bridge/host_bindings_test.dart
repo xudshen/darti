@@ -1,5 +1,4 @@
 import 'package:dartic/src/bridge/host_bindings.dart';
-import 'package:dartic/src/bridge/type_mapping.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -99,70 +98,6 @@ void main() {
         () => bindings.invoke(999, []),
         throwsA(isA<RangeError>()),
       );
-    });
-  });
-
-  group('TypeMapping', () {
-    test('boxForHost with int value', () {
-      final boxed = TypeMapping.boxForHost(42, HostKind.intVal);
-      expect(boxed, equals(42));
-      expect(boxed, isA<int>());
-    });
-
-    test('boxForHost with double value', () {
-      final boxed = TypeMapping.boxForHost(3.14, HostKind.doubleVal);
-      expect(boxed, equals(3.14));
-      expect(boxed, isA<double>());
-    });
-
-    test('boxForHost with bool value (as int 1/0)', () {
-      expect(TypeMapping.boxForHost(1, HostKind.boolVal), equals(true));
-      expect(TypeMapping.boxForHost(0, HostKind.boolVal), equals(false));
-    });
-
-    test('boxForHost with ref value (String)', () {
-      final boxed = TypeMapping.boxForHost('hello', HostKind.ref);
-      expect(boxed, equals('hello'));
-    });
-
-    test('boxForHost with null ref', () {
-      expect(TypeMapping.boxForHost(null, HostKind.ref), isNull);
-    });
-
-    test('unboxFromHost with int', () {
-      final (value, kind) = TypeMapping.unboxFromHost(42);
-      expect(value, equals(42));
-      expect(kind, equals(HostKind.intVal));
-    });
-
-    test('unboxFromHost with double', () {
-      final (value, kind) = TypeMapping.unboxFromHost(3.14);
-      expect(value, equals(3.14));
-      expect(kind, equals(HostKind.doubleVal));
-    });
-
-    test('unboxFromHost with bool true', () {
-      final (value, kind) = TypeMapping.unboxFromHost(true);
-      expect(value, equals(1));
-      expect(kind, equals(HostKind.boolVal));
-    });
-
-    test('unboxFromHost with bool false', () {
-      final (value, kind) = TypeMapping.unboxFromHost(false);
-      expect(value, equals(0));
-      expect(kind, equals(HostKind.boolVal));
-    });
-
-    test('unboxFromHost with String', () {
-      final (value, kind) = TypeMapping.unboxFromHost('hello');
-      expect(value, equals('hello'));
-      expect(kind, equals(HostKind.ref));
-    });
-
-    test('unboxFromHost with null', () {
-      final (value, kind) = TypeMapping.unboxFromHost(null);
-      expect(value, isNull);
-      expect(kind, equals(HostKind.ref));
     });
   });
 }

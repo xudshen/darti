@@ -79,6 +79,12 @@ class DarticInterpreter {
   /// Return value from a callback that exited via HOST_BOUNDARY RETURN.
   Object? _callbackResult;
 
+  /// Runtime-resolved binding ID map: local index → HostBindings runtime ID.
+  ///
+  /// Filled during [execute] via `HostBindings.resolveBindingTable`.
+  /// Read by CALL_HOST in the dispatch loop.
+  List<int> _bindingIdMap = const [];
+
   /// Dynamic dispatch registry for host (VM-native) objects.
   /// Initialized per-execution from [hostBindings].
   HostClassRegistry? _hostClassRegistry;
@@ -164,7 +170,7 @@ class DarticInterpreter {
         'but no HostBindings provided',
       );
     }
-    module.bindingIdMap = hb.resolveBindingTable(
+    _bindingIdMap = hb.resolveBindingTable(
       [for (final entry in module.bindingNames) entry.name],
     );
   }
@@ -811,8 +817,8 @@ class DarticInterpreter {
           final chA = (instr >> 8) & 0xFF;
           final chBx = (instr >> 16) & 0xFFFF;
 
-          // Look up the runtime binding ID from the module's resolved map.
-          final bindingMap = module.bindingIdMap;
+          // Look up the runtime binding ID from the resolved map.
+          final bindingMap = _bindingIdMap;
           if (chBx >= bindingMap.length) {
             throw DarticError(
               'CALL_HOST binding index $chBx out of range '

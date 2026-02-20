@@ -186,7 +186,9 @@ abstract final class ListBindings {
 
     bindings.register('dart:core::List::forEach#1', (args) {
       final fn = args[1] as Function;
-      (args[0] as List).forEach((e) => fn(e));
+      for (final e in args[0] as List) {
+        fn(e);
+      }
       return null;
     });
     bindings.register('dart:core::List::map#1', (args) {
@@ -503,7 +505,9 @@ abstract final class ListBindings {
     // ── _GrowableList callback methods (mirrors of Iterable methods) ──
     bindings.register('dart:core::_GrowableList::forEach#1', (args) {
       final fn = args[1] as Function;
-      (args[0] as List).forEach((e) => fn(e));
+      for (final e in args[0] as List) {
+        fn(e);
+      }
       return null;
     });
     bindings.register('dart:core::_GrowableList::map#1', (args) {
