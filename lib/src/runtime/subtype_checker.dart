@@ -54,34 +54,20 @@ class SubtypeChecker {
     }
 
     // Rule 4: nullable rejection (sub is nullable, sup is non-nullable → false).
-    // Applies to both DarticInterfaceType and DarticFunctionType.
+    // Safe to apply before FutureOr rules because FutureOr normalization
+    // converts FutureOr<T?> to FutureOr<T>? (nullable outer), so a
+    // non-nullable FutureOr sup genuinely rejects nullable sub.
     if (sub.nullability == Nullability.nullable &&
         sup.nullability == Nullability.nonNullable) {
-      // For interface sup: sup must be nonNullable.
-      // For function sup: sup must be nonNullable.
-      // But we also need to exclude cases where sup is a top type or FutureOr
-      // that might accept nullable sub. Top types are already handled by rule 2.
-      // FutureOr is handled by rules 7-8 below, but rule 4 fires first.
-      //
-      // However, FutureOr<T?> as sup with nullable sub should work.
-      // Since FutureOr normalization converts FutureOr<T?> to FutureOr<T>?,
-      // the FutureOr sup would be nullable and won't trigger this rule.
-      //
-      // For interface sup that is non-nullable, this is correct to reject.
-      // But we must be careful: if sup is DarticFunctionType nonNullable,
-      // and sub is nullable, we should also reject.
       return false;
     }
 
     // Rule 5: Null type (sub is Null / Never?)
+    // Null is subtype of any nullable type (interface or function).
     if (sub is DarticInterfaceType &&
         sub.classId == SpecialClassId.never &&
         sub.nullability == Nullability.nullable) {
-      // Null is subtype of any nullable type (interface or function).
-      if (sup.nullability == Nullability.nullable) {
-        return true;
-      }
-      return false;
+      return sup.nullability == Nullability.nullable;
     }
 
     // Rule 6: nullable supertype decomposition.
@@ -154,18 +140,16 @@ class SubtypeChecker {
   /// Strips nullability from a type, returning the non-nullable equivalent.
   DarticType _stripNullable(DarticType type) {
     if (type.nullability == Nullability.nonNullable) return type;
-    if (type is DarticInterfaceType) {
-      return registry.intern(type.classId, type.typeArgs);
-    } else if (type is DarticFunctionType) {
-      return registry.internFunction(
-        typeParamBounds: type.typeParamBounds,
-        requiredParamCount: type.requiredParamCount,
-        positionalParams: type.positionalParams,
-        namedParams: type.namedParams,
-        returnType: type.returnType,
-      );
-    }
-    return type;
+    return switch (type) {
+      DarticInterfaceType() => registry.intern(type.classId, type.typeArgs),
+      DarticFunctionType() => registry.internFunction(
+          typeParamBounds: type.typeParamBounds,
+          requiredParamCount: type.requiredParamCount,
+          positionalParams: type.positionalParams,
+          namedParams: type.namedParams,
+          returnType: type.returnType,
+        ),
+    };
   }
 
   /// Rule 9: function type dispatch.

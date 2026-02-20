@@ -91,9 +91,7 @@ extension on DarticCompiler {
     final partRegs = <int>[];
     for (final part in parts) {
       var (reg, loc) = _compileExpression(part);
-      if (loc == ResultLoc.value) {
-        reg = _emitBoxToRef(reg, _inferExprType(part));
-      }
+      reg = _boxToRefIfValue(reg, loc, _inferExprType(part));
       partRegs.add(reg);
     }
 
@@ -232,9 +230,7 @@ extension on DarticCompiler {
   // ── EqualsCall ──
 
   (int, ResultLoc) _compileEqualsCall(ir.EqualsCall expr) {
-    final leftType = _inferExprType(expr.left);
-    final leftKind =
-        leftType != null ? _classifyStackKind(leftType) : StackKind.ref;
+    final leftKind = _inferStackKind(expr.left);
 
     // User-defined operator==: dispatch via CALL_VIRTUAL.
     // Check if interfaceTarget is from a user-defined class (not Object/int/double/bool).
@@ -261,12 +257,8 @@ extension on DarticCompiler {
         _emitter.emit(encodeABC(Op.eqDbl, resultReg, lhsReg, rhsReg));
       case StackKind.ref:
         // EQ_GENERIC operates on the ref stack — ensure both operands are boxed.
-        if (lhsLoc == ResultLoc.value) {
-          lhsReg = _emitBoxToRef(lhsReg, _inferExprType(expr.left));
-        }
-        if (rhsLoc == ResultLoc.value) {
-          rhsReg = _emitBoxToRef(rhsReg, _inferExprType(expr.right));
-        }
+        lhsReg = _boxToRefIfValue(lhsReg, lhsLoc, _inferExprType(expr.left));
+        rhsReg = _boxToRefIfValue(rhsReg, rhsLoc, _inferExprType(expr.right));
         _emitter.emit(encodeABC(Op.eqGeneric, resultReg, lhsReg, rhsReg));
     }
     return (resultReg, ResultLoc.value);
@@ -276,15 +268,11 @@ extension on DarticCompiler {
   (int, ResultLoc) _compileUserEqualsCall(ir.EqualsCall expr) {
     // Compile receiver (left operand, ref stack).
     var (receiverReg, receiverLoc) = _compileExpression(expr.left);
-    if (receiverLoc == ResultLoc.value) {
-      receiverReg = _emitBoxToRef(receiverReg, _inferExprType(expr.left));
-    }
+    receiverReg = _boxToRefIfValue(receiverReg, receiverLoc, _inferExprType(expr.left));
 
     // Compile argument (right operand, ref stack — parameter type is Object).
     var (argReg, argLoc) = _compileExpression(expr.right);
-    if (argLoc == ResultLoc.value) {
-      argReg = _emitBoxToRef(argReg, _inferExprType(expr.right));
-    }
+    argReg = _boxToRefIfValue(argReg, argLoc, _inferExprType(expr.right));
 
     // Result is bool (value stack).
     final resultReg = _allocValueReg();
@@ -293,11 +281,7 @@ extension on DarticCompiler {
     _emitArgMovesForVirtualCall([(argReg, ResultLoc.ref)]);
 
     // Emit CALL_VIRTUAL with method name '=='.
-    final methodNameIdx = _constantPool.addName('==');
-    final icIndex = _icEntries.length;
-    _icEntries.add(ICEntry(methodNameIndex: methodNameIdx, argCount: 1));
-    _emitter.emit(
-        encodeABC(Op.callVirtual, resultReg, receiverReg, icIndex));
+    _emitCallVirtual(resultReg, receiverReg, '==', 1);
 
     return (resultReg, ResultLoc.value);
   }
@@ -413,9 +397,7 @@ extension on DarticCompiler {
       final uvIdx = _resolveUpvalue(expr.variable);
       var (srcReg, srcLoc) = _compileExpression(expr.value);
       // Ensure the value is on the ref stack (upvalues always use ref stack).
-      if (srcLoc == ResultLoc.value) {
-        srcReg = _emitBoxToRef(srcReg, _inferExprType(expr.value));
-      }
+      srcReg = _boxToRefIfValue(srcReg, srcLoc, _inferExprType(expr.value));
       _emitter.emit(encodeABx(Op.storeUpvalue, srcReg, uvIdx));
       return (srcReg, ResultLoc.ref);
     }
@@ -426,9 +408,7 @@ extension on DarticCompiler {
     if (_capturedVarRefRegs.containsKey(expr.variable)) {
       final refReg = _capturedVarRefRegs[expr.variable]!;
       var (srcReg, srcLoc) = _compileExpression(expr.value);
-      if (srcLoc == ResultLoc.value) {
-        srcReg = _emitBoxToRef(srcReg, _inferExprType(expr.value));
-      }
+      srcReg = _boxToRefIfValue(srcReg, srcLoc, _inferExprType(expr.value));
       _emitMove(refReg, srcReg, ResultLoc.ref);
       return (refReg, ResultLoc.ref);
     }
@@ -501,10 +481,8 @@ extension on DarticCompiler {
         );
       }
 
-      final retType = target.function.returnType;
-      final retLoc = _classifyType(retType);
-      final resultReg =
-          retLoc == ResultLoc.ref ? _allocRefReg() : _allocValueReg();
+      final (resultReg, retLoc) =
+          _allocResultReg(target.function.returnType);
 
       // No arguments — emit CALL_STATIC directly.
       _emitter.emit(encodeABx(Op.callStatic, resultReg, funcId));
@@ -524,7 +502,7 @@ extension on DarticCompiler {
         throw UnsupportedError('Unknown static field: ${target.name.text}');
       }
       final (srcReg, srcLoc) = _compileExpression(expr.value);
-      final refReg = _ensureRef(srcReg, srcLoc, target.type);
+      final refReg = _boxToRefIfValue(srcReg, srcLoc, target.type);
       _emitter.emit(encodeABx(Op.storeGlobal, refReg, globalIndex));
       return (srcReg, srcLoc); // Assignment evaluates to the assigned value
     }
@@ -586,45 +564,17 @@ extension on DarticCompiler {
     }
 
     // Allocate result register FIRST -- it lives within the caller's frame.
-    final retType = target.function.returnType;
-    final retLoc = _classifyType(retType);
-    final resultReg =
-        retLoc == ResultLoc.ref ? _allocRefReg() : _allocValueReg();
+    final (resultReg, retLoc) =
+        _allocResultReg(target.function.returnType);
 
-    // Compile each argument expression to a temp register within the frame.
-    final positionalArgs = expr.arguments.positional;
-    final namedArgs = expr.arguments.named;
-    final positionalParams = target.function.positionalParameters;
-    final namedParams = target.function.namedParameters;
-    final argTemps = <(int, ResultLoc)>[];
+    // Compile arguments with coercion and defaults.
+    final argTemps = _compileCallArgs(
+      expr.arguments,
+      target.function.positionalParameters,
+      target.function.namedParameters,
+    );
 
-    // 1. Compile provided positional arguments.
-    for (var i = 0; i < positionalArgs.length; i++) {
-      var (argReg, argLoc) = _compileExpression(positionalArgs[i]);
-
-      // Coerce stack kind when callee parameter and argument disagree.
-      if (i < positionalParams.length) {
-        final paramKind = _classifyStackKind(positionalParams[i].type);
-        (argReg, argLoc) = _coerceArg(
-            argReg, argLoc, paramKind, positionalArgs[i]);
-      }
-
-      argTemps.add((argReg, argLoc));
-    }
-
-    // 2. Fill in missing optional positional arguments with default values.
-    for (var i = positionalArgs.length; i < positionalParams.length; i++) {
-      final param = positionalParams[i];
-      final (argReg, argLoc) = _compileDefaultValue(param);
-      argTemps.add((argReg, argLoc));
-    }
-
-    // 3. Handle named arguments.
-    if (namedParams.isNotEmpty) {
-      _compileNamedArgsFromParams(namedParams, namedArgs, argTemps);
-    }
-
-    // 4. Emit FTA for generic function calls.
+    // Emit FTA for generic function calls.
     _emitFTAForCall(expr.arguments.types);
 
     _emitArgMovesAndCall(argTemps, Op.callStatic, resultReg, funcId);
@@ -636,22 +586,11 @@ extension on DarticCompiler {
   (int, ResultLoc) _compileHostStaticInvocation(ir.StaticInvocation expr) {
     final target = expr.target;
 
-    // Compile all arguments.
     final compiledArgs = <(int, ResultLoc, ir.DartType?)>[];
-    for (final arg in expr.arguments.positional) {
-      final (reg, loc) = _compileExpression(arg);
-      compiledArgs.add((reg, loc, _inferExprType(arg)));
-    }
-    for (final arg in expr.arguments.named) {
-      final (reg, loc) = _compileExpression(arg.value);
-      compiledArgs.add((reg, loc, _inferExprType(arg.value)));
-    }
+    _compileHostPositionalAndNamed(expr.arguments, compiledArgs);
 
-    // Allocate binding.
     final symbolName = _hostSymbolName(target);
-    final argCount = compiledArgs.length; // static: no receiver
-    final bindingIndex = _allocBinding(symbolName, argCount);
-
+    final bindingIndex = _allocBinding(symbolName, compiledArgs.length);
     return _emitCallHost(compiledArgs, bindingIndex);
   }
 
@@ -671,80 +610,54 @@ extension on DarticCompiler {
   (int, ResultLoc) _compileLocalFunctionInvocation(
     ir.LocalFunctionInvocation expr,
   ) {
-    // Look up the closure variable.
     final binding = _lookupVar(expr.variable);
-    final closureReg = binding.reg;
+    final varType = expr.variable.type;
+    final funcType = varType is ir.FunctionType ? varType : null;
+    final retType = funcType?.returnType ?? varType;
 
-    // Determine return type for the result register.
-    final retType = expr.variable.type;
-    final funcType = retType is ir.FunctionType ? retType.returnType : retType;
-    final retLoc = _classifyType(funcType);
-    final resultReg =
-        retLoc == ResultLoc.ref ? _allocRefReg() : _allocValueReg();
-
-    // Compile positional arguments with type coercion.
-    final args = expr.arguments.positional;
-    final posParamTypes = (expr.variable.type is ir.FunctionType)
-        ? (expr.variable.type as ir.FunctionType).positionalParameters
-        : const <ir.DartType>[];
-    final argTemps = <(int, ResultLoc)>[];
-    for (var i = 0; i < args.length; i++) {
-      var (argReg, argLoc) = _compileExpression(args[i]);
-      if (i < posParamTypes.length) {
-        final paramKind = _classifyStackKind(posParamTypes[i]);
-        (argReg, argLoc) = _coerceArg(
-            argReg, argLoc, paramKind, args[i]);
-      }
-      argTemps.add((argReg, argLoc));
-    }
-
-    // Handle named arguments via the variable's FunctionType.
-    final varFuncType = expr.variable.type;
-    if (varFuncType is ir.FunctionType &&
-        varFuncType.namedParameters.isNotEmpty) {
-      _compileNamedArgsFromNamedTypes(
-        varFuncType.namedParameters,
-        expr.arguments.named,
-        argTemps,
-      );
-    }
-
-    _emitArgMovesAndCall(argTemps, Op.call, resultReg, closureReg);
-    return (resultReg, retLoc);
+    return _compileClosureCall(
+      closureReg: binding.reg,
+      arguments: expr.arguments,
+      funcType: funcType,
+      returnType: retType,
+    );
   }
 
   /// Compiles a [FunctionInvocation] -- calling a closure stored in a variable
   /// or returned from another expression.
   (int, ResultLoc) _compileFunctionInvocation(ir.FunctionInvocation expr) {
-    // Compile the receiver expression to get the closure ref register.
     final (closureReg, _) = _compileExpression(expr.receiver);
 
-    // Determine return type from the function type.
-    final funcType = expr.functionType;
-    final retType = funcType?.returnType ?? const ir.DynamicType();
-    final retLoc = _classifyType(retType);
-    final resultReg =
-        retLoc == ResultLoc.ref ? _allocRefReg() : _allocValueReg();
+    return _compileClosureCall(
+      closureReg: closureReg,
+      arguments: expr.arguments,
+      funcType: expr.functionType,
+      returnType: expr.functionType?.returnType ?? const ir.DynamicType(),
+    );
+  }
+
+  /// Shared helper for compiling closure calls (LocalFunctionInvocation and
+  /// FunctionInvocation). Handles positional arg coercion, named arg matching,
+  /// and CALL emission.
+  (int, ResultLoc) _compileClosureCall({
+    required int closureReg,
+    required ir.Arguments arguments,
+    required ir.FunctionType? funcType,
+    required ir.DartType returnType,
+  }) {
+    final (resultReg, retLoc) = _allocResultReg(returnType);
 
     // Compile positional arguments with type coercion.
-    final args = expr.arguments.positional;
-    final posParamTypes = funcType?.positionalParameters ?? const <ir.DartType>[];
-    final argTemps = <(int, ResultLoc)>[];
-    for (var i = 0; i < args.length; i++) {
-      var (argReg, argLoc) = _compileExpression(args[i]);
-      if (i < posParamTypes.length) {
-        final paramKind = _classifyStackKind(posParamTypes[i]);
-        (argReg, argLoc) = _coerceArg(
-            argReg, argLoc, paramKind, args[i]);
-      }
-      argTemps.add((argReg, argLoc));
-    }
+    final posParamTypes =
+        funcType?.positionalParameters ?? const <ir.DartType>[];
+    final argTemps = _compilePositionalArgsFromTypes(
+        arguments.positional, posParamTypes);
 
-    // Handle named arguments via the expression's FunctionType.
+    // Handle named arguments via the FunctionType.
     if (funcType != null && funcType.namedParameters.isNotEmpty) {
       _compileNamedArgsFromNamedTypes(
         funcType.namedParameters,
-        expr.arguments.named,
+        arguments.named,
         argTemps,
       );
     }
@@ -753,7 +666,63 @@ extension on DarticCompiler {
     return (resultReg, retLoc);
   }
 
+  /// Compiles positional arguments with type coercion against a list of
+  /// parameter types (from a FunctionType). Used by closure calls.
+  List<(int, ResultLoc)> _compilePositionalArgsFromTypes(
+    List<ir.Expression> args,
+    List<ir.DartType> paramTypes,
+  ) {
+    final argTemps = <(int, ResultLoc)>[];
+    for (var i = 0; i < args.length; i++) {
+      var (argReg, argLoc) = _compileExpression(args[i]);
+      if (i < paramTypes.length) {
+        final paramKind = _classifyStackKind(paramTypes[i]);
+        (argReg, argLoc) = _coerceArg(argReg, argLoc, paramKind, args[i]);
+      }
+      argTemps.add((argReg, argLoc));
+    }
+    return argTemps;
+  }
+
   // ── Shared call helpers ──
+
+  /// Compiles positional and named arguments for a call expression.
+  ///
+  /// Handles: positional args with coercion, default values for missing
+  /// optionals, and named argument matching. Used by static invocation,
+  /// virtual calls, super method invocation, and constructor invocation.
+  List<(int, ResultLoc)> _compileCallArgs(
+    ir.Arguments arguments,
+    List<ir.VariableDeclaration> positionalParams,
+    List<ir.VariableDeclaration> namedParams,
+  ) {
+    final argTemps = <(int, ResultLoc)>[];
+
+    // 1. Compile provided positional arguments.
+    for (var i = 0; i < arguments.positional.length; i++) {
+      var (argReg, argLoc) = _compileExpression(arguments.positional[i]);
+      if (i < positionalParams.length) {
+        final paramKind = _classifyStackKind(positionalParams[i].type);
+        (argReg, argLoc) = _coerceArg(
+            argReg, argLoc, paramKind, arguments.positional[i]);
+      }
+      argTemps.add((argReg, argLoc));
+    }
+
+    // 2. Fill in missing optional positional arguments with default values.
+    for (var i = arguments.positional.length;
+        i < positionalParams.length;
+        i++) {
+      argTemps.add(_compileDefaultValue(positionalParams[i]));
+    }
+
+    // 3. Handle named arguments.
+    if (namedParams.isNotEmpty) {
+      _compileNamedArgsFromParams(namedParams, arguments.named, argTemps);
+    }
+
+    return argTemps;
+  }
 
   /// Compiles named arguments from [ir.VariableDeclaration] parameters
   /// (used by [_compileStaticInvocation] where params come from the target
@@ -834,6 +803,45 @@ extension on DarticCompiler {
     }
   }
 
+  /// Allocates an IC entry and emits CALL_VIRTUAL.
+  ///
+  /// [resultReg] receives the call result. [receiverReg] holds the boxed
+  /// receiver. [methodName] is the dispatch method name. [argCount] is the
+  /// number of explicit arguments (not counting the receiver).
+  void _emitCallVirtual(
+      int resultReg, int receiverReg, String methodName, int argCount) {
+    final methodNameIdx = _constantPool.addName(methodName);
+    final icIndex = _icEntries.length;
+    _icEntries.add(ICEntry(methodNameIndex: methodNameIdx, argCount: argCount));
+    _emitter.emit(
+        encodeABC(Op.callVirtual, resultReg, receiverReg, icIndex));
+  }
+
+  /// Compiles a single expression into a host-arg tuple list.
+  /// Convenience wrapper for the receiver-only case.
+  List<(int, ResultLoc, ir.DartType?)> _compileHostExprArgs(
+    ir.Expression expr,
+  ) {
+    final (reg, loc) = _compileExpression(expr);
+    return [(reg, loc, _inferExprType(expr))];
+  }
+
+  /// Compiles positional and named arguments from [arguments] into
+  /// host-arg tuples and appends them to [out].
+  void _compileHostPositionalAndNamed(
+    ir.Arguments arguments,
+    List<(int, ResultLoc, ir.DartType?)> out,
+  ) {
+    for (final arg in arguments.positional) {
+      final (reg, loc) = _compileExpression(arg);
+      out.add((reg, loc, _inferExprType(arg)));
+    }
+    for (final arg in arguments.named) {
+      final (reg, loc) = _compileExpression(arg.value);
+      out.add((reg, loc, _inferExprType(arg.value)));
+    }
+  }
+
   /// Emits a CALL_HOST instruction for a platform function call.
   ///
   /// Unlike CALL_STATIC (which pushes a CallStack frame), CALL_HOST reads
@@ -850,14 +858,10 @@ extension on DarticCompiler {
     int bindingIndex,
   ) {
     // Phase 1: ensure all args are on the ref stack.
-    final refArgRegs = <int>[];
-    for (final (srcReg, srcLoc, srcType) in compiledArgs) {
-      if (srcLoc == ResultLoc.ref) {
-        refArgRegs.add(srcReg);
-      } else {
-        refArgRegs.add(_emitBoxToRef(srcReg, srcType));
-      }
-    }
+    final refArgRegs = <int>[
+      for (final (srcReg, srcLoc, srcType) in compiledArgs)
+        _boxToRefIfValue(srcReg, srcLoc, srcType),
+    ];
 
     // Phase 2: allocate consecutive ref registers — result + arg slots.
     final resultReg = _allocRefReg();
@@ -893,8 +897,7 @@ extension on DarticCompiler {
   ) {
     var valArgIdx = 0;
     var refArgIdx = 3; // Skip ITA(0), FTA(1), this(2) — Ch2 convention
-    for (var i = 0; i < argTemps.length; i++) {
-      final (srcReg, loc) = argTemps[i];
+    for (final (srcReg, loc) in argTemps) {
       final movePC = _emitter.emitPlaceholder();
       final argIdx = loc == ResultLoc.value ? valArgIdx++ : refArgIdx++;
       _pendingArgMoves.add(
@@ -963,10 +966,7 @@ extension on DarticCompiler {
 
     if (targetClass == _coreTypes.intClass ||
         targetClass == _coreTypes.numClass) {
-      final receiverType = _inferExprType(expr.receiver);
-      final receiverKind = receiverType != null
-          ? _classifyStackKind(receiverType)
-          : StackKind.ref;
+      final receiverKind = _inferStackKind(expr.receiver);
 
       // int `/` returns double -- convert both operands and use DIV_DBL.
       if (name == '/' && receiverKind == StackKind.intVal) {
@@ -1023,28 +1023,12 @@ extension on DarticCompiler {
   (int, ResultLoc) _compileHostInstanceCall(ir.InstanceInvocation expr) {
     final target = expr.interfaceTarget;
 
-    // 1. Compile receiver.
-    final (recvReg, recvLoc) = _compileExpression(expr.receiver);
-    final recvType = _inferExprType(expr.receiver);
+    // Compile receiver + arguments into host-arg tuples.
+    final compiledArgs = _compileHostExprArgs(expr.receiver);
+    _compileHostPositionalAndNamed(expr.arguments, compiledArgs);
 
-    // 2. Compile explicit arguments.
-    final compiledArgs = <(int, ResultLoc, ir.DartType?)>[
-      (recvReg, recvLoc, recvType),
-    ];
-    for (final arg in expr.arguments.positional) {
-      final (reg, loc) = _compileExpression(arg);
-      compiledArgs.add((reg, loc, _inferExprType(arg)));
-    }
-    for (final arg in expr.arguments.named) {
-      final (reg, loc) = _compileExpression(arg.value);
-      compiledArgs.add((reg, loc, _inferExprType(arg.value)));
-    }
-
-    // 3. Allocate binding: receiver is arg[0], so total argCount includes it.
     final symbolName = _hostSymbolName(target);
-    final argCount = compiledArgs.length; // receiver + explicit args
-    final bindingIndex = _allocBinding(symbolName, argCount);
-
+    final bindingIndex = _allocBinding(symbolName, compiledArgs.length);
     return _emitCallHost(compiledArgs, bindingIndex);
   }
 
@@ -1059,42 +1043,19 @@ extension on DarticCompiler {
 
     // 1. Compile receiver — box to ref stack if value-type.
     var (receiverReg, receiverLoc) = _compileExpression(expr.receiver);
-    if (receiverLoc == ResultLoc.value) {
-      receiverReg = _emitBoxToRef(receiverReg, _inferExprType(expr.receiver));
-    }
+    receiverReg = _boxToRefIfValue(
+        receiverReg, receiverLoc, _inferExprType(expr.receiver));
 
     // 2. Allocate result register based on return type.
     final retType = target.function.returnType;
-    final retLoc = _classifyType(retType);
-    final resultReg =
-        retLoc == ResultLoc.ref ? _allocRefReg() : _allocValueReg();
+    final (resultReg, retLoc) = _allocResultReg(retType);
 
     // 3. Compile arguments.
-    final positionalParams = target.function.positionalParameters;
-    final namedParams = target.function.namedParameters;
-    final argTemps = <(int, ResultLoc)>[];
-
-    for (var i = 0; i < expr.arguments.positional.length; i++) {
-      var (argReg, argLoc) = _compileExpression(expr.arguments.positional[i]);
-      if (i < positionalParams.length) {
-        final paramKind = _classifyStackKind(positionalParams[i].type);
-        (argReg, argLoc) = _coerceArg(
-            argReg, argLoc, paramKind, expr.arguments.positional[i]);
-      }
-      argTemps.add((argReg, argLoc));
-    }
-
-    // Fill missing optional positional args with defaults.
-    for (var i = expr.arguments.positional.length;
-        i < positionalParams.length;
-        i++) {
-      argTemps.add(_compileDefaultValue(positionalParams[i]));
-    }
-
-    // Handle named arguments.
-    if (namedParams.isNotEmpty) {
-      _compileNamedArgsFromParams(namedParams, expr.arguments.named, argTemps);
-    }
+    final argTemps = _compileCallArgs(
+      expr.arguments,
+      target.function.positionalParameters,
+      target.function.namedParameters,
+    );
 
     // 4. Emit FTA for generic method calls.
     _emitFTAForCall(expr.arguments.types);
@@ -1102,14 +1063,8 @@ extension on DarticCompiler {
     // 5. Emit pending arg MOVEs (skip receiver -- interpreter handles this).
     _emitArgMovesForVirtualCall(argTemps);
 
-    // 6. Allocate IC entry and emit CALL_VIRTUAL.
-    final methodNameIdx = _constantPool.addName(methodName);
-    final icIndex = _icEntries.length;
-    _icEntries.add(
-        ICEntry(methodNameIndex: methodNameIdx, argCount: argTemps.length));
-
-    _emitter.emit(
-        encodeABC(Op.callVirtual, resultReg, receiverReg, icIndex));
+    // 6. Emit CALL_VIRTUAL.
+    _emitCallVirtual(resultReg, receiverReg, methodName, argTemps.length);
 
     return (resultReg, retLoc);
   }
@@ -1133,10 +1088,7 @@ extension on DarticCompiler {
     var (reg, loc) = _compileExpression(expr.expression);
 
     // Ensure it's on the ref stack -- exceptions are always objects.
-    if (loc == ResultLoc.value) {
-      final exprType = _inferExprType(expr.expression);
-      reg = _emitBoxToRef(reg, exprType);
-    }
+    reg = _boxToRefIfValue(reg, loc, _inferExprType(expr.expression));
 
     _emitter.emit(encodeABC(Op.throw_, reg, 0, 0));
 
@@ -1159,10 +1111,8 @@ extension on DarticCompiler {
     var (operandReg, operandLoc) = _compileExpression(expr.operand);
 
     // Box if on value stack -- INSTANCEOF needs the operand on the ref stack.
-    if (operandLoc == ResultLoc.value) {
-      final operandType = _inferExprType(expr.operand);
-      operandReg = _emitBoxToRef(operandReg, operandType);
-    }
+    operandReg = _boxToRefIfValue(
+        operandReg, operandLoc, _inferExprType(expr.operand));
 
     // Emit INSTANTIATE_TYPE for the target type → ref register.
     final typeReg = _emitInstantiateType(expr.type);
@@ -1201,10 +1151,8 @@ extension on DarticCompiler {
     var (operandReg, operandLoc) = _compileExpression(expr.operand);
 
     // Box if on value stack -- CAST needs the operand on the ref stack.
-    if (operandLoc == ResultLoc.value) {
-      final operandType = _inferExprType(expr.operand);
-      operandReg = _emitBoxToRef(operandReg, operandType);
-    }
+    operandReg = _boxToRefIfValue(
+        operandReg, operandLoc, _inferExprType(expr.operand));
 
     // Emit INSTANTIATE_TYPE for the target type → ref register.
     final typeReg = _emitInstantiateType(expr.type);
@@ -1242,25 +1190,11 @@ extension on DarticCompiler {
   (int, ResultLoc) _compileHostConstructorInvocation(
     ir.ConstructorInvocation expr,
   ) {
-    final target = expr.target;
-
-    // Compile all arguments.
     final compiledArgs = <(int, ResultLoc, ir.DartType?)>[];
-    for (final arg in expr.arguments.positional) {
-      final (reg, loc) = _compileExpression(arg);
-      compiledArgs.add((reg, loc, _inferExprType(arg)));
-    }
-    for (final arg in expr.arguments.named) {
-      final (reg, loc) = _compileExpression(arg.value);
-      compiledArgs.add((reg, loc, _inferExprType(arg.value)));
-    }
+    _compileHostPositionalAndNamed(expr.arguments, compiledArgs);
 
-    // Constructor symbol: "libUri::ClassName::ClassName#paramCount" or
-    // "libUri::ClassName::new#paramCount" for unnamed constructors.
-    final symbolName = _hostSymbolName(target);
-    final argCount = compiledArgs.length;
-    final bindingIndex = _allocBinding(symbolName, argCount);
-
+    final symbolName = _hostSymbolName(expr.target);
+    final bindingIndex = _allocBinding(symbolName, compiledArgs.length);
     return _emitCallHost(compiledArgs, bindingIndex);
   }
 
@@ -1324,31 +1258,11 @@ extension on DarticCompiler {
     }
 
     // 2. Compile arguments.
-    final positionalParams = target.function.positionalParameters;
-    final namedParams = target.function.namedParameters;
-    final argTemps = <(int, ResultLoc)>[];
-
-    for (var i = 0; i < expr.arguments.positional.length; i++) {
-      var (argReg, argLoc) = _compileExpression(expr.arguments.positional[i]);
-      if (i < positionalParams.length) {
-        final paramKind = _classifyStackKind(positionalParams[i].type);
-        (argReg, argLoc) = _coerceArg(
-            argReg, argLoc, paramKind, expr.arguments.positional[i]);
-      }
-      argTemps.add((argReg, argLoc));
-    }
-
-    // Fill missing optional positional args with defaults.
-    for (var i = expr.arguments.positional.length;
-        i < positionalParams.length;
-        i++) {
-      argTemps.add(_compileDefaultValue(positionalParams[i]));
-    }
-
-    // Handle named arguments.
-    if (namedParams.isNotEmpty) {
-      _compileNamedArgsFromParams(namedParams, expr.arguments.named, argTemps);
-    }
+    final argTemps = _compileCallArgs(
+      expr.arguments,
+      target.function.positionalParameters,
+      target.function.namedParameters,
+    );
 
     // 3. Emit pending MOVE for `this` at ref argIdx 2.
     final thisMovePC = _emitter.emitPlaceholder();
@@ -1416,21 +1330,10 @@ extension on DarticCompiler {
   /// The receiver is the only arg. E.g., `"hello".length` becomes
   /// `CALL_HOST` with symbol `"dart:core::String::length#0"`, argCount=1.
   (int, ResultLoc) _compileHostGetterCall(ir.InstanceGet expr) {
-    final target = expr.interfaceTarget;
+    final compiledArgs = _compileHostExprArgs(expr.receiver);
 
-    // Compile receiver.
-    final (recvReg, recvLoc) = _compileExpression(expr.receiver);
-    final recvType = _inferExprType(expr.receiver);
-
-    final compiledArgs = <(int, ResultLoc, ir.DartType?)>[
-      (recvReg, recvLoc, recvType),
-    ];
-
-    // Getter has 0 explicit params; symbol uses target member name.
-    final symbolName = _hostSymbolName(target);
-    final argCount = 1; // receiver only
-    final bindingIndex = _allocBinding(symbolName, argCount);
-
+    final symbolName = _hostSymbolName(expr.interfaceTarget);
+    final bindingIndex = _allocBinding(symbolName, 1);
     return _emitCallHost(compiledArgs, bindingIndex);
   }
 
@@ -1444,26 +1347,16 @@ extension on DarticCompiler {
   ) {
     // 1. Compile receiver — box to ref stack if value-type.
     var (receiverReg, receiverLoc) = _compileExpression(expr.receiver);
-    if (receiverLoc == ResultLoc.value) {
-      receiverReg = _emitBoxToRef(receiverReg, _inferExprType(expr.receiver));
-    }
+    receiverReg = _boxToRefIfValue(
+        receiverReg, receiverLoc, _inferExprType(expr.receiver));
 
     // 2. Allocate result register based on the getter's return type.
-    final retType = getter.function.returnType;
-    final retLoc = _classifyType(retType);
-    final resultReg =
-        retLoc == ResultLoc.ref ? _allocRefReg() : _allocValueReg();
+    final (resultReg, retLoc) = _allocResultReg(getter.function.returnType);
 
     // 3. No arguments for a getter — skip arg moves.
 
-    // 4. Allocate IC entry and emit CALL_VIRTUAL.
-    final methodName = expr.name.text; // Getter uses the property name.
-    final methodNameIdx = _constantPool.addName(methodName);
-    final icIndex = _icEntries.length;
-    _icEntries.add(ICEntry(methodNameIndex: methodNameIdx, argCount: 0));
-
-    _emitter.emit(
-        encodeABC(Op.callVirtual, resultReg, receiverReg, icIndex));
+    // 4. Emit CALL_VIRTUAL.
+    _emitCallVirtual(resultReg, receiverReg, expr.name.text, 0);
 
     return (resultReg, retLoc);
   }
@@ -1523,17 +1416,8 @@ extension on DarticCompiler {
 
     // Save value into a dedicated register *before* _emitCallHost, which may
     // MOVE registers and invalidate the original location.
-    final int savedReg;
-    final ResultLoc savedLoc;
-    if (valLoc == ResultLoc.ref) {
-      savedReg = _allocRefReg();
-      _emitter.emit(encodeABC(Op.moveRef, savedReg, valReg, 0));
-      savedLoc = ResultLoc.ref;
-    } else {
-      savedReg = _allocValueReg();
-      _emitter.emit(encodeABC(Op.moveVal, savedReg, valReg, 0));
-      savedLoc = ResultLoc.value;
-    }
+    final savedReg = valLoc == ResultLoc.ref ? _allocRefReg() : _allocValueReg();
+    _emitMove(savedReg, valReg, valLoc);
 
     final compiledArgs = <(int, ResultLoc, ir.DartType?)>[
       (recvReg, recvLoc, recvType),
@@ -1546,13 +1430,12 @@ extension on DarticCompiler {
       nameOverride: '${expr.name.text}=',
       paramCountOverride: 1,
     );
-    final argCount = 2; // receiver + value
-    final bindingIndex = _allocBinding(symbolName, argCount);
+    final bindingIndex = _allocBinding(symbolName, 2);
 
     _emitCallHost(compiledArgs, bindingIndex);
 
     // InstanceSet evaluates to the assigned value.
-    return (savedReg, savedLoc);
+    return (savedReg, valLoc);
   }
 
   /// Compiles an instance setter call via CALL_VIRTUAL.
@@ -1566,9 +1449,8 @@ extension on DarticCompiler {
   ) {
     // 1. Compile receiver — box to ref stack if value-type.
     var (receiverReg, receiverLoc) = _compileExpression(expr.receiver);
-    if (receiverLoc == ResultLoc.value) {
-      receiverReg = _emitBoxToRef(receiverReg, _inferExprType(expr.receiver));
-    }
+    receiverReg = _boxToRefIfValue(
+        receiverReg, receiverLoc, _inferExprType(expr.receiver));
 
     // 2. Compile the value argument.
     var (valReg, valLoc) = _compileExpression(expr.value);
@@ -1590,12 +1472,7 @@ extension on DarticCompiler {
     _emitArgMovesForVirtualCall(argTemps);
 
     final dummyResult = _allocRefReg();
-    final methodName = '${expr.name.text}=';
-    final methodNameIdx = _constantPool.addName(methodName);
-    final icIndex = _icEntries.length;
-    _icEntries.add(ICEntry(methodNameIndex: methodNameIdx, argCount: 1));
-    _emitter.emit(
-        encodeABC(Op.callVirtual, dummyResult, receiverReg, icIndex));
+    _emitCallVirtual(dummyResult, receiverReg, '${expr.name.text}=', 1);
 
     // InstanceSet evaluates to the assigned value.
     return (savedValReg, savedValLoc);
@@ -1608,9 +1485,7 @@ extension on DarticCompiler {
   (int, ResultLoc) _compileDynamicGet(ir.DynamicGet expr) {
     // 1. Compile receiver to ref stack.
     var (recvReg, recvLoc) = _compileExpression(expr.receiver);
-    if (recvLoc == ResultLoc.value) {
-      recvReg = _emitBoxToRef(recvReg, _inferExprType(expr.receiver));
-    }
+    recvReg = _boxToRefIfValue(recvReg, recvLoc, _inferExprType(expr.receiver));
 
     // 2. Allocate result (always ref for dynamic dispatch).
     final resultReg = _allocRefReg();
@@ -1627,15 +1502,11 @@ extension on DarticCompiler {
   (int, ResultLoc) _compileDynamicSet(ir.DynamicSet expr) {
     // 1. Compile receiver to ref stack.
     var (recvReg, recvLoc) = _compileExpression(expr.receiver);
-    if (recvLoc == ResultLoc.value) {
-      recvReg = _emitBoxToRef(recvReg, _inferExprType(expr.receiver));
-    }
+    recvReg = _boxToRefIfValue(recvReg, recvLoc, _inferExprType(expr.receiver));
 
     // 2. Compile value to ref stack.
     var (valReg, valLoc) = _compileExpression(expr.value);
-    if (valLoc == ResultLoc.value) {
-      valReg = _emitBoxToRef(valReg, _inferExprType(expr.value));
-    }
+    valReg = _boxToRefIfValue(valReg, valLoc, _inferExprType(expr.value));
 
     // 3. Add property name to names partition and emit SET_FIELD_DYN.
     final nameIdx = _constantPool.addName(expr.name.text);
@@ -1653,17 +1524,13 @@ extension on DarticCompiler {
   (int, ResultLoc) _compileDynamicInvocation(ir.DynamicInvocation expr) {
     // 1. Compile receiver to ref (box if needed).
     var (recvReg, recvLoc) = _compileExpression(expr.receiver);
-    if (recvLoc == ResultLoc.value) {
-      recvReg = _emitBoxToRef(recvReg, _inferExprType(expr.receiver));
-    }
+    recvReg = _boxToRefIfValue(recvReg, recvLoc, _inferExprType(expr.receiver));
 
     // 2. Compile all positional args to ref (box if needed).
     final argRegs = <int>[];
     for (final arg in expr.arguments.positional) {
       var (argReg, argLoc) = _compileExpression(arg);
-      if (argLoc == ResultLoc.value) {
-        argReg = _emitBoxToRef(argReg, _inferExprType(arg));
-      }
+      argReg = _boxToRefIfValue(argReg, argLoc, _inferExprType(arg));
       argRegs.add(argReg);
     }
 
@@ -1710,37 +1577,14 @@ extension on DarticCompiler {
     }
 
     // Allocate result register based on return type.
-    final retType = target.function.returnType;
-    final retLoc = _classifyType(retType);
-    final resultReg =
-        retLoc == ResultLoc.ref ? _allocRefReg() : _allocValueReg();
+    final (resultReg, retLoc) = _allocResultReg(target.function.returnType);
 
     // Compile arguments.
-    final positionalParams = target.function.positionalParameters;
-    final namedParams = target.function.namedParameters;
-    final argTemps = <(int, ResultLoc)>[];
-
-    for (var i = 0; i < expr.arguments.positional.length; i++) {
-      var (argReg, argLoc) = _compileExpression(expr.arguments.positional[i]);
-      if (i < positionalParams.length) {
-        final paramKind = _classifyStackKind(positionalParams[i].type);
-        (argReg, argLoc) = _coerceArg(
-            argReg, argLoc, paramKind, expr.arguments.positional[i]);
-      }
-      argTemps.add((argReg, argLoc));
-    }
-
-    // Fill missing optional positional args.
-    for (var i = expr.arguments.positional.length;
-        i < positionalParams.length;
-        i++) {
-      argTemps.add(_compileDefaultValue(positionalParams[i]));
-    }
-
-    // Handle named arguments.
-    if (namedParams.isNotEmpty) {
-      _compileNamedArgsFromParams(namedParams, expr.arguments.named, argTemps);
-    }
+    final argTemps = _compileCallArgs(
+      expr.arguments,
+      target.function.positionalParameters,
+      target.function.namedParameters,
+    );
 
     _emitThisPassthrough();
     _emitArgMovesAndCall(argTemps, Op.callSuper, resultReg, funcId);
@@ -1775,10 +1619,8 @@ extension on DarticCompiler {
         );
       }
 
-      final retType = target.function.returnType;
-      final retLoc = _classifyType(retType);
-      final resultReg =
-          retLoc == ResultLoc.ref ? _allocRefReg() : _allocValueReg();
+      final (resultReg, retLoc) =
+          _allocResultReg(target.function.returnType);
 
       _emitThisPassthrough();
       _emitArgMovesAndCall(
@@ -2108,31 +1950,10 @@ extension on DarticCompiler {
     // Coerce return value and emit RETURN.
     final instRetKind =
         _classifyStackKind(subst.substituteType(fn.returnType));
-    if (actualRetKind == StackKind.ref && instRetKind.isValue) {
-      // Inner returns ref, caller expects value → UNBOX + RETURN_VAL.
-      final valReg = _allocValueReg();
-      final unboxOp = switch (instRetKind) {
-        StackKind.doubleVal => Op.unboxDouble,
-        StackKind.boolVal => Op.unboxBool,
-        _ => Op.unboxInt,
-      };
-      _emitter.emit(encodeABC(unboxOp, valReg, innerResultReg, 0));
-      _emitter.emit(encodeABC(Op.returnVal, valReg, 0, 0));
-    } else if (actualRetKind.isValue && instRetKind == StackKind.ref) {
-      // Inner returns value, caller expects ref → BOX + RETURN_REF.
-      final refReg = _allocRefReg();
-      final boxOp = switch (actualRetKind) {
-        StackKind.doubleVal => Op.boxDouble,
-        StackKind.boolVal => Op.boxBool,
-        _ => Op.boxInt,
-      };
-      _emitter.emit(encodeABC(boxOp, refReg, innerResultReg, 0));
-      _emitter.emit(encodeABC(Op.returnRef, refReg, 0, 0));
-    } else if (actualRetKind.isValue) {
-      _emitter.emit(encodeABC(Op.returnVal, innerResultReg, 0, 0));
-    } else {
-      _emitter.emit(encodeABC(Op.returnRef, innerResultReg, 0, 0));
-    }
+    final actualRetLoc =
+        actualRetKind.isValue ? ResultLoc.value : ResultLoc.ref;
+    _emitCoercedReturn(
+        innerResultReg, actualRetLoc, instRetKind, fn.returnType);
 
     _patchPendingArgMoves();
 
@@ -2173,41 +1994,8 @@ extension on DarticCompiler {
   // ── Collection Literals ──
 
   /// Compiles a [ir.ListLiteral] to CREATE_LIST bytecode.
-  ///
-  /// Each element is compiled, boxed to the ref stack if needed, moved to
-  /// consecutive ref registers, then CREATE_LIST is emitted.
-  (int, ResultLoc) _compileListLiteral(ir.ListLiteral expr) {
-    final elements = expr.expressions;
-    final destReg = _allocRefReg();
-
-    if (elements.isEmpty) {
-      _emitter.emit(encodeABC(Op.createList, destReg, 0, 0));
-      return (destReg, ResultLoc.ref);
-    }
-
-    // Phase 1: compile each element, box to ref if needed.
-    final elementRegs = <int>[];
-    for (final elem in elements) {
-      var (reg, loc) = _compileExpression(elem);
-      if (loc == ResultLoc.value) {
-        reg = _emitBoxToRef(reg, _inferExprType(elem));
-      }
-      elementRegs.add(reg);
-    }
-
-    // Phase 2: allocate consecutive ref registers and move elements.
-    final targetRegs = List.generate(elementRegs.length, (_) => _allocRefReg());
-
-    for (var i = 0; i < elementRegs.length; i++) {
-      if (elementRegs[i] != targetRegs[i]) {
-        _emitter.emit(encodeABC(Op.moveRef, targetRegs[i], elementRegs[i], 0));
-      }
-    }
-
-    _emitter.emit(
-        encodeABC(Op.createList, destReg, targetRegs.first, elements.length));
-    return (destReg, ResultLoc.ref);
-  }
+  (int, ResultLoc) _compileListLiteral(ir.ListLiteral expr) =>
+      _compileElementCollection(Op.createList, expr.expressions);
 
   /// Compiles a [ir.MapLiteral] to CREATE_MAP bytecode.
   ///
@@ -2222,108 +2010,56 @@ extension on DarticCompiler {
       return (destReg, ResultLoc.ref);
     }
 
-    // Phase 1: compile each key/value, box to ref if needed.
+    // Compile each key/value, box to ref if needed.
     final kvRegs = <int>[];
     for (final entry in entries) {
       var (keyReg, keyLoc) = _compileExpression(entry.key);
-      if (keyLoc == ResultLoc.value) {
-        keyReg = _emitBoxToRef(keyReg, _inferExprType(entry.key));
-      }
+      keyReg = _boxToRefIfValue(keyReg, keyLoc, _inferExprType(entry.key));
       kvRegs.add(keyReg);
 
       var (valReg, valLoc) = _compileExpression(entry.value);
-      if (valLoc == ResultLoc.value) {
-        valReg = _emitBoxToRef(valReg, _inferExprType(entry.value));
-      }
+      valReg = _boxToRefIfValue(valReg, valLoc, _inferExprType(entry.value));
       kvRegs.add(valReg);
     }
 
-    // Phase 2: allocate consecutive ref registers and move k/v pairs.
-    final targetRegs = List.generate(kvRegs.length, (_) => _allocRefReg());
-
-    for (var i = 0; i < kvRegs.length; i++) {
-      if (kvRegs[i] != targetRegs[i]) {
-        _emitter.emit(encodeABC(Op.moveRef, targetRegs[i], kvRegs[i], 0));
-      }
-    }
-
-    _emitter.emit(
-        encodeABC(Op.createMap, destReg, targetRegs.first, entries.length));
+    // Move k/v pairs into consecutive slots and emit CREATE_MAP.
+    _emitCreateCollection(Op.createMap, destReg, kvRegs, entries.length);
     return (destReg, ResultLoc.ref);
   }
 
   /// Compiles a [ir.SetLiteral] to CREATE_SET bytecode.
-  ///
-  /// Same pattern as list: elements are compiled, boxed, moved to consecutive
-  /// ref registers, then CREATE_SET is emitted.
-  (int, ResultLoc) _compileSetLiteral(ir.SetLiteral expr) {
-    final elements = expr.expressions;
+  (int, ResultLoc) _compileSetLiteral(ir.SetLiteral expr) =>
+      _compileElementCollection(Op.createSet, expr.expressions);
+
+  /// Shared helper for list/set literal compilation: compiles each element
+  /// expression, boxes to ref if needed, and emits the collection creation op.
+  (int, ResultLoc) _compileElementCollection(
+    int op,
+    List<ir.Expression> elements,
+  ) {
     final destReg = _allocRefReg();
 
     if (elements.isEmpty) {
-      _emitter.emit(encodeABC(Op.createSet, destReg, 0, 0));
+      _emitter.emit(encodeABC(op, destReg, 0, 0));
       return (destReg, ResultLoc.ref);
     }
 
-    // Phase 1: compile each element, box to ref if needed.
     final elementRegs = <int>[];
     for (final elem in elements) {
       var (reg, loc) = _compileExpression(elem);
-      if (loc == ResultLoc.value) {
-        reg = _emitBoxToRef(reg, _inferExprType(elem));
-      }
+      reg = _boxToRefIfValue(reg, loc, _inferExprType(elem));
       elementRegs.add(reg);
     }
 
-    // Phase 2: allocate consecutive ref registers and move elements.
-    final targetRegs = List.generate(elementRegs.length, (_) => _allocRefReg());
-
-    for (var i = 0; i < elementRegs.length; i++) {
-      if (elementRegs[i] != targetRegs[i]) {
-        _emitter.emit(encodeABC(Op.moveRef, targetRegs[i], elementRegs[i], 0));
-      }
-    }
-
-    _emitter.emit(
-        encodeABC(Op.createSet, destReg, targetRegs.first, elements.length));
+    _emitCreateCollection(op, destReg, elementRegs, elements.length);
     return (destReg, ResultLoc.ref);
   }
 
   // ── Collection Constants ──
 
   /// Compiles a [ir.ListConstant] to CREATE_LIST bytecode.
-  (int, ResultLoc) _compileListConstant(ir.ListConstant constant) {
-    final entries = constant.entries;
-    final destReg = _allocRefReg();
-
-    if (entries.isEmpty) {
-      _emitter.emit(encodeABC(Op.createList, destReg, 0, 0));
-      return (destReg, ResultLoc.ref);
-    }
-
-    // Compile each element constant, box to ref if needed.
-    final elementRegs = <int>[];
-    for (final entry in entries) {
-      var (reg, loc) = entry.accept(_constantVisitor);
-      if (loc == ResultLoc.value) {
-        reg = _emitBoxToRef(reg, _inferConstantType(entry));
-      }
-      elementRegs.add(reg);
-    }
-
-    // Allocate consecutive ref registers and move elements.
-    final targetRegs = List.generate(elementRegs.length, (_) => _allocRefReg());
-
-    for (var i = 0; i < elementRegs.length; i++) {
-      if (elementRegs[i] != targetRegs[i]) {
-        _emitter.emit(encodeABC(Op.moveRef, targetRegs[i], elementRegs[i], 0));
-      }
-    }
-
-    _emitter.emit(
-        encodeABC(Op.createList, destReg, targetRegs.first, entries.length));
-    return (destReg, ResultLoc.ref);
-  }
+  (int, ResultLoc) _compileListConstant(ir.ListConstant constant) =>
+      _compileConstantElementCollection(Op.createList, constant.entries);
 
   /// Compiles a [ir.MapConstant] to CREATE_MAP bytecode.
   (int, ResultLoc) _compileMapConstant(ir.MapConstant constant) {
@@ -2339,63 +2075,44 @@ extension on DarticCompiler {
     final kvRegs = <int>[];
     for (final entry in entries) {
       var (keyReg, keyLoc) = entry.key.accept(_constantVisitor);
-      if (keyLoc == ResultLoc.value) {
-        keyReg = _emitBoxToRef(keyReg, _inferConstantType(entry.key));
-      }
+      keyReg = _boxToRefIfValue(keyReg, keyLoc, _inferConstantType(entry.key));
       kvRegs.add(keyReg);
 
       var (valReg, valLoc) = entry.value.accept(_constantVisitor);
-      if (valLoc == ResultLoc.value) {
-        valReg = _emitBoxToRef(valReg, _inferConstantType(entry.value));
-      }
+      valReg = _boxToRefIfValue(
+          valReg, valLoc, _inferConstantType(entry.value));
       kvRegs.add(valReg);
     }
 
-    // Allocate consecutive ref registers and move k/v pairs.
-    final targetRegs = List.generate(kvRegs.length, (_) => _allocRefReg());
-
-    for (var i = 0; i < kvRegs.length; i++) {
-      if (kvRegs[i] != targetRegs[i]) {
-        _emitter.emit(encodeABC(Op.moveRef, targetRegs[i], kvRegs[i], 0));
-      }
-    }
-
-    _emitter.emit(
-        encodeABC(Op.createMap, destReg, targetRegs.first, entries.length));
+    _emitCreateCollection(Op.createMap, destReg, kvRegs, entries.length);
     return (destReg, ResultLoc.ref);
   }
 
   /// Compiles a [ir.SetConstant] to CREATE_SET bytecode.
-  (int, ResultLoc) _compileSetConstant(ir.SetConstant constant) {
-    final entries = constant.entries;
+  (int, ResultLoc) _compileSetConstant(ir.SetConstant constant) =>
+      _compileConstantElementCollection(Op.createSet, constant.entries);
+
+  /// Shared helper for list/set constant compilation: compiles each constant
+  /// entry, boxes to ref if needed, and emits the collection creation op.
+  (int, ResultLoc) _compileConstantElementCollection(
+    int op,
+    List<ir.Constant> entries,
+  ) {
     final destReg = _allocRefReg();
 
     if (entries.isEmpty) {
-      _emitter.emit(encodeABC(Op.createSet, destReg, 0, 0));
+      _emitter.emit(encodeABC(op, destReg, 0, 0));
       return (destReg, ResultLoc.ref);
     }
 
-    // Compile each element constant, box to ref if needed.
     final elementRegs = <int>[];
     for (final entry in entries) {
       var (reg, loc) = entry.accept(_constantVisitor);
-      if (loc == ResultLoc.value) {
-        reg = _emitBoxToRef(reg, _inferConstantType(entry));
-      }
+      reg = _boxToRefIfValue(reg, loc, _inferConstantType(entry));
       elementRegs.add(reg);
     }
 
-    // Allocate consecutive ref registers and move elements.
-    final targetRegs = List.generate(elementRegs.length, (_) => _allocRefReg());
-
-    for (var i = 0; i < elementRegs.length; i++) {
-      if (elementRegs[i] != targetRegs[i]) {
-        _emitter.emit(encodeABC(Op.moveRef, targetRegs[i], elementRegs[i], 0));
-      }
-    }
-
-    _emitter.emit(
-        encodeABC(Op.createSet, destReg, targetRegs.first, entries.length));
+    _emitCreateCollection(op, destReg, elementRegs, entries.length);
     return (destReg, ResultLoc.ref);
   }
 

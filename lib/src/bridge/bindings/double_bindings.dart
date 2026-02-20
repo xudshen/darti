@@ -1,4 +1,4 @@
-/// Registers `double` host registry for the CALL_HOST pipeline.
+/// Registers `double` host bindings for the CALL_HOST pipeline.
 ///
 /// Covers instance methods, getters, static methods, and constants
 /// declared on `double`. Basic arithmetic (+, -, *, /, %, <, >, ==,
@@ -12,7 +12,7 @@ library;
 
 import '../host_function_registry.dart';
 
-/// Registers all `dart:core::double` host function registry.
+/// Registers all `dart:core::double` host function bindings.
 abstract final class DoubleBindings {
   static void register(HostFunctionRegistry registry) {
     // ── Instance methods ──

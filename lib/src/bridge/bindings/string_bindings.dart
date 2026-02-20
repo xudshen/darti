@@ -1,4 +1,4 @@
-/// Registers `String` host registry for the CALL_HOST pipeline.
+/// Registers `String` host bindings for the CALL_HOST pipeline.
 ///
 /// Covers String instance methods, getters, operators, and static methods.
 /// Basic equality (==) uses specialized opcodes and is NOT handled here.
@@ -8,7 +8,7 @@ library;
 
 import '../host_function_registry.dart';
 
-/// Registers all `dart:core::String` host function registry.
+/// Registers all `dart:core::String` host function bindings.
 abstract final class StringBindings {
   static void register(HostFunctionRegistry registry) {
     // ── Getters (symbol #0, receiver only) ──

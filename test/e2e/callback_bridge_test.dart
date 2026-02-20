@@ -1,35 +1,11 @@
-import 'package:dartic/src/bridge/core_bindings.dart';
-import 'package:dartic/src/bridge/host_function_registry.dart';
-import 'package:dartic/src/runtime/interpreter.dart';
 import 'package:test/test.dart';
 
 import '../helpers/compile_helper.dart';
 
-/// Compiles Dart source and executes with CoreBindings host functions.
-Future<Object?> _compileAndRunWithHost(String source) async {
-  final module = await compileDart(source);
-  final registry = HostFunctionRegistry();
-  CoreBindings.registerAll(registry);
-  final interp = DarticInterpreter(hostFunctionRegistry: registry);
-  interp.execute(module);
-  return interp.entryResult;
-}
-
-/// Like [_compileAndRunWithHost] but captures print output.
-Future<(Object?, List<String>)> _compileAndCapturePrint(String source) async {
-  final printLog = <String>[];
-  final module = await compileDart(source);
-  final registry = HostFunctionRegistry();
-  CoreBindings.registerAll(registry, printFn: (v) => printLog.add('$v'));
-  final interp = DarticInterpreter(hostFunctionRegistry: registry);
-  interp.execute(module);
-  return (interp.entryResult, printLog);
-}
-
 void main() {
   group('callback bridge e2e', () {
     test('forEach invokes callback for each element', () async {
-      final (_, prints) = await _compileAndCapturePrint('''
+      final (_, prints) = await compileAndCapturePrint('''
         void main() {
           var list = [1, 2, 3];
           list.forEach((e) {
@@ -41,7 +17,7 @@ void main() {
     });
 
     test('map transforms elements via callback', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         Object main() {
           var list = [1, 2, 3];
           return list.map((e) => e * 2).toList();
@@ -51,7 +27,7 @@ void main() {
     });
 
     test('where filters elements via predicate callback', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         Object main() {
           var list = [1, 2, 3, 4, 5];
           return list.where((e) => e > 2).toList();
@@ -61,7 +37,7 @@ void main() {
     });
 
     test('sort with comparator callback', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         Object main() {
           var list = [3, 1, 2];
           list.sort((a, b) => a - b);
@@ -72,7 +48,7 @@ void main() {
     });
 
     test('List.generate with callback', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         Object main() {
           return List.generate(4, (i) => i * 10);
         }
@@ -81,7 +57,7 @@ void main() {
     });
 
     test('fold accumulates via callback', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         Object main() {
           var list = [1, 2, 3, 4];
           return list.fold<int>(0, (int sum, int e) => sum + e);
@@ -91,7 +67,7 @@ void main() {
     });
 
     test('any returns true when predicate matches', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         Object main() {
           var list = [1, 2, 3];
           return list.any((e) => e > 2);
@@ -101,7 +77,7 @@ void main() {
     });
 
     test('every returns false when predicate fails', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         Object main() {
           var list = [1, 2, 3];
           return list.every((e) => e > 0);
@@ -111,7 +87,7 @@ void main() {
     });
 
     test('chained map + where + toList', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         Object main() {
           var list = [1, 2, 3, 4, 5];
           return list.map((e) => e * 2).where((e) => e > 4).toList();
@@ -123,7 +99,7 @@ void main() {
 
   group('host-created collection passed to dartic', () {
     test('String.split returns a host List, dartic reads its length', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         int main() {
           String s = 'a,b,c';
           List<String> parts = s.split(',');
@@ -134,7 +110,7 @@ void main() {
     });
 
     test('String.split result used with indexing', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         Object main() {
           String s = 'hello world';
           List<String> parts = s.split(' ');
@@ -145,7 +121,7 @@ void main() {
     });
 
     test('String.split result used with forEach callback', () async {
-      final (_, prints) = await _compileAndCapturePrint('''
+      final (_, prints) = await compileAndCapturePrint('''
         void main() {
           String csv = 'x,y,z';
           List<String> parts = csv.split(',');
@@ -158,7 +134,7 @@ void main() {
     });
 
     test('String.split result chained with map', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         Object main() {
           String s = 'ab,cd,ef';
           return s.split(',').map((p) => p.length).toList();

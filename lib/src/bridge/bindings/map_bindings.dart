@@ -1,4 +1,4 @@
-/// Registers `Map` host registry for the CALL_HOST pipeline.
+/// Registers `Map` host bindings for the CALL_HOST pipeline.
 ///
 /// Covers Map instance methods, getters, and operators.
 /// Callback-based methods (forEach, map, etc.) are deferred to 5.3.3
@@ -11,7 +11,7 @@ import 'dart:collection';
 
 import '../host_function_registry.dart';
 
-/// Registers all `dart:core::Map` host function registry.
+/// Registers all `dart:core::Map` host function bindings.
 abstract final class MapBindings {
   static void register(HostFunctionRegistry registry) {
     // ── LinkedHashMap factories (CFE lowers map literals/spreads to these) ──

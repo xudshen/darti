@@ -1,8 +1,8 @@
-/// Central registration hub for all dart:core host function registry.
+/// Central registration hub for all dart:core host function bindings.
 ///
-/// Provides `registerAll` to wire up platform registry needed for the
-/// CALL_HOST pipeline. Each type's registry are delegated to its dedicated
-/// registration class in `registry/`.
+/// Provides `registerAll` to wire up platform bindings needed for the
+/// CALL_HOST pipeline. Each type's bindings are delegated to its dedicated
+/// registration class in `bindings/`.
 ///
 /// See: docs/design/04-interop.md "基本类型传递"
 library;
@@ -22,7 +22,7 @@ import 'bindings/object_bindings.dart';
 import 'bindings/set_bindings.dart';
 import 'bindings/string_bindings.dart';
 
-/// Registers all dart:core host function registry into [registry].
+/// Registers all dart:core host function bindings into [registry].
 ///
 /// [printFn] overrides the default print behavior (useful for testing
 /// to capture output instead of writing to stdout).

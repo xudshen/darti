@@ -200,61 +200,29 @@ class DarticCompiler {
     for (final lib in _component.libraries) {
       if (_isPlatformLibrary(lib)) continue;
       for (final proc in lib.procedures) {
-        final funcId = _functions.length;
-        _procToFuncId[proc.reference] = funcId;
-        // Placeholder -- will be replaced in pass 2.
-        _functions.add(DarticFuncProto(
-          funcId: funcId,
-          bytecode: _haltBytecode,
-          valueRegCount: 0,
-          refRegCount: 0,
-          paramCount: 0,
-        ));
+        _reserveProcFuncId(proc);
       }
-      // Also register static procedures from classes.
       for (final cls in lib.classes) {
         for (final proc in cls.procedures) {
           if (!proc.isStatic) continue;
           // Skip if already registered (instance methods are registered in
           // Pass 1c, but static ones need early registration like top-level).
           if (_procToFuncId.containsKey(proc.reference)) continue;
-          final funcId = _functions.length;
-          _procToFuncId[proc.reference] = funcId;
-          _functions.add(DarticFuncProto(
-            funcId: funcId,
-            bytecode: _haltBytecode,
-            valueRegCount: 0,
-            refRegCount: 0,
-            paramCount: 0,
-          ));
+          _reserveProcFuncId(proc);
         }
       }
     }
 
-    // Pass 1b: assign global indices to top-level fields.
+    // Pass 1b: assign global indices to top-level and static class fields.
     for (final lib in _component.libraries) {
       if (_isPlatformLibrary(lib)) continue;
       for (final field in lib.fields) {
-        final globalIndex = _globalCount++;
-        _fieldToGlobalIndex[field.getterReference] = globalIndex;
-        final setterRef = field.setterReference;
-        if (setterRef != null) {
-          _fieldToGlobalIndex[setterRef] = globalIndex;
-        }
-        // Placeholder for initializer funcId -- will be set in Pass 2b.
-        _globalInitializerIds.add(-1);
+        _registerGlobalField(field);
       }
-      // Also register static fields from classes.
       for (final cls in lib.classes) {
         for (final field in cls.fields) {
           if (!field.isStatic) continue;
-          final globalIndex = _globalCount++;
-          _fieldToGlobalIndex[field.getterReference] = globalIndex;
-          final setterRef = field.setterReference;
-          if (setterRef != null) {
-            _fieldToGlobalIndex[setterRef] = globalIndex;
-          }
-          _globalInitializerIds.add(-1);
+          _registerGlobalField(field);
         }
       }
     }
@@ -320,21 +288,12 @@ class DarticCompiler {
     for (final lib in _component.libraries) {
       if (_isPlatformLibrary(lib)) continue;
       for (final field in lib.fields) {
-        if (field.initializer != null) {
-          final globalIndex = _fieldToGlobalIndex[field.getterReference]!;
-          final initFuncId = _compileGlobalInitializer(field, globalIndex);
-          _globalInitializerIds[globalIndex] = initFuncId;
-        }
+        _compileFieldInitializerIfPresent(field);
       }
-      // Also compile static field initializers from classes.
       for (final cls in lib.classes) {
         for (final field in cls.fields) {
           if (!field.isStatic) continue;
-          if (field.initializer != null) {
-            final globalIndex = _fieldToGlobalIndex[field.getterReference]!;
-            final initFuncId = _compileGlobalInitializer(field, globalIndex);
-            _globalInitializerIds[globalIndex] = initFuncId;
-          }
+          _compileFieldInitializerIfPresent(field);
         }
       }
     }
@@ -589,7 +548,7 @@ class DarticCompiler {
     _resetFunctionState(isEntry: true);
 
     final (reg, loc) = _compileExpression(field.initializer!);
-    final refReg = _ensureRef(reg, loc, field.type);
+    final refReg = _boxToRefIfValue(reg, loc, field.type);
     _emitter.emit(encodeABx(Op.storeGlobal, refReg, globalIndex));
 
     // HALT (end of initializer).
@@ -679,6 +638,14 @@ class DarticCompiler {
   int _ensureBoolValue(int reg, ResultLoc loc) =>
       _ensureValue(reg, loc, StackKind.boolVal);
 
+  /// Ensures a value is on the ref stack, boxing if it is on the value stack.
+  /// Uses [type] to determine the boxing opcode (int/double/bool).
+  /// No-op if already on the ref stack.
+  int _boxToRefIfValue(int reg, ResultLoc loc, ir.DartType? type) {
+    if (loc == ResultLoc.value) return _emitBoxToRef(reg, type);
+    return reg;
+  }
+
   /// Coerces an argument register to match the expected parameter [paramKind].
   /// Returns the (possibly new) register and its location.
   ///
@@ -715,7 +682,7 @@ class DarticCompiler {
     ResultLoc targetLoc,
   ) {
     var (reg, loc) = _compileExpression(branchExpr);
-    if (loc != targetLoc && targetLoc == ResultLoc.ref) {
+    if (loc == ResultLoc.value && targetLoc == ResultLoc.ref) {
       reg = _emitBoxToRef(reg, _inferExprType(branchExpr));
       loc = ResultLoc.ref;
     } else if (loc == ResultLoc.ref && targetLoc == ResultLoc.value) {
@@ -723,13 +690,7 @@ class DarticCompiler {
       // ConditionalExpression targets a value-stack register. This occurs in
       // CFE-desugared `??` where the non-null branch is a VariableGet with
       // promotedType (e.g. int? promoted to int).
-      final type = _inferExprType(branchExpr);
-      final nonNullType = (type is ir.InterfaceType &&
-              type.nullability == ir.Nullability.nullable)
-          ? type.withDeclaredNullability(ir.Nullability.nonNullable)
-          : type;
-      final kind =
-          nonNullType != null ? _classifyStackKind(nonNullType) : StackKind.intVal;
+      final kind = _inferNonNullStackKind(branchExpr);
       reg = _ensureValue(reg, loc, kind);
       loc = ResultLoc.value;
     }
@@ -738,20 +699,20 @@ class DarticCompiler {
     }
   }
 
-  /// Ensures a value is on the ref stack, boxing if necessary.
+  /// Infers the value-stack kind for an expression, stripping nullability.
   ///
-  /// Used for STORE_GLOBAL which always operates on the ref stack. If the
-  /// value is already on the ref stack, returns [reg] unchanged.
-  int _ensureRef(int reg, ResultLoc loc, ir.DartType fieldType) {
-    if (loc == ResultLoc.ref) return reg;
-    final refReg = _allocRefReg();
-    final boxOp = switch (_classifyStackKind(fieldType)) {
-      StackKind.doubleVal => Op.boxDouble,
-      StackKind.boolVal   => Op.boxBool,
-      _                   => Op.boxInt,
-    };
-    _emitter.emit(encodeABC(boxOp, refReg, reg, 0));
-    return refReg;
+  /// Used when unboxing a ref-stack value to the value stack. If the inferred
+  /// type is nullable (e.g. `int?`), strips the nullability to determine the
+  /// correct unbox opcode. Falls back to [StackKind.intVal] when the type
+  /// cannot be determined.
+  StackKind _inferNonNullStackKind(ir.Expression expr) {
+    final type = _inferExprType(expr);
+    if (type is ir.InterfaceType &&
+        type.nullability == ir.Nullability.nullable) {
+      return _classifyStackKind(
+          type.withDeclaredNullability(ir.Nullability.nonNullable));
+    }
+    return type != null ? _classifyStackKind(type) : StackKind.intVal;
   }
 
   /// Boxes a value-stack register to the ref stack, preserving the Dart
@@ -787,9 +748,7 @@ class DarticCompiler {
       _emitter.emit(
           encodeABC(Op.setFieldVal, receiverReg, valReg, layout.offset));
     } else {
-      if (valLoc == ResultLoc.value) {
-        valReg = _emitBoxToRef(valReg, boxingType);
-      }
+      valReg = _boxToRefIfValue(valReg, valLoc, boxingType);
       _emitter.emit(
           encodeABC(Op.setFieldRef, receiverReg, valReg, layout.offset));
     }
@@ -837,6 +796,56 @@ class DarticCompiler {
     }
   }
 
+  /// Coerces [reg] between value/ref stacks if needed, then emits the
+  /// appropriate RETURN instruction (RETURN_VAL or RETURN_REF).
+  ///
+  /// [loc] is where the result currently lives.
+  /// [targetKind] is the declared return kind the caller expects.
+  /// [boxingType] is used to determine the boxing opcode when coercing
+  /// value->ref.
+  void _emitCoercedReturn(
+      int reg, ResultLoc loc, StackKind targetKind, ir.DartType? boxingType) {
+    if (loc == ResultLoc.ref && targetKind.isValue) {
+      final valReg = _emitUnbox(reg, targetKind);
+      _emitter.emit(encodeABC(Op.returnVal, valReg, 0, 0));
+    } else if (loc == ResultLoc.value && targetKind == StackKind.ref) {
+      final refReg = _emitBoxToRef(reg, boxingType);
+      _emitter.emit(encodeABC(Op.returnRef, refReg, 0, 0));
+    } else if (loc == ResultLoc.value) {
+      _emitter.emit(encodeABC(Op.returnVal, reg, 0, 0));
+    } else {
+      _emitter.emit(encodeABC(Op.returnRef, reg, 0, 0));
+    }
+  }
+
+  /// Allocates a result register based on the return [type].
+  ///
+  /// Returns (register, ResultLoc) — ref types get a ref register,
+  /// value types get a value register.
+  (int, ResultLoc) _allocResultReg(ir.DartType type) {
+    final loc = _classifyType(type);
+    final reg = loc == ResultLoc.ref ? _allocRefReg() : _allocValueReg();
+    return (reg, loc);
+  }
+
+  /// Moves [srcRegs] into consecutive ref register slots and emits a
+  /// collection creation instruction.
+  ///
+  /// [op] is the opcode (createList/createMap/createSet).
+  /// [destReg] is the pre-allocated destination register.
+  /// [srcRegs] are the already-compiled element registers (all on ref stack).
+  /// [count] is the element/entry count for the C operand.
+  void _emitCreateCollection(
+      int op, int destReg, List<int> srcRegs, int count) {
+    final targetRegs = List.generate(srcRegs.length, (_) => _allocRefReg());
+    for (var i = 0; i < srcRegs.length; i++) {
+      if (srcRegs[i] != targetRegs[i]) {
+        _emitter.emit(encodeABC(Op.moveRef, targetRegs[i], srcRegs[i], 0));
+      }
+    }
+    _emitter.emit(encodeABC(op, destReg, targetRegs.first, count));
+  }
+
   // ── Host binding helpers ──
 
   /// Allocates (or reuses) a binding index for a host function symbol.
@@ -872,23 +881,57 @@ class DarticCompiler {
     final className = target.enclosingClass?.name ?? '';
     final memberName = nameOverride ?? target.name.text;
 
-    int paramCount;
+    final int paramCount;
     if (paramCountOverride != null) {
       paramCount = paramCountOverride;
-    } else if (target is ir.Procedure) {
-      paramCount = target.function.positionalParameters.length +
-          target.function.namedParameters.length;
-    } else if (target is ir.Constructor) {
-      paramCount = target.function.positionalParameters.length +
-          target.function.namedParameters.length;
     } else {
-      paramCount = 0; // field getter/setter
+      final fn = switch (target) {
+        ir.Procedure p => p.function,
+        ir.Constructor c => c.function,
+        _ => null,
+      };
+      paramCount = fn != null
+          ? fn.positionalParameters.length + fn.namedParameters.length
+          : 0; // field getter/setter
     }
 
     return '$lib::$className::$memberName#$paramCount';
   }
 
   // ── Helpers ──
+
+  /// Reserves a funcId for a [Procedure] by appending a placeholder to
+  /// [_functions] and recording the mapping in [_procToFuncId].
+  void _reserveProcFuncId(ir.Procedure proc) {
+    final funcId = _functions.length;
+    _procToFuncId[proc.reference] = funcId;
+    _functions.add(DarticFuncProto(
+      funcId: funcId,
+      bytecode: _haltBytecode,
+      valueRegCount: 0,
+      refRegCount: 0,
+      paramCount: 0,
+    ));
+  }
+
+  /// Registers a top-level or static field as a global variable slot.
+  void _registerGlobalField(ir.Field field) {
+    final globalIndex = _globalCount++;
+    _fieldToGlobalIndex[field.getterReference] = globalIndex;
+    final setterRef = field.setterReference;
+    if (setterRef != null) {
+      _fieldToGlobalIndex[setterRef] = globalIndex;
+    }
+    _globalInitializerIds.add(-1);
+  }
+
+  /// Compiles the initializer for a global field if it has one.
+  void _compileFieldInitializerIfPresent(ir.Field field) {
+    if (field.initializer == null) return;
+    final globalIndex = _fieldToGlobalIndex[field.getterReference]!;
+    _globalInitializerIds[globalIndex] =
+        _compileGlobalInitializer(field, globalIndex);
+  }
 
   bool _isPlatformLibrary(ir.Library lib) => lib.importUri.isScheme('dart');
 

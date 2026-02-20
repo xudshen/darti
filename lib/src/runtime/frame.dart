@@ -11,7 +11,7 @@ import '../bytecode/module.dart';
 /// Phase 1 implements basic + stack snapshot fields only.
 /// Async/generator fields are deferred to Phase 6.
 ///
-/// See: docs/design/02-object-model.md "执行帧 -- DarticFrame"
+/// See: docs/design/02-object-model.md "执行帧 — DarticFrame"
 class DarticFrame {
   DarticFrame({
     required this.funcProto,

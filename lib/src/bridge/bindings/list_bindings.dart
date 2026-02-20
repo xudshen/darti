@@ -1,4 +1,4 @@
-/// Registers `List` host registry for the CALL_HOST pipeline.
+/// Registers `List` host bindings for the CALL_HOST pipeline.
 ///
 /// Covers List instance methods, getters, operators, and static constructors.
 /// Callback-based methods (sort, map, where, forEach, etc.) are registered
@@ -10,7 +10,7 @@ library;
 
 import '../host_function_registry.dart';
 
-/// Registers all `dart:core::List` host function registry.
+/// Registers all `dart:core::List` host function bindings.
 abstract final class ListBindings {
   static void register(HostFunctionRegistry registry) {
     // ── Getters ──

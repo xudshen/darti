@@ -1,23 +1,11 @@
-import 'package:dartic/src/bridge/core_bindings.dart';
-import 'package:dartic/src/bridge/host_function_registry.dart';
-import 'package:dartic/src/runtime/interpreter.dart';
 import 'package:test/test.dart';
 
 import '../helpers/compile_helper.dart';
 
-Future<Object?> _run(String source) async {
-  final module = await compileDart(source);
-  final registry = HostFunctionRegistry();
-  CoreBindings.registerAll(registry);
-  final interp = DarticInterpreter(hostFunctionRegistry: registry);
-  interp.execute(module);
-  return interp.entryResult;
-}
-
 void main() {
   group('double bridge', () {
     test('3.14.toString()', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 String main() {
   return 3.14.toString();
 }
@@ -26,7 +14,7 @@ String main() {
     });
 
     test('3.14.ceil()', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   return 3.14.ceil();
 }
@@ -35,7 +23,7 @@ int main() {
     });
 
     test('3.14.floor()', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   return 3.14.floor();
 }
@@ -44,7 +32,7 @@ int main() {
     });
 
     test('3.14.round()', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   return 3.14.round();
 }
@@ -53,7 +41,7 @@ int main() {
     });
 
     test('3.14.truncate()', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   return 3.14.truncate();
 }
@@ -62,7 +50,7 @@ int main() {
     });
 
     test('3.14.toInt()', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   return 3.14.toInt();
 }
@@ -71,7 +59,7 @@ int main() {
     });
 
     test('3.14.isFinite', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 bool main() {
   return 3.14.isFinite;
 }
@@ -80,7 +68,7 @@ bool main() {
     });
 
     test('3.14.abs()', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 double main() {
   return 3.14.abs();
 }
@@ -89,7 +77,7 @@ double main() {
     });
 
     test('(-3.14).sign', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 double main() {
   double x = -3.14;
   return x.sign;
@@ -99,7 +87,7 @@ double main() {
     });
 
     test('3.14.toStringAsFixed(1)', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 String main() {
   return 3.14.toStringAsFixed(1);
 }
@@ -108,7 +96,7 @@ String main() {
     });
 
     test('3.14.ceilToDouble()', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 double main() {
   return 3.14.ceilToDouble();
 }
@@ -117,7 +105,7 @@ double main() {
     });
 
     test('3.14.floorToDouble()', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 double main() {
   return 3.14.floorToDouble();
 }
@@ -126,7 +114,7 @@ double main() {
     });
 
     test('double.parse("3.14")', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 double main() {
   return double.parse('3.14');
 }
@@ -135,7 +123,7 @@ double main() {
     });
 
     test('double.tryParse("abc")', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   double? v = double.tryParse('abc');
   if (v == null) return 1;

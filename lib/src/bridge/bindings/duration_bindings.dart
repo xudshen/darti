@@ -1,4 +1,4 @@
-/// Registers `Duration` host registry for the CALL_HOST pipeline.
+/// Registers `Duration` host bindings for the CALL_HOST pipeline.
 ///
 /// Covers Duration instance methods, getters, operators, and static constants.
 /// The Duration constructor with 7 named params is a known challenge —
@@ -11,7 +11,7 @@ library;
 
 import '../host_function_registry.dart';
 
-/// Registers all `dart:core::Duration` host function registry.
+/// Registers all `dart:core::Duration` host function bindings.
 abstract final class DurationBindings {
   static void register(HostFunctionRegistry registry) {
     // ── Getters ──

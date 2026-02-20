@@ -35,8 +35,7 @@ class DarticDeserializer {
     if (magic != DarbFormat.magic) {
       throw FormatException(
         'Invalid darb file: wrong magic '
-        '(0x${magic.toRadixString(16).padLeft(8, '0')}, '
-        'expected 0x${DarbFormat.magic.toRadixString(16).padLeft(8, '0')})',
+        '(${_hex32(magic)}, expected ${_hex32(DarbFormat.magic)})',
       );
     }
 
@@ -55,8 +54,8 @@ class DarticDeserializer {
     if (storedChecksum != computedChecksum) {
       throw FormatException(
         'darb checksum mismatch '
-        '(stored: 0x${storedChecksum.toRadixString(16).padLeft(8, '0')}, '
-        'computed: 0x${computedChecksum.toRadixString(16).padLeft(8, '0')})',
+        '(stored: ${_hex32(storedChecksum)}, '
+        'computed: ${_hex32(computedChecksum)})',
       );
     }
 
@@ -263,3 +262,6 @@ class _ByteReader {
     }
   }
 }
+
+/// Formats an integer as a zero-padded 32-bit hex string (e.g. `0x0044AB12`).
+String _hex32(int value) => '0x${value.toRadixString(16).padLeft(8, '0')}';

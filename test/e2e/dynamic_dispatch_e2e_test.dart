@@ -1,24 +1,11 @@
-import 'package:dartic/src/bridge/core_bindings.dart';
-import 'package:dartic/src/bridge/host_function_registry.dart';
-import 'package:dartic/src/runtime/interpreter.dart';
 import 'package:test/test.dart';
 
 import '../helpers/compile_helper.dart';
 
-/// Compiles Dart source and executes with CoreBindings host functions.
-Future<Object?> _compileAndRunWithHost(String source) async {
-  final module = await compileDart(source);
-  final registry = HostFunctionRegistry();
-  CoreBindings.registerAll(registry);
-  final interp = DarticInterpreter(hostFunctionRegistry: registry);
-  interp.execute(module);
-  return interp.entryResult;
-}
-
 void main() {
   group('Dynamic getter dispatch', () {
     test('dynamic String.length', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         Object main() {
           dynamic x = 'hello';
           return x.length;
@@ -28,7 +15,7 @@ void main() {
     });
 
     test('dynamic List.length', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         Object main() {
           dynamic x = [1, 2, 3];
           return x.length;
@@ -38,7 +25,7 @@ void main() {
     });
 
     test('dynamic List.isEmpty', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         Object main() {
           dynamic x = [];
           return x.isEmpty;
@@ -48,7 +35,7 @@ void main() {
     });
 
     test('dynamic Map.length', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         Object main() {
           dynamic x = {'a': 1, 'b': 2};
           return x.length;
@@ -60,7 +47,7 @@ void main() {
 
   group('Dynamic method dispatch', () {
     test('dynamic List.contains', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         Object main() {
           dynamic x = [1, 2, 3];
           return x.contains(2);
@@ -70,7 +57,7 @@ void main() {
     });
 
     test('dynamic Map.containsKey', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         Object main() {
           dynamic x = {'a': 1};
           return x.containsKey('a');
@@ -80,7 +67,7 @@ void main() {
     });
 
     test('dynamic String.substring', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         Object main() {
           dynamic x = 'hello world';
           return x.substring(0, 5);
@@ -90,7 +77,7 @@ void main() {
     });
 
     test('dynamic String.contains', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         Object main() {
           dynamic x = 'hello';
           return x.contains('ell');
@@ -102,7 +89,7 @@ void main() {
 
   group('Dynamic operator dispatch', () {
     test('dynamic List index operator', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         Object main() {
           dynamic x = [10, 20, 30];
           return x[1];
@@ -112,7 +99,7 @@ void main() {
     });
 
     test('dynamic Map index operator', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
         Object main() {
           dynamic x = {'a': 1, 'b': 2};
           return x['b'];

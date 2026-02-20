@@ -11,6 +11,14 @@ extension on DarticCompiler {
   ir.DartType? _inferExprType(ir.Expression expr) =>
       expr.accept(_typeInferVisitor);
 
+  /// Infers the [StackKind] for an expression by combining [_inferExprType]
+  /// and [_classifyStackKind]. Falls back to [StackKind.ref] when the type
+  /// cannot be determined.
+  StackKind _inferStackKind(ir.Expression expr) {
+    final type = _inferExprType(expr);
+    return type != null ? _classifyStackKind(type) : StackKind.ref;
+  }
+
   /// Infers the return type of an [ir.InstanceInvocation].
   ///
   /// For chained operations like (a + b) - c, propagates the receiver's
@@ -26,10 +34,7 @@ extension on DarticCompiler {
 
     if (targetClass == _coreTypes.numClass ||
         targetClass == _coreTypes.intClass) {
-      final receiverType = _inferExprType(expr.receiver);
-      final receiverKind = receiverType != null
-          ? _classifyStackKind(receiverType)
-          : StackKind.ref;
+      final receiverKind = _inferStackKind(expr.receiver);
       if (receiverKind == StackKind.intVal) {
         // int `/` returns double; toDouble() returns double.
         if (invName == '/' || invName == 'toDouble') {

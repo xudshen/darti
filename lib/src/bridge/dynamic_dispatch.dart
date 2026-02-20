@@ -94,52 +94,51 @@ class _InvocationDispatcher implements HostDispatcher {
 ///
 /// Uses `is` checks for reliable subtype matching (e.g., `_GrowableList is List`).
 class HostDispatchRegistry {
-  HostDispatchRegistry(HostFunctionRegistry registry) {
-    _list = BindingLookupDispatcher(registry, [
-      'dart:core::List::',
-      'dart:core::_GrowableList::',
-      'dart:core::Iterable::',
-    ]);
-    _map = BindingLookupDispatcher(registry, [
-      'dart:core::Map::',
-      'dart:collection::LinkedHashMap::',
-    ]);
-    _set = BindingLookupDispatcher(registry, [
-      'dart:core::Set::',
-      'dart:_compact_hash::_Set::',
-      'dart:core::Iterable::',
-    ]);
-    _string = BindingLookupDispatcher(registry, [
-      'dart:core::String::',
-    ]);
-    _int = BindingLookupDispatcher(registry, [
-      'dart:core::int::',
-      'dart:core::num::',
-    ]);
-    _double = BindingLookupDispatcher(registry, [
-      'dart:core::double::',
-      'dart:core::num::',
-    ]);
-    _bool = BindingLookupDispatcher(registry, [
-      'dart:core::bool::',
-    ]);
-    _iterable = BindingLookupDispatcher(registry, [
-      'dart:core::Iterable::',
-    ]);
-    _duration = BindingLookupDispatcher(registry, [
-      'dart:core::Duration::',
-    ]);
-  }
+  HostDispatchRegistry(HostFunctionRegistry registry)
+      : _list = BindingLookupDispatcher(registry, [
+          'dart:core::List::',
+          'dart:core::_GrowableList::',
+          'dart:core::Iterable::',
+        ]),
+        _map = BindingLookupDispatcher(registry, [
+          'dart:core::Map::',
+          'dart:collection::LinkedHashMap::',
+        ]),
+        _set = BindingLookupDispatcher(registry, [
+          'dart:core::Set::',
+          'dart:_compact_hash::_Set::',
+          'dart:core::Iterable::',
+        ]),
+        _string = BindingLookupDispatcher(registry, [
+          'dart:core::String::',
+        ]),
+        _int = BindingLookupDispatcher(registry, [
+          'dart:core::int::',
+          'dart:core::num::',
+        ]),
+        _double = BindingLookupDispatcher(registry, [
+          'dart:core::double::',
+          'dart:core::num::',
+        ]),
+        _bool = BindingLookupDispatcher(registry, [
+          'dart:core::bool::',
+        ]),
+        _iterable = BindingLookupDispatcher(registry, [
+          'dart:core::Iterable::',
+        ]),
+        _duration = BindingLookupDispatcher(registry, [
+          'dart:core::Duration::',
+        ]);
 
-  late final HostDispatcher _list;
-  late final HostDispatcher _map;
-  late final HostDispatcher _set;
-  late final HostDispatcher _string;
-  late final HostDispatcher _int;
-  late final HostDispatcher _double;
-  late final HostDispatcher _bool;
-  late final HostDispatcher _iterable;
-  late final HostDispatcher _duration;
+  final HostDispatcher _list;
+  final HostDispatcher _map;
+  final HostDispatcher _set;
+  final HostDispatcher _string;
+  final HostDispatcher _int;
+  final HostDispatcher _double;
+  final HostDispatcher _bool;
+  final HostDispatcher _iterable;
+  final HostDispatcher _duration;
   final HostDispatcher _invocation = _InvocationDispatcher();
 
   /// Looks up the [HostDispatcher] for [receiver] based on its runtime type.

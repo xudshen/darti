@@ -1,23 +1,11 @@
-import 'package:dartic/src/bridge/core_bindings.dart';
-import 'package:dartic/src/bridge/host_function_registry.dart';
-import 'package:dartic/src/runtime/interpreter.dart';
 import 'package:test/test.dart';
 
 import '../helpers/compile_helper.dart';
 
-Future<Object?> _run(String source) async {
-  final module = await compileDart(source);
-  final registry = HostFunctionRegistry();
-  CoreBindings.registerAll(registry);
-  final interp = DarticInterpreter(hostFunctionRegistry: registry);
-  interp.execute(module);
-  return interp.entryResult;
-}
-
 void main() {
   group('bool bridge', () {
     test('true.toString()', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 String main() {
   return true.toString();
 }
@@ -26,7 +14,7 @@ String main() {
     });
 
     test('false.toString()', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 String main() {
   return false.toString();
 }
@@ -37,7 +25,7 @@ String main() {
 
   group('String bridge', () {
     test("''.isEmpty", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 bool main() {
   return ''.isEmpty;
 }
@@ -46,7 +34,7 @@ bool main() {
     });
 
     test("'hello'.isNotEmpty", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 bool main() {
   return 'hello'.isNotEmpty;
 }
@@ -55,7 +43,7 @@ bool main() {
     });
 
     test("'hello world'.substring(0, 5)", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 String main() {
   return 'hello world'.substring(0, 5);
 }
@@ -64,7 +52,7 @@ String main() {
     });
 
     test("'hello'.indexOf('l')", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   return 'hello'.indexOf('l');
 }
@@ -73,7 +61,7 @@ int main() {
     });
 
     test("'hello'.contains('ell')", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 bool main() {
   return 'hello'.contains('ell');
 }
@@ -82,7 +70,7 @@ bool main() {
     });
 
     test("'Hello'.toLowerCase()", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 String main() {
   return 'Hello'.toLowerCase();
 }
@@ -91,7 +79,7 @@ String main() {
     });
 
     test("'hello'.toUpperCase()", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 String main() {
   return 'hello'.toUpperCase();
 }
@@ -100,7 +88,7 @@ String main() {
     });
 
     test("' hi '.trim()", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 String main() {
   return ' hi '.trim();
 }
@@ -109,7 +97,7 @@ String main() {
     });
 
     test("'hello'.startsWith('hel')", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 bool main() {
   return 'hello'.startsWith('hel');
 }
@@ -118,7 +106,7 @@ bool main() {
     });
 
     test("'hello'.endsWith('lo')", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 bool main() {
   return 'hello'.endsWith('lo');
 }
@@ -127,7 +115,7 @@ bool main() {
     });
 
     test("'hello'.replaceAll('l', 'r')", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 String main() {
   return 'hello'.replaceAll('l', 'r');
 }
@@ -136,7 +124,7 @@ String main() {
     });
 
     test("'hello'.codeUnitAt(0)", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   return 'hello'.codeUnitAt(0);
 }
@@ -145,7 +133,7 @@ int main() {
     });
 
     test("'hello'[0]", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 String main() {
   return 'hello'[0];
 }
@@ -154,7 +142,7 @@ String main() {
     });
 
     test("'hello' + ' world'", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 String main() {
   return 'hello' + ' world';
 }
@@ -163,7 +151,7 @@ String main() {
     });
 
     test("'abc'.compareTo('abd')", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   return 'abc'.compareTo('abd');
 }
@@ -172,7 +160,7 @@ int main() {
     });
 
     test("String.fromCharCode(65)", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 String main() {
   return String.fromCharCode(65);
 }
@@ -181,7 +169,7 @@ String main() {
     });
 
     test("'abc' * 3", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 String main() {
   return 'abc' * 3;
 }
@@ -190,7 +178,7 @@ String main() {
     });
 
     test("'hello'.toString()", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 String main() {
   return 'hello'.toString();
 }
@@ -199,7 +187,7 @@ String main() {
     });
 
     test("' hi '.trimLeft()", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 String main() {
   return ' hi '.trimLeft();
 }
@@ -208,7 +196,7 @@ String main() {
     });
 
     test("' hi '.trimRight()", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 String main() {
   return ' hi '.trimRight();
 }
@@ -217,7 +205,7 @@ String main() {
     });
 
     test("'hello'.lastIndexOf('l')", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   return 'hello'.lastIndexOf('l');
 }
@@ -226,7 +214,7 @@ int main() {
     });
 
     test("'hello'.substring(2)", () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 String main() {
   return 'hello'.substring(2);
 }

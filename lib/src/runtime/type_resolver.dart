@@ -63,24 +63,21 @@ DarticType _resolveNullable(
   TypeRegistry registry,
 ) {
   final inner = resolveType(template.inner, ita, fta, registry);
-  if (inner is DarticInterfaceType) {
-    return registry.intern(
-      inner.classId,
-      inner.typeArgs,
-      nullability: Nullability.nullable,
-    );
-  } else if (inner is DarticFunctionType) {
-    return registry.internFunction(
-      typeParamBounds: inner.typeParamBounds,
-      requiredParamCount: inner.requiredParamCount,
-      positionalParams: inner.positionalParams,
-      namedParams: inner.namedParams,
-      returnType: inner.returnType,
-      nullability: Nullability.nullable,
-    );
-  }
-  // Should never reach here — DarticType is sealed.
-  throw StateError('Unknown DarticType subtype: $inner');
+  return switch (inner) {
+    DarticInterfaceType() => registry.intern(
+        inner.classId,
+        inner.typeArgs,
+        nullability: Nullability.nullable,
+      ),
+    DarticFunctionType() => registry.internFunction(
+        typeParamBounds: inner.typeParamBounds,
+        requiredParamCount: inner.requiredParamCount,
+        positionalParams: inner.positionalParams,
+        namedParams: inner.namedParams,
+        returnType: inner.returnType,
+        nullability: Nullability.nullable,
+      ),
+  };
 }
 
 /// Resolves an interface type template.

@@ -1,4 +1,4 @@
-/// Registers `Error` and `Exception` host registry for the CALL_HOST pipeline.
+/// Registers `Error` and `Exception` host bindings for the CALL_HOST pipeline.
 ///
 /// Covers constructors, message getters, and toString for common error types:
 /// ArgumentError, RangeError, StateError, UnsupportedError, FormatException,
@@ -9,7 +9,7 @@ library;
 
 import '../host_function_registry.dart';
 
-/// Registers all `dart:core` error/exception host function registry.
+/// Registers all `dart:core` error/exception host function bindings.
 abstract final class ErrorBindings {
   static void register(HostFunctionRegistry registry) {
     // ── ArgumentError ──

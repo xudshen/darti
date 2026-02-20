@@ -1,4 +1,4 @@
-/// Registers Object, Type, Null, and `identical` registry.
+/// Registers Object, Type, Null, and `identical` bindings.
 ///
 /// Covers all Object instance methods (toString, hashCode, runtimeType,
 /// noSuchMethod), the Object() constructor, top-level `identical`, and
@@ -9,7 +9,7 @@ library;
 
 import '../host_function_registry.dart';
 
-/// Registers all `dart:core::Object`, `Type`, and `identical` registry.
+/// Registers all `dart:core::Object`, `Type`, and `identical` bindings.
 abstract final class ObjectBindings {
   static void register(HostFunctionRegistry registry) {
     // ── Object core methods ──

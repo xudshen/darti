@@ -1,4 +1,4 @@
-/// Registers `Iterable` host registry for the CALL_HOST pipeline.
+/// Registers `Iterable` host bindings for the CALL_HOST pipeline.
 ///
 /// Covers Iterable factory constructors, instance methods and getters.
 ///
@@ -7,7 +7,7 @@ library;
 
 import '../host_function_registry.dart';
 
-/// Registers all `dart:core::Iterable` host function registry.
+/// Registers all `dart:core::Iterable` host function bindings.
 abstract final class IterableBindings {
   static void register(HostFunctionRegistry registry) {
     // ── Factory constructors ──

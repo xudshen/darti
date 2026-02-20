@@ -1,24 +1,11 @@
-import 'package:dartic/src/bridge/core_bindings.dart';
-import 'package:dartic/src/bridge/host_function_registry.dart';
-import 'package:dartic/src/runtime/interpreter.dart';
 import 'package:test/test.dart';
 
 import '../helpers/compile_helper.dart';
 
-/// Compiles Dart source and executes with CoreBindings host functions.
-Future<Object?> _compileAndRunWithHost(String source) async {
-  final module = await compileDart(source);
-  final registry = HostFunctionRegistry();
-  CoreBindings.registerAll(registry);
-  final interp = DarticInterpreter(hostFunctionRegistry: registry);
-  interp.execute(module);
-  return interp.entryResult;
-}
-
 void main() {
   group('String interpolation E2E', () {
     test('simple string concat: hello world', () async {
-      final result = await _compileAndRunWithHost(r"""
+      final result = await compileAndRunWithHost(r"""
 String main() {
   return 'hello ${'world'}';
 }
@@ -27,7 +14,7 @@ String main() {
     });
 
     test('int variable interpolation', () async {
-      final result = await _compileAndRunWithHost(r"""
+      final result = await compileAndRunWithHost(r"""
 String main() {
   int x = 42;
   return 'value is $x';
@@ -37,7 +24,7 @@ String main() {
     });
 
     test('expression interpolation: 1 + 2', () async {
-      final result = await _compileAndRunWithHost(r"""
+      final result = await compileAndRunWithHost(r"""
 String main() {
   return '${1 + 2} items';
 }
@@ -46,7 +33,7 @@ String main() {
     });
 
     test('double variable interpolation', () async {
-      final result = await _compileAndRunWithHost(r"""
+      final result = await compileAndRunWithHost(r"""
 String main() {
   double d = 3.14;
   return 'pi is $d';
@@ -56,7 +43,7 @@ String main() {
     });
 
     test('multi-segment interpolation', () async {
-      final result = await _compileAndRunWithHost(r"""
+      final result = await compileAndRunWithHost(r"""
 String main() {
   int a = 1;
   int b = 2;
@@ -67,7 +54,7 @@ String main() {
     });
 
     test('null interpolation', () async {
-      final result = await _compileAndRunWithHost(r"""
+      final result = await compileAndRunWithHost(r"""
 String main() {
   return '${null}';
 }
@@ -78,7 +65,7 @@ String main() {
     test('adjacent string literals', () async {
       // Dart concatenates adjacent string literals at parse time;
       // Kernel typically represents this as a single StringLiteral.
-      final result = await _compileAndRunWithHost(r"""
+      final result = await compileAndRunWithHost(r"""
 String main() {
   return 'abc' 'def';
 }
@@ -87,7 +74,7 @@ String main() {
     });
 
     test('bool interpolation', () async {
-      final result = await _compileAndRunWithHost(r"""
+      final result = await compileAndRunWithHost(r"""
 String main() {
   bool b = true;
   return 'flag=$b';
@@ -97,7 +84,7 @@ String main() {
     });
 
     test('nested string interpolation', () async {
-      final result = await _compileAndRunWithHost(r"""
+      final result = await compileAndRunWithHost(r"""
 String main() {
   int x = 5;
   return 'result=${x > 3 ? 'yes' : 'no'}';
@@ -107,7 +94,7 @@ String main() {
     });
 
     test('empty interpolation segments', () async {
-      final result = await _compileAndRunWithHost(r"""
+      final result = await compileAndRunWithHost(r"""
 String main() {
   return '${''}hello';
 }
@@ -116,7 +103,7 @@ String main() {
     });
 
     test('string interpolation with toString() call', () async {
-      final result = await _compileAndRunWithHost(r"""
+      final result = await compileAndRunWithHost(r"""
 String main() {
   int x = 99;
   return 'val=${x.toString()}';

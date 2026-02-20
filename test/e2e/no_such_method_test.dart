@@ -5,20 +5,10 @@ import 'package:test/test.dart';
 
 import '../helpers/compile_helper.dart';
 
-/// Compiles Dart source and executes with CoreBindings host functions.
-Future<Object?> _compileAndRunWithHost(String source) async {
-  final module = await compileDart(source);
-  final registry = HostFunctionRegistry();
-  CoreBindings.registerAll(registry);
-  final interp = DarticInterpreter(hostFunctionRegistry: registry);
-  interp.execute(module);
-  return interp.entryResult;
-}
-
 void main() {
   group('noSuchMethod override', () {
     test('override returns custom value for missing method', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
 class Flexible {
   @override
   dynamic noSuchMethod(Invocation invocation) {
@@ -34,7 +24,7 @@ Object main() {
     });
 
     test('override returns custom value for missing getter', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
 class Flexible {
   @override
   dynamic noSuchMethod(Invocation invocation) {
@@ -50,7 +40,7 @@ Object main() {
     });
 
     test('override handles missing setter without error', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
 class Flexible {
   @override
   dynamic noSuchMethod(Invocation invocation) {
@@ -70,7 +60,7 @@ Object main() {
 
   group('Invocation properties', () {
     test('invocation.memberName for method call', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
 class Spy {
   @override
   dynamic noSuchMethod(Invocation invocation) {
@@ -87,7 +77,7 @@ Object main() {
     });
 
     test('invocation.positionalArguments for method call', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
 class Spy {
   @override
   dynamic noSuchMethod(Invocation invocation) {
@@ -103,7 +93,7 @@ Object main() {
     });
 
     test('invocation.isGetter for missing getter', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
 class Spy {
   @override
   dynamic noSuchMethod(Invocation invocation) {
@@ -119,7 +109,7 @@ Object main() {
     });
 
     test('invocation.isSetter for missing setter', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
 class Spy {
   @override
   dynamic noSuchMethod(Invocation invocation) {
@@ -137,7 +127,7 @@ Object main() {
     });
 
     test('invocation.isMethod for method call', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
 class Spy {
   @override
   dynamic noSuchMethod(Invocation invocation) {
@@ -191,7 +181,7 @@ Object main() {
 
   group('DarticObject via dynamic — existing methods work', () {
     test('INVOKE_DYN dispatches to existing method', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
 class Greeter {
   String greet() => 'hi';
 }
@@ -204,7 +194,7 @@ Object main() {
     });
 
     test('GET_FIELD_DYN reads existing field', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
 class Box {
   int value;
   Box(this.value);
@@ -218,7 +208,7 @@ Object main() {
     });
 
     test('SET_FIELD_DYN writes existing field', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
 class Box {
   int value;
   Box(this.value);
@@ -236,7 +226,7 @@ Object main() {
 
   group('try/catch catches NoSuchMethodError', () {
     test('catch NoSuchMethodError from missing method', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
 class Plain {}
 Object main() {
   dynamic obj = Plain();
@@ -252,7 +242,7 @@ Object main() {
     });
 
     test('catch NoSuchMethodError from missing getter', () async {
-      final result = await _compileAndRunWithHost('''
+      final result = await compileAndRunWithHost('''
 class Plain {}
 Object main() {
   dynamic obj = Plain();

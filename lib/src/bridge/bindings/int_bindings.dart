@@ -1,4 +1,4 @@
-/// Registers `int`-specific host registry for the CALL_HOST pipeline.
+/// Registers `int`-specific host bindings for the CALL_HOST pipeline.
 ///
 /// Covers int instance methods, getters, and static methods that are
 /// declared on `int` (not inherited from `num`). Methods that use
@@ -9,7 +9,7 @@ library;
 
 import '../host_function_registry.dart';
 
-/// Registers all `dart:core::int` host function registry.
+/// Registers all `dart:core::int` host function bindings.
 abstract final class IntBindings {
   static void register(HostFunctionRegistry registry) {
     // ── Instance methods ──

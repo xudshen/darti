@@ -273,15 +273,11 @@ extension on DarticCompiler {
 
   void _compileBreakStatement(ir.BreakStatement stmt) {
     // Kernel's BreakStatement targets a LabeledStatement.
-    final target = stmt.target;
-    final breakList = _labelBreakJumps[target];
-    if (breakList != null) {
-      breakList.add(_emitter.emitPlaceholder());
-    } else {
-      throw StateError(
-        'BreakStatement targets unknown LabeledStatement',
-      );
+    final breakList = _labelBreakJumps[stmt.target];
+    if (breakList == null) {
+      throw StateError('BreakStatement targets unknown LabeledStatement');
     }
+    breakList.add(_emitter.emitPlaceholder());
   }
 
   // ── Control flow: try/catch/finally ──
@@ -468,17 +464,12 @@ extension on DarticCompiler {
       // B field: 0=void, 1=ref, 2=boolVal, 3=intVal, 4=doubleVal (StackKind.index + 1).
       if (expr != null) {
         final (reg, loc) = _compileExpression(expr);
-        final StackKind kind;
-        if (loc == ResultLoc.ref) {
-          kind = StackKind.ref;
-        } else {
-          // Value stack — distinguish int vs double via type inference.
-          // Default to intVal when type is completely unknown.
-          final exprType = _inferExprType(expr);
-          kind = exprType != null
-              ? _classifyStackKind(exprType)
-              : StackKind.intVal;
-        }
+        // Determine the StackKind for the HALT instruction. For ref-stack
+        // results, the kind is always ref. For value-stack results, use type
+        // inference to distinguish int vs double vs bool.
+        final kind = loc == ResultLoc.ref
+            ? StackKind.ref
+            : _inferStackKind(expr);
         _emitter.emit(encodeABC(Op.halt, reg, kind.index + 1, 0));
       } else {
         _emitter.emit(encodeABC(Op.halt, 0, 0, 0));
@@ -496,38 +487,9 @@ extension on DarticCompiler {
     _emitCloseUpvaluesIfNeeded();
 
     // Coerce result between value/ref stacks when they don't match the
-    // function's declared return type.
+    // function's declared return type, then emit the appropriate RETURN.
     final retKind = _classifyStackKind(_currentReturnType);
-    if (loc == ResultLoc.ref && retKind.isValue) {
-      // Unbox: expression is on ref stack but function returns a value type.
-      // E.g. `Object x = 42; return x as int;` — `as int` stays on ref stack,
-      // but caller expects RETURN_VAL for int return type.
-      final valReg = _valueAlloc.alloc();
-      final unboxOp = switch (retKind) {
-        StackKind.doubleVal => Op.unboxDouble,
-        StackKind.boolVal => Op.unboxBool,
-        _ => Op.unboxInt,
-      };
-      _emitter.emit(encodeABC(unboxOp, valReg, reg, 0));
-      _emitter.emit(encodeABC(Op.returnVal, valReg, 0, 0));
-    } else if (loc == ResultLoc.value && retKind == StackKind.ref) {
-      // Box: expression is on value stack but function returns a nullable
-      // value type (int?, bool?, double?).  The caller expects RETURN_REF.
-      // E.g. `int? f() => 42;` — literal 42 is on the value stack but the
-      // return type int? requires the ref stack.
-      // Use _emitBoxToRef which correctly handles bool (BOX_BOOL),
-      // int (BOX_INT), and double (BOX_DOUBLE).
-      final exprType = _inferExprType(expr);
-      final refReg = _emitBoxToRef(reg, exprType);
-      _emitter.emit(encodeABC(Op.returnRef, refReg, 0, 0));
-    } else {
-      switch (loc) {
-        case ResultLoc.value:
-          _emitter.emit(encodeABC(Op.returnVal, reg, 0, 0));
-        case ResultLoc.ref:
-          _emitter.emit(encodeABC(Op.returnRef, reg, 0, 0));
-      }
-    }
+    _emitCoercedReturn(reg, loc, retKind, _inferExprType(expr));
   }
 
   // ── Upvalue close helper ──
@@ -561,18 +523,13 @@ extension on DarticCompiler {
       // Handle stack kind mismatch: box value->ref when assigning a value-stack
       // result (e.g. int literal) to a ref-stack variable (e.g. int?).
       if (kind == StackKind.ref && initLoc == ResultLoc.value) {
-        final refReg = _allocRefReg();
-        // Determine the boxing op from the underlying non-nullable type.
+        // Box value->ref. Strip nullability to get the correct boxing op
+        // (e.g. double? → double → BOX_DOUBLE, not the default BOX_INT).
         final baseType = decl.type is ir.InterfaceType
             ? (decl.type as ir.InterfaceType)
                 .withDeclaredNullability(ir.Nullability.nonNullable)
             : decl.type;
-        final boxOp = switch (_classifyStackKind(baseType)) {
-          StackKind.doubleVal => Op.boxDouble,
-          StackKind.boolVal => Op.boxBool,
-          _ => Op.boxInt,
-        };
-        _emitter.emit(encodeABC(boxOp, refReg, initReg, 0));
+        final refReg = _emitBoxToRef(initReg, baseType);
         _scope.declareWithReg(decl, kind, refReg);
       } else if (kind.isValue && initLoc == ResultLoc.ref) {
         // The declared type says value-stack (e.g. `int`), but the initializer

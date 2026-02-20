@@ -1,4 +1,4 @@
-/// Registers `bool` host registry for the CALL_HOST pipeline.
+/// Registers `bool` host bindings for the CALL_HOST pipeline.
 ///
 /// Covers bool instance methods and getters. Boolean arithmetic and
 /// comparison operators use specialized opcodes and are NOT handled here.
@@ -8,7 +8,7 @@ library;
 
 import '../host_function_registry.dart';
 
-/// Registers all `dart:core::bool` host function registry.
+/// Registers all `dart:core::bool` host function bindings.
 abstract final class BoolBindings {
   static void register(HostFunctionRegistry registry) {
     // ── Instance methods ──

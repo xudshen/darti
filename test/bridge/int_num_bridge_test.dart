@@ -1,23 +1,11 @@
-import 'package:dartic/src/bridge/core_bindings.dart';
-import 'package:dartic/src/bridge/host_function_registry.dart';
-import 'package:dartic/src/runtime/interpreter.dart';
 import 'package:test/test.dart';
 
 import '../helpers/compile_helper.dart';
 
-Future<Object?> _run(String source) async {
-  final module = await compileDart(source);
-  final registry = HostFunctionRegistry();
-  CoreBindings.registerAll(registry);
-  final interp = DarticInterpreter(hostFunctionRegistry: registry);
-  interp.execute(module);
-  return interp.entryResult;
-}
-
 void main() {
   group('int bridge', () {
     test('(-42).abs() returns 42', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   return (-42).abs();
 }
@@ -26,7 +14,7 @@ int main() {
     });
 
     test('42.isEven', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 bool main() {
   return 42.isEven;
 }
@@ -35,7 +23,7 @@ bool main() {
     });
 
     test('43.isOdd', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 bool main() {
   return 43.isOdd;
 }
@@ -44,7 +32,7 @@ bool main() {
     });
 
     test('42.toRadixString(16)', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 String main() {
   return 42.toRadixString(16);
 }
@@ -53,7 +41,7 @@ String main() {
     });
 
     test('42.clamp(0, 10)', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   return 42.clamp(0, 10);
 }
@@ -62,7 +50,7 @@ int main() {
     });
 
     test('42.compareTo(43)', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   return 42.compareTo(43);
 }
@@ -71,7 +59,7 @@ int main() {
     });
 
     test('42.remainder(5)', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   return 42.remainder(5);
 }
@@ -80,7 +68,7 @@ int main() {
     });
 
     test('42.bitLength', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   return 42.bitLength;
 }
@@ -89,7 +77,7 @@ int main() {
     });
 
     test('42.sign', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   return 42.sign;
 }
@@ -98,7 +86,7 @@ int main() {
     });
 
     test('42.toStringAsFixed(2)', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 String main() {
   return 42.toStringAsFixed(2);
 }
@@ -107,7 +95,7 @@ String main() {
     });
 
     test('int.parse("42")', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   return int.parse('42');
 }
@@ -118,7 +106,7 @@ int main() {
 
   group('num bridge', () {
     test('42.isNegative', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 bool main() {
   return 42.isNegative;
 }

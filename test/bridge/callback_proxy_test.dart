@@ -5,109 +5,78 @@ import 'package:dartic/src/bytecode/constant_pool.dart';
 import 'package:dartic/src/bytecode/encoding.dart';
 import 'package:dartic/src/bytecode/module.dart';
 import 'package:dartic/src/bytecode/opcodes.dart';
-import 'package:dartic/src/runtime/closure.dart';
 import 'package:dartic/src/runtime/class_info.dart';
+import 'package:dartic/src/runtime/closure.dart';
 import 'package:dartic/src/runtime/interpreter.dart';
 import 'package:test/test.dart';
+
+/// The standard entry function: a single HALT instruction.
+final _entryProto = DarticFuncProto(
+  funcId: 0,
+  bytecode: Uint32List.fromList([encodeABC(Op.halt, 0, 0, 0)]),
+  valueRegCount: 0,
+  refRegCount: 1,
+  paramCount: 0,
+);
+
+/// Builds a module containing [_entryProto] and the given [closureProto],
+/// executes it, and returns the interpreter (ready for invokeClosure calls).
+DarticInterpreter _initInterpreter(
+  DarticFuncProto closureProto, {
+  ConstantPool? constantPool,
+}) {
+  final module = DarticModule(
+    functions: [_entryProto, closureProto],
+    constantPool: constantPool ?? ConstantPool(),
+    entryFuncId: 0,
+  );
+  final interp = DarticInterpreter();
+  interp.execute(module);
+  return interp;
+}
+
+/// Builds a 1-arg identity closure: MOVE_REF 0, 2 -> RETURN_REF 0.
+DarticFuncProto _identityProto({String name = 'identity'}) {
+  return DarticFuncProto(
+    funcId: 1,
+    name: name,
+    bytecode: Uint32List.fromList([
+      encodeABC(Op.moveRef, 0, 2, 0), // refStack[0] = refStack[2] (arg0)
+      encodeABC(Op.returnRef, 0, 0, 0),
+    ]),
+    valueRegCount: 0,
+    refRegCount: 3, // ITA, FTA, arg0
+    paramCount: 1,
+  );
+}
 
 void main() {
   group('invokeClosure', () {
     test('invokes a closure that returns a constant string', () {
-      // Closure bytecode: LOAD_CONST 0, 0 → RETURN_REF 0
-      //   refRegCount=1 (slot 0 for return value)
-      final closureBytecode = Uint32List.fromList([
-        encodeABx(Op.loadConst, 0, 0), // refStack[0] = "hello"
-        encodeABC(Op.returnRef, 0, 0, 0), // return refStack[0]
-      ]);
-
       final closureProto = DarticFuncProto(
         funcId: 1,
         name: 'closure',
-        bytecode: closureBytecode,
+        bytecode: Uint32List.fromList([
+          encodeABx(Op.loadConst, 0, 0),
+          encodeABC(Op.returnRef, 0, 0, 0),
+        ]),
         valueRegCount: 0,
-        refRegCount: 3, // ITA(0), FTA(1), slot(2)... actually let's simplify
+        refRegCount: 3,
         paramCount: 0,
       );
-
-      // Entry function: HALT with null result
-      final entryBytecode = Uint32List.fromList([
-        encodeABC(Op.halt, 0, 0, 0), // halt, null result
-      ]);
 
       final cp = ConstantPool();
       cp.addRef('hello');
 
-      final module = DarticModule(
-        functions: [
-          DarticFuncProto(
-            funcId: 0,
-            bytecode: entryBytecode,
-            valueRegCount: 0,
-            refRegCount: 1,
-            paramCount: 0,
-          ),
-          closureProto,
-        ],
-        constantPool: cp,
-        entryFuncId: 0,
-      );
-
-      final interp = DarticInterpreter();
-      interp.execute(module);
-
-      // Now invoke the closure via invokeClosure
-      final closure = DarticClosure(
-        funcProto: closureProto,
-        upvalues: [],
-      );
-
-      final result = interp.invokeClosure(closure, []);
-      expect(result, equals('hello'));
+      final interp = _initInterpreter(closureProto, constantPool: cp);
+      final closure = DarticClosure(funcProto: closureProto, upvalues: []);
+      expect(interp.invokeClosure(closure, []), equals('hello'));
     });
 
     test('invokes a closure that reads its argument and returns it', () {
-      // Closure: param is at refStack[2] (ITA=0, FTA=1, arg0=2)
-      //   MOVE_REF 0, 2 → RETURN_REF 0
-      final closureBytecode = Uint32List.fromList([
-        encodeABC(Op.moveRef, 0, 2, 0), // refStack[0] = refStack[2] (arg0)
-        encodeABC(Op.returnRef, 0, 0, 0), // return refStack[0]
-      ]);
-
-      final closureProto = DarticFuncProto(
-        funcId: 1,
-        name: 'identity',
-        bytecode: closureBytecode,
-        valueRegCount: 0,
-        refRegCount: 3, // ITA, FTA, arg0
-        paramCount: 1,
-      );
-
-      final entryBytecode = Uint32List.fromList([
-        encodeABC(Op.halt, 0, 0, 0),
-      ]);
-
-      final module = DarticModule(
-        functions: [
-          DarticFuncProto(
-            funcId: 0,
-            bytecode: entryBytecode,
-            valueRegCount: 0,
-            refRegCount: 1,
-            paramCount: 0,
-          ),
-          closureProto,
-        ],
-        constantPool: ConstantPool(),
-        entryFuncId: 0,
-      );
-
-      final interp = DarticInterpreter();
-      interp.execute(module);
-
-      final closure = DarticClosure(
-        funcProto: closureProto,
-        upvalues: [],
-      );
+      final proto = _identityProto();
+      final interp = _initInterpreter(proto);
+      final closure = DarticClosure(funcProto: proto, upvalues: []);
 
       expect(interp.invokeClosure(closure, ['world']), equals('world'));
       expect(interp.invokeClosure(closure, [42]), equals(42));
@@ -115,98 +84,21 @@ void main() {
     });
 
     test('passes a List from host and returns it (same reference)', () {
-      // Closure: param is at refStack[2] (ITA=0, FTA=1, arg0=2)
-      //   MOVE_REF 0, 2 → RETURN_REF 0
-      final closureBytecode = Uint32List.fromList([
-        encodeABC(Op.moveRef, 0, 2, 0),
-        encodeABC(Op.returnRef, 0, 0, 0),
-      ]);
-
-      final closureProto = DarticFuncProto(
-        funcId: 1,
-        name: 'identity',
-        bytecode: closureBytecode,
-        valueRegCount: 0,
-        refRegCount: 3,
-        paramCount: 1,
-      );
-
-      final entryBytecode = Uint32List.fromList([
-        encodeABC(Op.halt, 0, 0, 0),
-      ]);
-
-      final module = DarticModule(
-        functions: [
-          DarticFuncProto(
-            funcId: 0,
-            bytecode: entryBytecode,
-            valueRegCount: 0,
-            refRegCount: 1,
-            paramCount: 0,
-          ),
-          closureProto,
-        ],
-        constantPool: ConstantPool(),
-        entryFuncId: 0,
-      );
-
-      final interp = DarticInterpreter();
-      interp.execute(module);
-
-      final closure = DarticClosure(
-        funcProto: closureProto,
-        upvalues: [],
-      );
+      final proto = _identityProto();
+      final interp = _initInterpreter(proto);
+      final closure = DarticClosure(funcProto: proto, upvalues: []);
 
       final hostList = [1, 'two', 3.0, true, null];
       final result = interp.invokeClosure(closure, [hostList]);
-      expect(result, isA<List>());
       expect(identical(result, hostList), isTrue,
           reason: 'should be the same List reference, not a copy');
       expect(result, equals([1, 'two', 3.0, true, null]));
     });
 
     test('passes a Map from host and returns it (same reference)', () {
-      final closureBytecode = Uint32List.fromList([
-        encodeABC(Op.moveRef, 0, 2, 0),
-        encodeABC(Op.returnRef, 0, 0, 0),
-      ]);
-
-      final closureProto = DarticFuncProto(
-        funcId: 1,
-        name: 'identity',
-        bytecode: closureBytecode,
-        valueRegCount: 0,
-        refRegCount: 3,
-        paramCount: 1,
-      );
-
-      final entryBytecode = Uint32List.fromList([
-        encodeABC(Op.halt, 0, 0, 0),
-      ]);
-
-      final module = DarticModule(
-        functions: [
-          DarticFuncProto(
-            funcId: 0,
-            bytecode: entryBytecode,
-            valueRegCount: 0,
-            refRegCount: 1,
-            paramCount: 0,
-          ),
-          closureProto,
-        ],
-        constantPool: ConstantPool(),
-        entryFuncId: 0,
-      );
-
-      final interp = DarticInterpreter();
-      interp.execute(module);
-
-      final closure = DarticClosure(
-        funcProto: closureProto,
-        upvalues: [],
-      );
+      final proto = _identityProto();
+      final interp = _initInterpreter(proto);
+      final closure = DarticClosure(funcProto: proto, upvalues: []);
 
       final hostMap = {'key': 42, 'nested': [1, 2]};
       final result = interp.invokeClosure(closure, [hostMap]);
@@ -214,242 +106,92 @@ void main() {
     });
 
     test('passes a custom host object and returns it', () {
-      final closureBytecode = Uint32List.fromList([
-        encodeABC(Op.moveRef, 0, 2, 0),
-        encodeABC(Op.returnRef, 0, 0, 0),
-      ]);
+      final proto = _identityProto();
+      final interp = _initInterpreter(proto);
+      final closure = DarticClosure(funcProto: proto, upvalues: []);
 
-      final closureProto = DarticFuncProto(
-        funcId: 1,
-        name: 'identity',
-        bytecode: closureBytecode,
-        valueRegCount: 0,
-        refRegCount: 3,
-        paramCount: 1,
-      );
-
-      final entryBytecode = Uint32List.fromList([
-        encodeABC(Op.halt, 0, 0, 0),
-      ]);
-
-      final module = DarticModule(
-        functions: [
-          DarticFuncProto(
-            funcId: 0,
-            bytecode: entryBytecode,
-            valueRegCount: 0,
-            refRegCount: 1,
-            paramCount: 0,
-          ),
-          closureProto,
-        ],
-        constantPool: ConstantPool(),
-        entryFuncId: 0,
-      );
-
-      final interp = DarticInterpreter();
-      interp.execute(module);
-
-      final closure = DarticClosure(
-        funcProto: closureProto,
-        upvalues: [],
-      );
-
-      // Any arbitrary Dart object — dartic treats it as opaque ref
       final hostObj = Uri.parse('https://example.com');
       final result = interp.invokeClosure(closure, [hostObj]);
       expect(identical(result, hostObj), isTrue);
     });
 
     test('invokes a closure that returns an int via RETURN_VAL', () {
-      // Closure: LOAD_INT 0, 99 → RETURN_VAL 0
-      final closureBytecode = Uint32List.fromList([
-        encodeABx(Op.loadInt, 0, 99 + 0x7FFF), // valueStack[0] = 99
-        encodeABC(Op.returnVal, 0, 0, 0), // return valueStack[0]
-      ]);
-
       final closureProto = DarticFuncProto(
         funcId: 1,
         name: 'intReturn',
-        bytecode: closureBytecode,
+        bytecode: Uint32List.fromList([
+          encodeABx(Op.loadInt, 0, 99 + 0x7FFF),
+          encodeABC(Op.returnVal, 0, 0, 0),
+        ]),
         valueRegCount: 1,
-        refRegCount: 2, // ITA, FTA
+        refRegCount: 2,
         paramCount: 0,
       );
 
-      final entryBytecode = Uint32List.fromList([
-        encodeABC(Op.halt, 0, 0, 0),
-      ]);
-
-      final module = DarticModule(
-        functions: [
-          DarticFuncProto(
-            funcId: 0,
-            bytecode: entryBytecode,
-            valueRegCount: 0,
-            refRegCount: 1,
-            paramCount: 0,
-          ),
-          closureProto,
-        ],
-        constantPool: ConstantPool(),
-        entryFuncId: 0,
-      );
-
-      final interp = DarticInterpreter();
-      interp.execute(module);
-
-      final closure = DarticClosure(
-        funcProto: closureProto,
-        upvalues: [],
-      );
-
-      final result = interp.invokeClosure(closure, []);
-      expect(result, equals(99));
+      final interp = _initInterpreter(closureProto);
+      final closure = DarticClosure(funcProto: closureProto, upvalues: []);
+      expect(interp.invokeClosure(closure, []), equals(99));
     });
 
     test('invokes a closure that returns a double via RETURN_VAL', () {
-      // Closure: LOAD_CONST_DBL 0, 0 → RETURN_VAL 0
       final cp = ConstantPool();
       cp.addDouble(3.14);
-
-      final closureBytecode = Uint32List.fromList([
-        encodeABx(Op.loadConstDbl, 0, 0), // doubleView[0] = 3.14
-        encodeABC(Op.returnVal, 0, 0, 0), // return valueStack[0]
-      ]);
 
       final closureProto = DarticFuncProto(
         funcId: 1,
         name: 'dblReturn',
-        bytecode: closureBytecode,
+        bytecode: Uint32List.fromList([
+          encodeABx(Op.loadConstDbl, 0, 0),
+          encodeABC(Op.returnVal, 0, 0, 0),
+        ]),
         valueRegCount: 1,
-        refRegCount: 2, // ITA, FTA
+        refRegCount: 2,
         paramCount: 0,
         returnKind: StackKind.doubleVal.index,
       );
 
-      final entryBytecode = Uint32List.fromList([
-        encodeABC(Op.halt, 0, 0, 0),
-      ]);
-
-      final module = DarticModule(
-        functions: [
-          DarticFuncProto(
-            funcId: 0,
-            bytecode: entryBytecode,
-            valueRegCount: 0,
-            refRegCount: 1,
-            paramCount: 0,
-          ),
-          closureProto,
-        ],
-        constantPool: cp,
-        entryFuncId: 0,
-      );
-
-      final interp = DarticInterpreter();
-      interp.execute(module);
-
-      final closure = DarticClosure(
-        funcProto: closureProto,
-        upvalues: [],
-      );
-
+      final interp = _initInterpreter(closureProto, constantPool: cp);
+      final closure = DarticClosure(funcProto: closureProto, upvalues: []);
       final result = interp.invokeClosure(closure, []);
       expect(result, isA<double>());
       expect(result, closeTo(3.14, 0.001));
     });
 
     test('invokes a closure that returns a bool via RETURN_VAL', () {
-      // Closure: LOAD_INT 0, 1 → RETURN_VAL 0
-      final closureBytecode = Uint32List.fromList([
-        encodeABx(Op.loadInt, 0, 1 + 0x7FFF), // valueStack[0] = 1 (true)
-        encodeABC(Op.returnVal, 0, 0, 0), // return valueStack[0]
-      ]);
-
       final closureProto = DarticFuncProto(
         funcId: 1,
         name: 'boolReturn',
-        bytecode: closureBytecode,
+        bytecode: Uint32List.fromList([
+          encodeABx(Op.loadInt, 0, 1 + 0x7FFF),
+          encodeABC(Op.returnVal, 0, 0, 0),
+        ]),
         valueRegCount: 1,
-        refRegCount: 2, // ITA, FTA
+        refRegCount: 2,
         paramCount: 0,
         returnKind: StackKind.boolVal.index,
       );
 
-      final entryBytecode = Uint32List.fromList([
-        encodeABC(Op.halt, 0, 0, 0),
-      ]);
-
-      final module = DarticModule(
-        functions: [
-          DarticFuncProto(
-            funcId: 0,
-            bytecode: entryBytecode,
-            valueRegCount: 0,
-            refRegCount: 1,
-            paramCount: 0,
-          ),
-          closureProto,
-        ],
-        constantPool: ConstantPool(),
-        entryFuncId: 0,
-      );
-
-      final interp = DarticInterpreter();
-      interp.execute(module);
-
-      final closure = DarticClosure(
-        funcProto: closureProto,
-        upvalues: [],
-      );
-
+      final interp = _initInterpreter(closureProto);
+      final closure = DarticClosure(funcProto: closureProto, upvalues: []);
       final result = interp.invokeClosure(closure, []);
       expect(result, isA<bool>());
       expect(result, true);
     });
 
     test('invokes a closure that returns null via RETURN_NULL', () {
-      final closureBytecode = Uint32List.fromList([
-        encodeABC(Op.returnNull, 0, 0, 0),
-      ]);
-
       final closureProto = DarticFuncProto(
         funcId: 1,
         name: 'nullReturn',
-        bytecode: closureBytecode,
+        bytecode: Uint32List.fromList([
+          encodeABC(Op.returnNull, 0, 0, 0),
+        ]),
         valueRegCount: 0,
-        refRegCount: 2, // ITA, FTA
+        refRegCount: 2,
         paramCount: 0,
       );
 
-      final entryBytecode = Uint32List.fromList([
-        encodeABC(Op.halt, 0, 0, 0),
-      ]);
-
-      final module = DarticModule(
-        functions: [
-          DarticFuncProto(
-            funcId: 0,
-            bytecode: entryBytecode,
-            valueRegCount: 0,
-            refRegCount: 1,
-            paramCount: 0,
-          ),
-          closureProto,
-        ],
-        constantPool: ConstantPool(),
-        entryFuncId: 0,
-      );
-
-      final interp = DarticInterpreter();
-      interp.execute(module);
-
-      final closure = DarticClosure(
-        funcProto: closureProto,
-        upvalues: [],
-      );
-
+      final interp = _initInterpreter(closureProto);
+      final closure = DarticClosure(funcProto: closureProto, upvalues: []);
       expect(interp.invokeClosure(closure, []), isNull);
     });
   });
@@ -459,48 +201,9 @@ void main() {
     late DarticClosure identityClosure;
 
     setUp(() {
-      // Create a closure that returns its first argument (identity function)
-      // Closure: refStack[0] = refStack[2] (arg0); RETURN_REF 0
-      final closureBytecode = Uint32List.fromList([
-        encodeABC(Op.moveRef, 0, 2, 0),
-        encodeABC(Op.returnRef, 0, 0, 0),
-      ]);
-
-      final closureProto = DarticFuncProto(
-        funcId: 1,
-        name: 'identity',
-        bytecode: closureBytecode,
-        valueRegCount: 0,
-        refRegCount: 3,
-        paramCount: 1,
-      );
-
-      final entryBytecode = Uint32List.fromList([
-        encodeABC(Op.halt, 0, 0, 0),
-      ]);
-
-      final module = DarticModule(
-        functions: [
-          DarticFuncProto(
-            funcId: 0,
-            bytecode: entryBytecode,
-            valueRegCount: 0,
-            refRegCount: 1,
-            paramCount: 0,
-          ),
-          closureProto,
-        ],
-        constantPool: ConstantPool(),
-        entryFuncId: 0,
-      );
-
-      interp = DarticInterpreter();
-      interp.execute(module);
-
-      identityClosure = DarticClosure(
-        funcProto: closureProto,
-        upvalues: [],
-      );
+      final proto = _identityProto();
+      interp = _initInterpreter(proto);
+      identityClosure = DarticClosure(funcProto: proto, upvalues: []);
     });
 
     test('proxy1 creates a callable one-argument function', () {
@@ -511,52 +214,37 @@ void main() {
     });
 
     test('proxy0 creates a callable zero-argument function', () {
-      // Create a closure that returns a constant
-      final closureBytecode = Uint32List.fromList([
-        encodeABC(Op.returnNull, 0, 0, 0),
-      ]);
-
       final closureProto = DarticFuncProto(
         funcId: 1,
         name: 'nullFn',
-        bytecode: closureBytecode,
+        bytecode: Uint32List.fromList([
+          encodeABC(Op.returnNull, 0, 0, 0),
+        ]),
         valueRegCount: 0,
         refRegCount: 2,
         paramCount: 0,
       );
 
-      final closure = DarticClosure(
-        funcProto: closureProto,
-        upvalues: [],
-      );
-
+      final closure = DarticClosure(funcProto: closureProto, upvalues: []);
       final proxy = DarticCallbackProxy(interp, closure);
       final fn = proxy.proxy0();
       expect(fn(), isNull);
     });
 
     test('proxy2 creates a callable two-argument function', () {
-      // Create a closure that returns its second argument
-      // refStack[0] = refStack[3] (arg1); RETURN_REF 0
-      final closureBytecode = Uint32List.fromList([
-        encodeABC(Op.moveRef, 0, 3, 0), // refStack[0] = refStack[3] (arg1)
-        encodeABC(Op.returnRef, 0, 0, 0),
-      ]);
-
       final closureProto = DarticFuncProto(
         funcId: 1,
         name: 'second',
-        bytecode: closureBytecode,
+        bytecode: Uint32List.fromList([
+          encodeABC(Op.moveRef, 0, 3, 0), // refStack[0] = refStack[3] (arg1)
+          encodeABC(Op.returnRef, 0, 0, 0),
+        ]),
         valueRegCount: 0,
         refRegCount: 4, // ITA, FTA, arg0, arg1
         paramCount: 2,
       );
 
-      final closure = DarticClosure(
-        funcProto: closureProto,
-        upvalues: [],
-      );
-
+      final closure = DarticClosure(funcProto: closureProto, upvalues: []);
       final proxy = DarticCallbackProxy(interp, closure);
       final fn = proxy.proxy2();
       expect(fn('first', 'second'), equals('second'));

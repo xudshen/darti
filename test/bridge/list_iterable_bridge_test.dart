@@ -1,23 +1,11 @@
-import 'package:dartic/src/bridge/core_bindings.dart';
-import 'package:dartic/src/bridge/host_function_registry.dart';
-import 'package:dartic/src/runtime/interpreter.dart';
 import 'package:test/test.dart';
 
 import '../helpers/compile_helper.dart';
 
-Future<Object?> _run(String source) async {
-  final module = await compileDart(source);
-  final registry = HostFunctionRegistry();
-  CoreBindings.registerAll(registry);
-  final interp = DarticInterpreter(hostFunctionRegistry: registry);
-  interp.execute(module);
-  return interp.entryResult;
-}
-
 void main() {
   group('List bridge', () {
     test('[1,2,3].length', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   List<int> list = [1, 2, 3];
   return list.length;
@@ -27,7 +15,7 @@ int main() {
     });
 
     test('[].isEmpty', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 bool main() {
   List<int> list = [];
   return list.isEmpty;
@@ -37,7 +25,7 @@ bool main() {
     });
 
     test('[10,20,30][1]', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   List<int> list = [10, 20, 30];
   return list[1];
@@ -47,7 +35,7 @@ int main() {
     });
 
     test('list[0] = 99', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   List<int> list = [10, 20, 30];
   list[0] = 99;
@@ -58,7 +46,7 @@ int main() {
     });
 
     test('list.add and list.length', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   List<int> list = [1, 2];
   list.add(3);
@@ -69,7 +57,7 @@ int main() {
     });
 
     test('list.contains(2)', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 bool main() {
   List<int> list = [1, 2, 3];
   return list.contains(2);
@@ -79,7 +67,7 @@ bool main() {
     });
 
     test('list.indexOf(2)', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   List<int> list = [1, 2, 3];
   return list.indexOf(2);
@@ -89,7 +77,7 @@ int main() {
     });
 
     test('[1,2,3].join(",")', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 String main() {
   List<int> list = [1, 2, 3];
   return list.join(',');
@@ -99,7 +87,7 @@ String main() {
     });
 
     test('[1,2].first', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   List<int> list = [1, 2];
   return list.first;
@@ -109,7 +97,7 @@ int main() {
     });
 
     test('[1,2].last', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   List<int> list = [1, 2];
   return list.last;
@@ -119,7 +107,7 @@ int main() {
     });
 
     test('list.removeAt(0)', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   List<int> list = [10, 20, 30];
   list.removeAt(0);
@@ -130,7 +118,7 @@ int main() {
     });
 
     test('list.removeLast()', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   List<int> list = [10, 20, 30];
   list.removeLast();
@@ -141,7 +129,7 @@ int main() {
     });
 
     test('List.filled(3, 0)', () async {
-      final result = await _run('''
+      final result = await compileAndRunWithHost('''
 int main() {
   List<int> list = List.filled(3, 0);
   return list.length;

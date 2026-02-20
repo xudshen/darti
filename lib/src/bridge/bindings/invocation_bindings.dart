@@ -1,15 +1,15 @@
-/// Registers Invocation property registry for noSuchMethod support.
+/// Registers Invocation property bindings for noSuchMethod support.
 ///
 /// When user code overrides noSuchMethod and accesses `invocation.memberName`,
 /// `invocation.positionalArguments`, etc., the compiler emits CALL_HOST
-/// (static type is Invocation). These registry resolve those calls.
+/// (static type is Invocation). These bindings resolve those calls.
 ///
 /// See: docs/design/04-interop.md
 library;
 
 import '../host_function_registry.dart';
 
-/// Registers all `dart:core::Invocation` property registry.
+/// Registers all `dart:core::Invocation` property bindings.
 abstract final class InvocationBindings {
   static void register(HostFunctionRegistry registry) {
     registry.register('dart:core::Invocation::memberName#0', (args) {

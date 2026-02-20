@@ -23,8 +23,12 @@ enum StackKind {
   /// Whether this kind uses the value stack (all non-ref kinds).
   bool get isValue => this != ref;
 
-  /// Compile-time constant for [ref.index], usable as default parameter values.
+  /// Compile-time constants for enum index values, usable in switch cases
+  /// and default parameter values.
   static const int refDefault = 0;
+  static const int boolDefault = 1;
+  static const int intDefault = 2;
+  static const int doubleDefault = 3;
 }
 
 /// Field layout descriptor — maps a field name index to its storage location.

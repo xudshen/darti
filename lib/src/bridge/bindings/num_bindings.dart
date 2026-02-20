@@ -1,7 +1,7 @@
-/// Registers `num` host registry for the CALL_HOST pipeline.
+/// Registers `num` host bindings for the CALL_HOST pipeline.
 ///
 /// Covers num instance methods, getters, and static methods declared
-/// on the `num` class. These registry handle calls where Kernel resolves
+/// on the `num` class. These bindings handle calls where Kernel resolves
 /// the target to `num` (the declaring class).
 ///
 /// See: docs/design/04-interop.md
@@ -9,7 +9,7 @@ library;
 
 import '../host_function_registry.dart';
 
-/// Registers all `dart:core::num` host function registry.
+/// Registers all `dart:core::num` host function bindings.
 abstract final class NumBindings {
   static void register(HostFunctionRegistry registry) {
     // ── Instance methods ──

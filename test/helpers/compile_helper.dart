@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:dartic/src/bridge/core_bindings.dart';
+import 'package:dartic/src/bridge/host_function_registry.dart';
 import 'package:dartic/src/bytecode/encoding.dart';
 import 'package:dartic/src/bytecode/module.dart';
 import 'package:dartic/src/compiler/compiler.dart';
@@ -81,6 +83,29 @@ Future<Object?> compileAndRun(String source) async {
   final interp = DarticInterpreter();
   interp.execute(module);
   return interp.entryResult;
+}
+
+/// Compiles [source] and executes with [CoreBindings] host functions.
+Future<Object?> compileAndRunWithHost(String source) async {
+  final module = await compileDart(source);
+  final registry = HostFunctionRegistry();
+  CoreBindings.registerAll(registry);
+  final interp = DarticInterpreter(hostFunctionRegistry: registry);
+  interp.execute(module);
+  return interp.entryResult;
+}
+
+/// Like [compileAndRunWithHost] but captures print output.
+Future<(Object?, List<String>)> compileAndCapturePrint(
+  String source,
+) async {
+  final printLog = <String>[];
+  final module = await compileDart(source);
+  final registry = HostFunctionRegistry();
+  CoreBindings.registerAll(registry, printFn: (v) => printLog.add('$v'));
+  final interp = DarticInterpreter(hostFunctionRegistry: registry);
+  interp.execute(module);
+  return (interp.entryResult, printLog);
 }
 
 /// Compiles multiple Dart source files and returns a [DarticModule].

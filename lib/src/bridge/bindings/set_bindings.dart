@@ -1,4 +1,4 @@
-/// Registers `Set` host registry for the CALL_HOST pipeline.
+/// Registers `Set` host bindings for the CALL_HOST pipeline.
 ///
 /// Covers Set instance methods, getters, and set operations.
 /// Callback-based methods (where, map, etc.) are deferred to 5.3.3
@@ -9,7 +9,7 @@ library;
 
 import '../host_function_registry.dart';
 
-/// Registers all `dart:core::Set` host function registry.
+/// Registers all `dart:core::Set` host function bindings.
 abstract final class SetBindings {
   static void register(HostFunctionRegistry registry) {
     // ── Internal _Set factories ──
