@@ -36,7 +36,7 @@ abstract final class MapBindings {
     });
 
     // ── Operators ──
-    bindings.register('dart:core::Map::[#1', (args) {
+    bindings.register('dart:core::Map::[]#1', (args) {
       return (args[0] as Map)[args[1]];
     });
     bindings.register('dart:core::Map::[]=#2', (args) {

@@ -31,7 +31,7 @@ void main() {
           isNot(equals(-1)));
       expect(bindings.lookupByName('dart:core::Map::entries#0'),
           isNot(equals(-1)));
-      expect(bindings.lookupByName('dart:core::Map::[#1'), isNot(equals(-1)));
+      expect(bindings.lookupByName('dart:core::Map::[]#1'), isNot(equals(-1)));
       expect(
           bindings.lookupByName('dart:core::Map::[]=#2'), isNot(equals(-1)));
       expect(bindings.lookupByName('dart:core::Map::containsKey#1'),
@@ -65,7 +65,7 @@ void main() {
 
     test('Map.[] operator', () {
       expect(
-          invoke('dart:core::Map::[#1', [
+          invoke('dart:core::Map::[]#1', [
             {'a': 1},
             'a'
           ]),

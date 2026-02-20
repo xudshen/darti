@@ -12,6 +12,13 @@ import '../host_bindings.dart';
 /// Registers all `dart:core::int` host function bindings.
 abstract final class IntBindings {
   static void register(HostBindings bindings) {
+    // ── Instance methods ──
+
+    // int.toString() — receiver is args[0]
+    bindings.register('dart:core::int::toString#0', (args) {
+      return (args[0] as int).toString();
+    });
+
     // ── Instance getters ──
 
     // int.isEven getter

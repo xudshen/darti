@@ -1,7 +1,8 @@
-/// Registers core dart:core host function bindings for the interpreter.
+/// Central registration hub for all dart:core host function bindings.
 ///
-/// Provides `registerAll` to wire up the minimal set of platform bindings
-/// needed for the CALL_HOST pipeline: print, int methods, String properties.
+/// Provides `registerAll` to wire up platform bindings needed for the
+/// CALL_HOST pipeline. Each type's bindings are delegated to its dedicated
+/// wrapper class in `wrappers/`.
 ///
 /// See: docs/design/04-interop.md "基本类型传递"
 library;
@@ -30,9 +31,6 @@ abstract final class CoreBindings {
     void Function(Object?)? printFn,
   }) {
     _registerPrint(bindings, printFn);
-    _registerIntBindings(bindings);
-    _registerStringBindings(bindings);
-    _registerObjectBindings(bindings);
     ObjectBindings.register(bindings);
     IntBindings.register(bindings);
     DoubleBindings.register(bindings);
@@ -48,6 +46,7 @@ abstract final class CoreBindings {
   }
 
   // ── print ──
+  // print stays here because it depends on the [printFn] override parameter.
 
   static void _registerPrint(
     HostBindings bindings,
@@ -56,43 +55,6 @@ abstract final class CoreBindings {
     bindings.register('dart:core::::print#1', (args) {
       (printFn ?? print)(args[0]);
       return null;
-    });
-  }
-
-  // ── int methods ──
-
-  static void _registerIntBindings(HostBindings bindings) {
-    // int.toString() — receiver is args[0]
-    bindings.register('dart:core::int::toString#0', (args) {
-      return (args[0] as int).toString();
-    });
-  }
-
-  // ── String properties/methods ──
-
-  static void _registerStringBindings(HostBindings bindings) {
-    // String.length getter — receiver is args[0]
-    bindings.register('dart:core::String::length#0', (args) {
-      return (args[0] as String).length;
-    });
-  }
-
-  // ── Object methods ──
-
-  static void _registerObjectBindings(HostBindings bindings) {
-    // Object.toString() — fallback for any object
-    bindings.register('dart:core::Object::toString#0', (args) {
-      return args[0].toString();
-    });
-
-    // Object.hashCode getter
-    bindings.register('dart:core::Object::hashCode#0', (args) {
-      return args[0].hashCode;
-    });
-
-    // Object() constructor — creates a plain Dart Object
-    bindings.register('dart:core::Object::#0', (args) {
-      return Object();
     });
   }
 }

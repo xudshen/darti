@@ -288,15 +288,7 @@ abstract final class ListBindings {
 
     // _GrowableList.filled(int length, E fill)
     bindings.register('dart:core::_GrowableList::filled#2', (args) {
-      final length = args[0] as int;
-      final fill = args[1];
-      final result = List<dynamic>.filled(length, null, growable: true);
-      if (fill != null) {
-        for (var i = 0; i < length; i++) {
-          result[i] = fill;
-        }
-      }
-      return result;
+      return List<dynamic>.filled(args[0] as int, args[1], growable: true);
     });
 
     // ── Internal _List factories ──

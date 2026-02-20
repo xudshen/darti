@@ -1,18 +1,33 @@
 /// Registers Object, Type, Null, and `identical` bindings.
 ///
-/// Supplements the basic Object bindings in [CoreBindings] with
-/// additional members: runtimeType, noSuchMethod, and the top-level
-/// `identical` function. Also registers Type members.
+/// Covers all Object instance methods (toString, hashCode, runtimeType,
+/// noSuchMethod), the Object() constructor, top-level `identical`, and
+/// Type members (toString, hashCode).
 ///
 /// See: docs/design/04-interop.md
 library;
 
 import '../host_bindings.dart';
 
-/// Registers Object, Type, Null, and `identical` bindings.
+/// Registers all `dart:core::Object`, `Type`, and `identical` bindings.
 abstract final class ObjectBindings {
   static void register(HostBindings bindings) {
-    // ── Object supplemental methods ──
+    // ── Object core methods ──
+
+    // Object.toString() — fallback for any object
+    bindings.register('dart:core::Object::toString#0', (args) {
+      return args[0].toString();
+    });
+
+    // Object.hashCode getter
+    bindings.register('dart:core::Object::hashCode#0', (args) {
+      return args[0].hashCode;
+    });
+
+    // Object() constructor — creates a plain Dart Object
+    bindings.register('dart:core::Object::#0', (args) {
+      return Object();
+    });
 
     // Object.runtimeType getter
     // Symbol: dart:core::Object::runtimeType#0, argCount=1 (receiver only)

@@ -123,8 +123,8 @@ abstract final class NumBindings {
 
     // ── Static methods ──
 
-    // num.parse(String input) — 1 formal param
-    bindings.register('dart:core::num::parse#1', (args) {
+    // num.parse(String input, [num onError(String)?]) — 2 formal params
+    bindings.register('dart:core::num::parse#2', (args) {
       return num.parse(args[0] as String);
     });
 

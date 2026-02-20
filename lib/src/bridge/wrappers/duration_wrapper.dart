@@ -88,7 +88,7 @@ abstract final class DurationBindings {
     bindings.register('dart:core::Duration::#6', (args) {
       if (args.isEmpty) return Duration.zero;
       return Duration(
-        days: args.isNotEmpty ? (args[0] as int? ?? 0) : 0,
+        days: args[0] as int? ?? 0,
         hours: args.length > 1 ? (args[1] as int? ?? 0) : 0,
         minutes: args.length > 2 ? (args[2] as int? ?? 0) : 0,
         seconds: args.length > 3 ? (args[3] as int? ?? 0) : 0,

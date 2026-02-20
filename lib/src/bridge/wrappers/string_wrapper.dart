@@ -28,7 +28,7 @@ abstract final class StringBindings {
       return (args[0] as String).hashCode;
     });
 
-    // String.length getter (also registered in CoreBindings; idempotent)
+    // String.length getter
     bindings.register('dart:core::String::length#0', (args) {
       return (args[0] as String).length;
     });
@@ -204,7 +204,7 @@ abstract final class StringBindings {
     // String.fromCharCodes(Iterable<int> charCodes, [int start = 0, int? end])
     // — 3 formal params (no receiver)
     bindings.register('dart:core::String::fromCharCodes#3', (args) {
-      final codes = args[0] as Iterable<int>;
+      final codes = (args[0] as Iterable).cast<int>();
       if (args.length > 1 && args[1] != null) {
         final start = args[1] as int;
         if (args.length > 2 && args[2] != null) {

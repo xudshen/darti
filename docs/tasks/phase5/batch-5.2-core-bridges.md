@@ -260,6 +260,6 @@ feat(bridge): add dart:core bridges for int, String, List, Map, Set, Duration, a
 - [x] 5.2.6 Map + Set + Duration + 其他常用类 Bridge
 - [x] `fvm dart analyze` 零警告
 - [x] `fvm dart test` 全部通过 (1758 tests)
-- [ ] commit 已提交
-- [ ] overview.md 已更新
-- [ ] code review 已完成
+- [x] commit 已提交
+- [x] overview.md 已更新
+- [x] code review 已完成
