@@ -196,7 +196,7 @@ WIDE 前缀极少使用（函数局部变量 >256 或常量池 >65K 时），不
 0x1E-0x1F 预留
 ```
 
-### 浮点算术 (0x20-0x2F)
+### 浮点算术与类型转换 (0x20-0x2F)
 
 ```
 0x20  ADD_DBL       A, B, C       doubleView[A] = doubleView[B] + doubleView[C]

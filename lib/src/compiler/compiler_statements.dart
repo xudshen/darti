@@ -473,7 +473,7 @@ extension on DarticCompiler {
           kind = StackKind.ref;
         } else {
           // Value stack — distinguish int vs double via type inference.
-          // Default to intVal when type is unknown (covers int, bool).
+          // Default to intVal when type is completely unknown.
           final exprType = _inferExprType(expr);
           kind = exprType != null
               ? _classifyStackKind(exprType)

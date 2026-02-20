@@ -155,8 +155,8 @@ feat: add collection literals, string interpolation, callback proxy, and dynamic
 ## 核心发现
 
 - **HOST_BOUNDARY 哨兵帧**: funcId=0xFFFFFFFF 标记 VM→解释器回调边界。RETURN 指令检测到哨兵帧时存储结果到 `_callbackResult` 并退出 `_executeLoop`。异常同理 — 直接 rethrow 到 VM 调用方
-- **paramKinds 元数据**: `DarticFuncProto` 新增 `Uint8List? paramKinds` 存储每个参数的 StackKind（0=intVal, 1=doubleVal, 2=ref）。`invokeClosure` 据此将宿主参数路由到正确的栈（value 栈 vs ref 栈）。不设置 paramKinds 时回退到旧行为（全部写入 ref 栈 rBase+2+i）
-- **returnKind 元数据**: `DarticFuncProto` 新增 `int returnKind`（0=int, 1=double, 2=ref, 3=bool）。解决了 bool 在 value 栈上以 0/1 存储但宿主 VM 期望 Dart bool 的阻抗不匹配问题
+- **paramKinds 元数据**: `DarticFuncProto` 新增 `Uint8List? paramKinds` 存储每个参数的 StackKind index（后续 boolVal 重构后编码为 0=ref, 1=boolVal, 2=intVal, 3=doubleVal）。`invokeClosure` 据此将宿主参数路由到正确的栈（value 栈 vs ref 栈）。不设置 paramKinds 时回退到旧行为（全部写入 ref 栈 rBase+2+i）
+- **returnKind 元数据**: `DarticFuncProto` 新增 `int returnKind`（后续 boolVal 重构后编码为 0=ref, 1=boolVal, 2=intVal, 3=doubleVal）。解决了 bool 在 value 栈上以 0/1 存储但宿主 VM 期望 Dart bool 的阻抗不匹配问题
 - **DarticCallbackProxy proxy0()-proxy3()**: 0-3 参数闭包覆盖 forEach/map/where/sort/fold/any/every/List.generate 等全部回调场景
 - **CFE 降糖**: `[a,b,c]` → `_GrowableList._literalN()`，`{a,b,c}` (Set) → `_Set()..add()..add()`。需注册 `_GrowableList` 和 `_Set` 变体绑定
 - **CALL_HOST 自动包装**: DarticClosure 参数在 CALL_HOST handler 中按 paramCount 自动选择 proxyN() 包装，桥接 wrapper 无需感知解释器闭包

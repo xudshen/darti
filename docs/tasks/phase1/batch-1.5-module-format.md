@@ -76,7 +76,7 @@
 2. **写测试** — 验证 `classifyType(DartType)` 的分类结果：
    - `int` → `StackKind.intVal`
    - `double` → `StackKind.doubleVal`
-   - `bool` → `StackKind.intVal`（编码为 0/1）
+   - `bool` → `StackKind.boolVal`（编码为 0/1）
    - `String` → `StackKind.ref`
    - `Object` / `Object?` → `StackKind.ref`
    - `dynamic` → `StackKind.ref`

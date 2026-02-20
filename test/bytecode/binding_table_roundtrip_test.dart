@@ -5,6 +5,7 @@ import 'package:dartic/src/bytecode/deserializer.dart';
 import 'package:dartic/src/bytecode/encoding.dart';
 import 'package:dartic/src/bytecode/module.dart';
 import 'package:dartic/src/bytecode/opcodes.dart';
+import 'package:dartic/src/runtime/class_info.dart';
 import 'package:dartic/src/bytecode/serializer.dart';
 import 'package:test/test.dart';
 
@@ -136,7 +137,7 @@ void main() {
             name: 'main',
             bytecode: Uint32List.fromList([
               encodeABx(Op.callHost, 0, 0),
-              encodeABC(Op.halt, 0, 3, 0),
+              encodeABC(Op.halt, 0, StackKind.ref.index + 1, 0),
             ]),
             valueRegCount: 2,
             refRegCount: 2,

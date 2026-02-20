@@ -150,7 +150,7 @@ CFE 已在 Kernel AST 中填入完整类型信息。编译器根据变量的静�
 
 **安全的 `_) =` 模式**：以下场景中丢弃 `ResultLoc`（写为 `final (reg, _) = ...`）是安全的——因为结果必定在引用栈：闭包表达式、switch case 常量。接收者表达式**不在此列**——虽然大多数对象 receiver 在 ref 栈，但值类型 receiver 需要 boxing（见下）。
 
-**值类型接收者 boxing**：当 receiver 表达式类型为 `int`/`double`/`bool` 且走 `CALL_VIRTUAL`/`CALL_SUPER`/getter/setter 分发时，编译器检查 `ResultLoc`，若为 `value` 则插入 `BOX_INT`/`BOX_DOUBLE` 将值提升到引用栈。此逻辑在 `_compileVirtualCall`、`_compileInstanceGetterCall`、`_compileInstanceSetterCall` 三处统一实现。实际上 Dart 的 `int`/`double`/`bool` 常用方法（`toString`、`compareTo` 等）由宿主绑定特化处理（`CALL_HOST`），boxing 主要覆盖未来新增的虚分发场景。
+**值类型接收者 boxing**：当 receiver 表达式类型为 `int`/`double`/`bool` 且走 `CALL_VIRTUAL`/`CALL_SUPER`/getter/setter 分发时，编译器检查 `ResultLoc`，若为 `value` 则插入 `BOX_INT`/`BOX_DOUBLE`/`BOX_BOOL` 将值提升到引用栈。此逻辑在 `_compileVirtualCall`、`_compileInstanceGetterCall`、`_compileInstanceSetterCall` 三处统一实现。实际上 Dart 的 `int`/`double`/`bool` 常用方法（`toString`、`compareTo` 等）由宿主绑定特化处理（`CALL_HOST`），boxing 主要覆盖未来新增的虚分发场景。
 
 **DartType 完整分类**：编译器在 StackKind 决策和 TypeTemplate 生成两个场景处理 Kernel 的 DartType。以下列出所有 DartType 子类的处理方式：
 
