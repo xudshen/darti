@@ -59,7 +59,7 @@ abstract final class ErrorBindings {
         args[0] as int,
         args[1] as int?,
         args[2] as int?,
-        args.length > 3 ? args[3] as String? ?? '' : '',
+        args.length > 3 ? args[3] as String? : null,
         args.length > 4 ? args[4] as String? : null,
       );
     });
@@ -76,7 +76,7 @@ abstract final class ErrorBindings {
     registry.register('dart:core::RangeError::value#3', (args) {
       return RangeError.value(
         args[0] as num,
-        args.length > 1 ? args[1] as String? ?? '' : '',
+        args.length > 1 ? args[1] as String? : null,
         args.length > 2 ? args[2] as String? : null,
       );
     });

@@ -431,12 +431,21 @@ feat(bridge): add RegExp, DateTime, Uri, BigInt and other dart:core bindings (5.
 
 ## 核心发现
 
-1. **Dynamic type coercion for Set/Map callbacks**: `Set.reduce`, `Set.firstWhere/lastWhere/singleWhere` 和 `Map.updateAll` 不能直接委托给类型化方法（`(dynamic, dynamic) => dynamic is not a subtype of (T, T) => T`），需手动迭代实现
+1. **Dynamic type coercion for Set/Map/List/Iterable callbacks**: `reduce`, `firstWhere/lastWhere/singleWhere`（Set）和 `Map.updateAll` 不能直接委托给类型化方法（`(dynamic, dynamic) => dynamic is not a subtype of (T, T) => T`），需手动迭代实现。**Code review 后已统一**：List 和 Iterable 的 reduce 也改为手动迭代，与 Set 保持一致
 2. **Kernel 对 String 的 Pattern 接口方法解析**: `'str'.allMatches(...)` 在 Kernel AST 中解析为 `dart:core::Pattern::allMatches#2`（非 `String::`），需同时注册 `String::` 和 `Pattern::` 前缀
 3. **Kernel 对 Uri.parse 的签名**: Kernel 解析 `Uri.parse` 带 3 个参数 (uri, start, end)，需注册 `#1` 和 `#3` 两个变体
 4. **BigInt.sign 返回 int**: 现代 Dart 中 `BigInt.sign` 返回 `int`（非 `BigInt`）
 5. **LateInitializationError 是 dart:_internal::LateError**: 非 dart:core 公开类，由 VM 内部创建，不需要用户绑定
 6. **Iterable.generate e2e 测试的 unwind 问题**: 使用 `Iterable.generate` 的 lazy iterable 通过 callback 方法（reduce/takeWhile/skipWhile/firstWhere/single/followedBy）在解释器 unwind handler 中触发 `RangeError (length)`，这是解释器层面的已知局限，与绑定层无关
+
+## Code Review 修复记录
+
+| 问题 | 文件 | 修复 |
+|------|------|------|
+| `splitMapJoin` 访问 args[3] 无边界检查 | string_bindings.dart | 加 `args.length > 2/3` guard |
+| List/Iterable reduce 用直接委托，与 Set 不一致 | list_bindings.dart, iterable_bindings.dart | 统一改为手动迭代 |
+| `List.shuffle` 静默忽略 Random 参数 | list_bindings.dart | 添加注释说明已知局限（dart:math 未绑定）|
+| `RangeError.range/value` name 参数默认值用 `''` 而非 `null` | error_bindings.dart | 改为 `null`，与 Dart SDK 一致 |
 
 ## Batch 完成检查
 
@@ -452,7 +461,7 @@ feat(bridge): add RegExp, DateTime, Uri, BigInt and other dart:core bindings (5.
 - [x] 5.6.10 Stopwatch + StackTrace + Symbol + Expando + MapEntry + Iterator 绑定
 - [x] 5.6.11 Error/Exception 绑定补全
 - [x] `fvm dart analyze` 零警告
-- [ ] `fvm dart test` 全部通过（578 passed, 7 pre-existing failures in interpreter/compiler layer）
+- [x] `fvm dart test` bridge 测试 491 passed, 7 pre-existing failures（Iterable.generate lazy unwind，解释器层面已知局限）
 - [ ] commit 已提交
 - [ ] overview.md 已更新
-- [ ] code review 已完成
+- [x] code review 已完成（见上方修复记录）

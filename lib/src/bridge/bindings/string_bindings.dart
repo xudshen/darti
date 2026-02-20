@@ -207,8 +207,8 @@ abstract final class StringBindings {
     registry.register('dart:core::String::splitMapJoin#3', (args) {
       final self = args[0] as String;
       final pattern = args[1] as Pattern;
-      final onMatch = args[2] as Function?;
-      final onNonMatch = args[3] as Function?;
+      final onMatch = args.length > 2 ? args[2] as Function? : null;
+      final onNonMatch = args.length > 3 ? args[3] as Function? : null;
       return self.splitMapJoin(
         pattern,
         onMatch: onMatch != null ? (m) => onMatch(m) as String : null,

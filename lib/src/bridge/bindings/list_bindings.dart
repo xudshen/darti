@@ -222,6 +222,8 @@ abstract final class ListBindings {
       }
       return null;
     });
+    // shuffle([Random? random]) — optional Random parameter not forwarded;
+    // dart:math bindings are not yet available.
     registry.register('dart:core::List::shuffle#1', (args) {
       (args[0] as List).shuffle();
       return null;
@@ -269,9 +271,20 @@ abstract final class ListBindings {
       return (args[0] as List)
           .expand((e) => (args[1] as Function)(e) as Iterable);
     });
+    // Manual iteration: List.reduce((a,b) => fn(a,b)) fails at runtime
+    // because (dynamic, dynamic) => dynamic is not a subtype of (T, T) => T.
     registry.register('dart:core::List::reduce#1', (args) {
-      return (args[0] as List)
-          .reduce((a, b) => (args[1] as Function)(a, b));
+      final fn = args[1] as Function;
+      final list = args[0] as List;
+      final iter = list.iterator;
+      if (!iter.moveNext()) {
+        throw StateError('No element');
+      }
+      var value = iter.current;
+      while (iter.moveNext()) {
+        value = fn(value, iter.current);
+      }
+      return value;
     });
     registry.register('dart:core::List::firstWhere#2', (args) {
       final fn = args[1] as Function;
@@ -546,6 +559,8 @@ abstract final class ListBindings {
       }
       return null;
     });
+    // shuffle([Random? random]) — optional Random parameter not forwarded;
+    // dart:math bindings are not yet available.
     registry.register('dart:core::_GrowableList::shuffle#1', (args) {
       (args[0] as List).shuffle();
       return null;
@@ -594,9 +609,19 @@ abstract final class ListBindings {
       return (args[0] as List)
           .expand((e) => (args[1] as Function)(e) as Iterable);
     });
+    // Manual iteration: same workaround as List::reduce above.
     registry.register('dart:core::_GrowableList::reduce#1', (args) {
-      return (args[0] as List)
-          .reduce((a, b) => (args[1] as Function)(a, b));
+      final fn = args[1] as Function;
+      final list = args[0] as List;
+      final iter = list.iterator;
+      if (!iter.moveNext()) {
+        throw StateError('No element');
+      }
+      var value = iter.current;
+      while (iter.moveNext()) {
+        value = fn(value, iter.current);
+      }
+      return value;
     });
     registry.register('dart:core::_GrowableList::firstWhere#2', (args) {
       final fn = args[1] as Function;

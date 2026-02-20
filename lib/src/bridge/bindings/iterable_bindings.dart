@@ -107,9 +107,19 @@ abstract final class IterableBindings {
       return (args[0] as Iterable)
           .every((e) => fn(e) as bool);
     });
+    // Manual iteration: Iterable.reduce((a,b) => fn(a,b)) fails at runtime
+    // because (dynamic, dynamic) => dynamic is not a subtype of (T, T) => T.
     registry.register('dart:core::Iterable::reduce#1', (args) {
-      return (args[0] as Iterable)
-          .reduce((a, b) => (args[1] as Function)(a, b));
+      final fn = args[1] as Function;
+      final iter = (args[0] as Iterable).iterator;
+      if (!iter.moveNext()) {
+        throw StateError('No element');
+      }
+      var value = iter.current;
+      while (iter.moveNext()) {
+        value = fn(value, iter.current);
+      }
+      return value;
     });
     registry.register('dart:core::Iterable::expand#1', (args) {
       return (args[0] as Iterable)
