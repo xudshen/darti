@@ -36,11 +36,17 @@ extension on DarticCompiler {
         targetClass == _coreTypes.intClass) {
       final receiverKind = _inferStackKind(expr.receiver);
       if (receiverKind == StackKind.intVal) {
-        if (invName == '/' || invName == 'toDouble') {
+        // `/` has no int opcode but has a double opcode → always double.
+        // `toDouble` is a unary conversion — keep as string check.
+        if (invName == 'toDouble' ||
+            (_intBinaryOp(invName) == null && _doubleBinaryOp(invName) != null)) {
           return _coreTypes.doubleNonNullableRawType;
         }
-        // Mixed int op double → result is double (~/ excluded, always int).
-        if (_isMixedPromotableOp(invName) &&
+        // Mixed int op double → result is double (ops with a double
+        // equivalent via _intToDoubleOp). ~/,&,|,^,<<,>>,>>> excluded.
+        final intOp = _intBinaryOp(invName);
+        if (intOp != null &&
+            _intToDoubleOp(intOp) != null &&
             expr.arguments.positional.isNotEmpty) {
           final argKind = _inferStackKind(expr.arguments.positional[0]);
           if (argKind == StackKind.doubleVal) {
@@ -387,7 +393,3 @@ int? _intToDoubleOp(int op) => switch (op) {
 bool _isCompareOp(String name) =>
     name == '<' || name == '<=' || name == '>' || name == '>=';
 
-/// Returns true for arithmetic operators that produce double when mixed with double.
-/// Excludes `~/` which always returns int, and `/` which has its own handling.
-bool _isMixedPromotableOp(String name) =>
-    name == '+' || name == '-' || name == '*' || name == '%';
