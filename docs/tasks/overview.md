@@ -160,3 +160,35 @@
 - [ ] Flutter 热更新 demo 端到端运行
 
 详见 [`docs/plans/development-roadmap.md`](../plans/development-roadmap.md)
+
+---
+
+## 基础设施：Performance Benchmark Suite — ✅ 已完成
+
+**目标：** 三通道性能基准测试（host / dartic / dart_eval），量化 dartic 在性能谱系中的位置
+
+**设计参考：** [`docs/plans/2026-02-21-benchmark-suite.md`](../plans/2026-02-21-benchmark-suite.md)
+
+**目录：** `benchmark/`（独立 Dart package，依赖 dartic + dart_eval）
+
+| 组件 | 文件 | 状态 |
+|------|------|------|
+| Runner 框架 | `benchmark/lib/src/runner.dart` | ✅ |
+| 统计模块 | `benchmark/lib/src/stats.dart` | ✅ |
+| Console 报告 | `benchmark/lib/src/reporter.dart` | ✅ |
+| Micro 套件 (5) | `benchmark/lib/suites/micro.dart` | ✅ |
+| Macro 套件 (4) | `benchmark/lib/suites/macro.dart` | ✅ |
+
+**运行：** `cd benchmark && fvm dart run bin/run.dart [--quick] [--no-dart-eval]`
+
+**基线数据（2026-02-21, quick mode）：**
+
+| Benchmark | d/h ratio | de/h ratio | 说明 |
+|-----------|-----------|------------|------|
+| function_call (fib20) | 55x | 105x | dartic 比 dart_eval 快 ~2x |
+| fibonacci_30 | 56x | 102x | 递归调用密集 |
+| binary_tree_15 | 67x | N/A | OOP + 递归 |
+| method_dispatch | 83x | N/A | 虚调用 |
+| int_arithmetic | 159x | 366x | 纯算术循环 |
+| loop_sum_100k | 191x | 157x | dart_eval 略快 |
+| quicksort_1k | 236x | N/A | List 操作密集 |
