@@ -218,6 +218,7 @@ feat(async): add async/await, sync*/async* generators with frame-as-continuation
 - **Completer\<T\> 简化**：INIT_ASYNC 当前创建 `Completer<Object?>()` 而非 `Completer<T>()`，TypeTemplate Bx 已编码但运行时暂未使用。待泛型实化完善后可启用
 - **sync\* 驱动模型**：SyncStarIterator 通过 `driveSyncStar()` 公开方法同步驱动解释器，使用解释器字段（`_activeSyncStarIterator`、`_syncStarStatus`）在 YIELD 与 moveNext 间传递状态
 - **async\* StreamController 四回调**：onListen 启动函数体、onPause 设标志、onResume 恢复已暂停帧、onCancel 标记取消并恢复帧执行 finally
+- **跨帧异步异常传播受限**：callee async 函数 throw → `completeError` → awaiter 的 `catch` 无法命中 handler，因为编译器生成的异常表 `endPC` 未覆盖 AWAIT 恢复 PC。运行时 `_resumeFrame` 已添加 try-catch 兜底，但 awaiter 端 catch 匹配需编译器修复。详见 `docs/design/07-async.md` "已知局限"
 
 ## Batch 完成检查
 

@@ -212,7 +212,9 @@ Future 完成后，通过 `scheduleMicrotask` 触发：
 
 ### try/catch 与 await 的交互
 
-异常处理器表（`funcProto.exceptionTable`，详见 Ch3）跨越 await 点。恢复帧后根据当前 PC 线性扫描 `exceptionTable`，找到 `startPC <= pc < endPC` 的处理器。finally 中的 await 正常工作——finally 块的字节码序列包含 AWAIT 指令，挂起/恢复机制与普通 await 一致。
+异常处理器表（`funcProto.exceptionTable`，详见 Ch3）需要跨越 await 点。恢复帧后根据当前 PC 线性扫描 `exceptionTable`，找到 `startPC <= pc < endPC` 的处理器。finally 中的 await 正常工作——finally 块的字节码序列包含 AWAIT 指令，挂起/恢复机制与普通 await 一致。
+
+> **当前限制**：编译器生成的异常表 `endPC` 尚未扩展到覆盖 AWAIT 恢复 PC。当 callee 在 resume 后抛出异常并通过 `completeError` 传播到 awaiter 时，`_findHandler` 在恢复 PC 处找不到 handler。运行时已添加 `_resumeFrame` try-catch 兜底（将逃逸异常路由到 Completer），但 awaiter 端 catch 块的匹配需要编译器配合修复。详见"已知局限与演进路径"表。
 
 ### async* 生成器
 
@@ -393,6 +395,7 @@ YIELD_STAR 在 async\* 和 sync\* 中的运行时行为完全不同：
 | 局限 | 影响 | 演进 |
 |------|------|------|
 | sync* 两 yield 间长计算阻塞事件循环 | 用户可感知卡顿 | 接受限制，sync* 语义决定 |
+| 跨帧异步异常传播：异常表未覆盖 AWAIT 恢复点 PC | callee 抛出 → `completeError` → awaiter 的 `catch` 无法匹配 handler（`_findHandler` 在恢复 PC 找不到 handler） | 编译器需扩展异常表 `endPC`，使 try/catch 块的 PC 范围覆盖块内所有 AWAIT 的恢复 PC。运行时 `_resumeFrame` 已添加 try-catch 兜底（将逃逸异常路由到 Completer），但 awaiter 端的 catch 块匹配需要编译器配合 |
 | Completer 泄漏检测仅依赖 WeakReference | 无主动告警 | > **Phase 2**：添加诊断计数器 `pendingCount`，可通过调试接口查询。触发条件：用户报告 async 函数"不返回"的 bug |
 | 异步栈追踪为简化拼接 | 跨边界追踪可读性差 | > **Phase 2**：实现 causal async stack trace（类似 Dart VM 的 --causal-async-stacks）。触发条件：用户反馈异步调试体验不佳 |
 | async\* yield\* 无背压传播 | 高速生产者可能 OOM | > **Phase 2**：当前 StreamController 被 pause 时，被委托 Stream 的订阅也应 pause；当前订阅被 cancel 时，被委托 Stream 的订阅也应 cancel。触发条件：async\* 相关 OOM 报告 |
