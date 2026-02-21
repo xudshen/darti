@@ -896,11 +896,11 @@ class DarticCompiler {
   }
 
   /// Returns true if [op] is a double binary opcode (arithmetic or comparison).
-  bool _isDoubleBinaryOp(int op) =>
-      (op >= Op.addDbl && op <= Op.divDbl) ||
-      (op >= Op.ltDbl && op <= Op.geDbl) ||
-      op == Op.eqDbl ||
-      op == Op.modDbl;
+  bool _isDoubleBinaryOp(int op) => switch (op) {
+    Op.addDbl || Op.subDbl || Op.mulDbl || Op.divDbl || Op.modDbl ||
+    Op.ltDbl || Op.leDbl || Op.gtDbl || Op.geDbl || Op.eqDbl => true,
+    _ => false,
+  };
 
   /// Compiles [branchExpr], boxing and moving the result into [targetReg].
   ///

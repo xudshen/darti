@@ -260,6 +260,12 @@ extension on DarticCompiler {
         lhsReg = _ensureValue(lhsReg, lhsLoc, StackKind.doubleVal);
         rhsReg = _ensureValue(rhsReg, rhsLoc, StackKind.doubleVal);
         _emitter.emit(encodeABC(Op.eqDbl, resultReg, lhsReg, rhsReg));
+      case (StackKind.intVal, StackKind.doubleVal) ||
+           (StackKind.doubleVal, StackKind.intVal):
+        // Mixed int/double: promote int to double, compare as doubles.
+        lhsReg = _coerceToValueKind(lhsReg, lhsLoc, leftKind, StackKind.doubleVal);
+        rhsReg = _coerceToValueKind(rhsReg, rhsLoc, rightKind, StackKind.doubleVal);
+        _emitter.emit(encodeABC(Op.eqDbl, resultReg, lhsReg, rhsReg));
       case _:
         // Mixed or ref kinds — EQ_GENERIC on the ref stack.
         lhsReg = _boxToRefIfValue(lhsReg, lhsLoc, _inferExprType(expr.left));
@@ -1156,6 +1162,9 @@ extension on DarticCompiler {
       final result = _emitBinaryOp(expr, binOp);
       if (result != null) return result;
     }
+    // double ~/ (truncating division): delegate to _emitBinaryOp(divInt) which
+    // promotes operands as needed and truncates via divDbl → dblToInt.
+    if (name == '~/') return _emitBinaryOp(expr, Op.divInt);
     final unOp = _doubleUnaryOp(name);
     if (unOp != null) return _emitUnaryOp(expr, unOp);
     return null;

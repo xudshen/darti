@@ -56,7 +56,8 @@ extension on DarticCompiler {
         return _coreTypes.intNonNullableRawType;
       }
       if (receiverKind == StackKind.doubleVal) {
-        if (invName == 'toInt') {
+        // ~/ always returns int regardless of receiver type.
+        if (invName == 'toInt' || invName == '~/') {
           return _coreTypes.intNonNullableRawType;
         }
         return _coreTypes.doubleNonNullableRawType;
@@ -64,7 +65,7 @@ extension on DarticCompiler {
     }
 
     if (targetClass == _coreTypes.doubleClass) {
-      if (invName == 'toInt') {
+      if (invName == 'toInt' || invName == '~/') {
         return _coreTypes.intNonNullableRawType;
       }
       return _coreTypes.doubleNonNullableRawType;
@@ -386,6 +387,7 @@ int? _intToDoubleOp(int op) => switch (op) {
       Op.leInt  => Op.leDbl,
       Op.gtInt  => Op.gtDbl,
       Op.geInt  => Op.geDbl,
+      Op.eqInt  => Op.eqDbl,
       _ => null,
     };
 
