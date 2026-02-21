@@ -1,1 +1,6 @@
 include: package:lints/recommended.yaml
+
+analyzer:
+  errors:
+    # This is an internal benchmark package that needs access to dartic internals.
+    implementation_imports: ignore

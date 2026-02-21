@@ -9,6 +9,8 @@ dependencies:
   dartic:
     path: ..
   dart_eval: ^0.8.4
+  kernel:
+    path: ../vendor/dart-sdk/pkg/kernel
 
 dev_dependencies:
   test: ^1.25.6
