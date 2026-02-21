@@ -132,5 +132,44 @@ abstract final class NumBindings {
     registry.register('dart:core::num::tryParse#1', (args) {
       return num.tryParse(args[0] as String);
     });
+
+    // ── Operators ──
+    // These are needed when the receiver is typed as `dynamic` (e.g. closure
+    // parameters) and the compiler emits INVOKE_DYN instead of specialized
+    // opcodes like ADD_INT.
+
+    registry.register('dart:core::num::+#1', (args) {
+      return (args[0] as num) + (args[1] as num);
+    });
+    registry.register('dart:core::num::-#1', (args) {
+      return (args[0] as num) - (args[1] as num);
+    });
+    registry.register('dart:core::num::*#1', (args) {
+      return (args[0] as num) * (args[1] as num);
+    });
+    registry.register('dart:core::num::/#1', (args) {
+      return (args[0] as num) / (args[1] as num);
+    });
+    registry.register('dart:core::num::~/#1', (args) {
+      return (args[0] as num) ~/ (args[1] as num);
+    });
+    registry.register('dart:core::num::%#1', (args) {
+      return (args[0] as num) % (args[1] as num);
+    });
+    registry.register('dart:core::num::<#1', (args) {
+      return (args[0] as num) < (args[1] as num);
+    });
+    registry.register('dart:core::num::>#1', (args) {
+      return (args[0] as num) > (args[1] as num);
+    });
+    registry.register('dart:core::num::<=#1', (args) {
+      return (args[0] as num) <= (args[1] as num);
+    });
+    registry.register('dart:core::num::>=#1', (args) {
+      return (args[0] as num) >= (args[1] as num);
+    });
+    registry.register('dart:core::num::unary-#0', (args) {
+      return -(args[0] as num);
+    });
   }
 }

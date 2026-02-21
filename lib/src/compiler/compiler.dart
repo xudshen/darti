@@ -472,6 +472,28 @@ class DarticCompiler {
     return StackKind.ref.index;
   }
 
+  // ── Async stub ──
+
+  /// Emits a stub body for async/generator functions that throws at runtime.
+  /// This allows the compiler to proceed past async code (e.g., in
+  /// expect.dart's async_utils.dart) without failing at compile time.
+  /// Tests that never call these functions will work; tests that do call them
+  /// will get a clear runtime error.
+  void _emitAsyncStub(ir.AsyncMarker marker, String funcName) {
+    final label = switch (marker) {
+      ir.AsyncMarker.Async => 'async',
+      ir.AsyncMarker.AsyncStar => 'async*',
+      ir.AsyncMarker.SyncStar => 'sync*',
+      _ => marker.toString(),
+    };
+    final msg = 'Unsupported: $label function "$funcName" '
+        'is not yet implemented. This will be added in Phase 6.';
+    final reg = _allocRefReg();
+    final idx = _constantPool.addRef(msg);
+    _emitter.emit(encodeABx(Op.loadConst, reg, idx));
+    _emitter.emit(encodeABC(Op.throw_, reg, 0, 0));
+  }
+
   // ── Procedure compilation ──
 
   void _compileProcedure(ir.Procedure proc) {
@@ -499,10 +521,16 @@ class DarticCompiler {
       namedParams: fn.namedParameters,
     );
 
-    // Compile function body.
-    final body = fn.body;
-    if (body != null) {
-      _compileStatement(body);
+    // Async/generator functions are not yet supported (Phase 6).
+    // Emit a stub that throws at runtime instead of failing at compile time.
+    if (fn.asyncMarker != ir.AsyncMarker.Sync) {
+      _emitAsyncStub(fn.asyncMarker, proc.name.text);
+    } else {
+      // Compile function body.
+      final body = fn.body;
+      if (body != null) {
+        _compileStatement(body);
+      }
     }
 
     // Safety net: if no explicit return, emit HALT or RETURN_NULL.
@@ -543,8 +571,6 @@ class DarticCompiler {
   /// result if needed, emits STORE_GLOBAL to the given [globalIndex], and
   /// ends with HALT.
   int _compileGlobalInitializer(ir.Field field, int globalIndex) {
-    final funcId = _functions.length;
-
     _resetFunctionState(isEntry: true);
 
     final (reg, loc) = _compileExpression(field.initializer!);
@@ -556,6 +582,9 @@ class DarticCompiler {
 
     _patchPendingArgMoves();
 
+    // Capture funcId AFTER compiling the expression, because compilation
+    // may add inner functions (closures) to _functions, shifting indices.
+    final funcId = _functions.length;
     final valRegCount = _valueAlloc.maxUsed;
     final refRegCount = _refAlloc.maxUsed;
     _functions.add(DarticFuncProto(

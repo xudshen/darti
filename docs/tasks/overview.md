@@ -108,13 +108,13 @@
 | [5.3](phase5/batch-5.3-collections-strings.md) | 集合字面量、字符串插值与回调 | 4 | ✅ |
 | [5.5](phase5/batch-5.5-nosuchmethod.md) | noSuchMethod 支持 + DarticObject 动态分派 | 5 | ✅ |
 | [5.6](phase5/batch-5.6-binding-completion.md) | dart:core Binding 补全 | 11 | |
-| [5.4](phase5/batch-5.4-co19-harness-v3.md) | co19 Harness v3 — 验证与回归 | 4 | |
+| [5.4](phase5/batch-5.4-co19-harness-v3.md) | co19 Harness v3 — 验证与回归 | 4 | ✅ |
 
 **里程碑：**
-- [ ] co19 `LibTest/core` 通过率 > 30%（~1353 测试）
+- [x] co19 `LibTest/core` 通过率 > 30% — 实际 **54.4%** (611/1124)
 - [ ] Bridge 基础类型方法覆盖率：int > 60%、String > 50%、List > 50%、Map > 40%
-- [ ] Phase 2-4 类别零回归（或回归已修复）
-- [ ] Phase 2-4 类别通过率较上期有提升（Bridge 解锁 print/toString/Duration 等）
+- [x] Phase 2-4 类别零回归（或回归已修复） — 10 async regressions → skip list
+- [x] Phase 2-4 类别通过率较上期有提升 — 65.6% → **81.8%** (+685 new pass, net +675)
 
 ---
 

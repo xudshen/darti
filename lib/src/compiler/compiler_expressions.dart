@@ -245,18 +245,23 @@ extension on DarticCompiler {
     var (rhsReg, rhsLoc) = _compileExpression(expr.right);
     final resultReg = _allocValueReg();
 
-    switch (leftKind) {
-      case StackKind.intVal || StackKind.boolVal:
+    final rightKind = _inferStackKind(expr.right);
+
+    // Only use optimized EQ_INT/EQ_DBL when both operands are value-kind.
+    // Mixed kinds (e.g. `true != SomeClass`) must use EQ_GENERIC on the ref
+    // stack to avoid invalid UNBOX casts.
+    switch ((leftKind, rightKind)) {
+      case (StackKind.intVal || StackKind.boolVal, StackKind.intVal || StackKind.boolVal):
         // bool uses intView (0/1), so EQ_INT works for both int and bool.
         lhsReg = _ensureValue(lhsReg, lhsLoc, StackKind.intVal);
         rhsReg = _ensureValue(rhsReg, rhsLoc, StackKind.intVal);
         _emitter.emit(encodeABC(Op.eqInt, resultReg, lhsReg, rhsReg));
-      case StackKind.doubleVal:
+      case (StackKind.doubleVal, StackKind.doubleVal):
         lhsReg = _ensureValue(lhsReg, lhsLoc, StackKind.doubleVal);
         rhsReg = _ensureValue(rhsReg, rhsLoc, StackKind.doubleVal);
         _emitter.emit(encodeABC(Op.eqDbl, resultReg, lhsReg, rhsReg));
-      case StackKind.ref:
-        // EQ_GENERIC operates on the ref stack — ensure both operands are boxed.
+      case _:
+        // Mixed or ref kinds — EQ_GENERIC on the ref stack.
         lhsReg = _boxToRefIfValue(lhsReg, lhsLoc, _inferExprType(expr.left));
         rhsReg = _boxToRefIfValue(rhsReg, rhsLoc, _inferExprType(expr.right));
         _emitter.emit(encodeABC(Op.eqGeneric, resultReg, lhsReg, rhsReg));
@@ -456,6 +461,12 @@ extension on DarticCompiler {
 
   (int, ResultLoc) _compileStaticGet(ir.StaticGet expr) {
     final target = expr.targetReference.asMember;
+
+    // Platform library static field/getter → CALL_HOST.
+    if (_isPlatformLibrary(target.enclosingLibrary)) {
+      return _compileHostStaticGet(target);
+    }
+
     if (target is ir.Field) {
       final globalIndex = _fieldToGlobalIndex[expr.targetReference];
       if (globalIndex == null) {
@@ -494,8 +505,52 @@ extension on DarticCompiler {
     );
   }
 
+  /// Compiles a platform library static field/getter as CALL_HOST.
+  ///
+  /// Static getters have no receiver, so argCount=0.
+  /// Symbol format: `"dart:core::StackTrace::current#0"`.
+  (int, ResultLoc) _compileHostStaticGet(ir.Member target) {
+    final symbolName = _hostSymbolName(target);
+    final bindingIndex = _allocBinding(symbolName, 0);
+    return _emitCallHost(const [], bindingIndex);
+  }
+
+  /// Compiles a platform library static field/setter assignment as CALL_HOST.
+  ///
+  /// No receiver; args = [value]. The expression evaluates to the assigned
+  /// value (Dart semantics). Symbol uses `"name=#1"` for setters.
+  (int, ResultLoc) _compileHostStaticSet(ir.StaticSet expr, ir.Member target) {
+    final (valReg, valLoc) = _compileExpression(expr.value);
+    final valType = _inferExprType(expr.value);
+
+    // Save the value before _emitCallHost may invalidate registers.
+    final savedReg =
+        valLoc == ResultLoc.ref ? _allocRefReg() : _allocValueReg();
+    _emitMove(savedReg, valReg, valLoc);
+
+    final compiledArgs = <(int, ResultLoc, ir.DartType?)>[
+      (valReg, valLoc, valType),
+    ];
+
+    final symbolName = _hostSymbolName(
+      target,
+      nameOverride: '${target.name.text}=',
+      paramCountOverride: 1,
+    );
+    final bindingIndex = _allocBinding(symbolName, 1);
+    _emitCallHost(compiledArgs, bindingIndex);
+
+    return (savedReg, valLoc);
+  }
+
   (int, ResultLoc) _compileStaticSet(ir.StaticSet expr) {
     final target = expr.targetReference.asMember;
+
+    // Platform library static field/setter → CALL_HOST.
+    if (_isPlatformLibrary(target.enclosingLibrary)) {
+      return _compileHostStaticSet(expr, target);
+    }
+
     if (target is ir.Field) {
       final globalIndex = _fieldToGlobalIndex[expr.targetReference];
       if (globalIndex == null) {

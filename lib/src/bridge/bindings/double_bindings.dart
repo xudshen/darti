@@ -1,8 +1,7 @@
 /// Registers `double` host bindings for the CALL_HOST pipeline.
 ///
-/// Covers instance methods, getters, static methods, and constants
-/// declared on `double`. Basic arithmetic (+, -, *, /, %, <, >, ==,
-/// unary-) uses specialized opcodes and is NOT handled here.
+/// Covers instance methods, getters, operators, static methods, and
+/// constants declared on `double`.
 ///
 /// Methods inherited from `num` that Kernel resolves to `num` are
 /// registered separately in [NumBindings].
@@ -142,6 +141,44 @@ abstract final class DoubleBindings {
         return (args[0] as double).toStringAsExponential(args[1] as int);
       }
       return (args[0] as double).toStringAsExponential();
+    });
+
+    // ── Operators ──
+    // Needed when receiver is dynamic-typed and INVOKE_DYN resolves to
+    // dart:core::double:: directly rather than falling through to num::.
+
+    registry.register('dart:core::double::+#1', (args) {
+      return (args[0] as double) + (args[1] as num);
+    });
+    registry.register('dart:core::double::-#1', (args) {
+      return (args[0] as double) - (args[1] as num);
+    });
+    registry.register('dart:core::double::*#1', (args) {
+      return (args[0] as double) * (args[1] as num);
+    });
+    registry.register('dart:core::double::/#1', (args) {
+      return (args[0] as double) / (args[1] as num);
+    });
+    registry.register('dart:core::double::~/#1', (args) {
+      return (args[0] as double) ~/ (args[1] as num);
+    });
+    registry.register('dart:core::double::%#1', (args) {
+      return (args[0] as double) % (args[1] as num);
+    });
+    registry.register('dart:core::double::<#1', (args) {
+      return (args[0] as double) < (args[1] as num);
+    });
+    registry.register('dart:core::double::>#1', (args) {
+      return (args[0] as double) > (args[1] as num);
+    });
+    registry.register('dart:core::double::<=#1', (args) {
+      return (args[0] as double) <= (args[1] as num);
+    });
+    registry.register('dart:core::double::>=#1', (args) {
+      return (args[0] as double) >= (args[1] as num);
+    });
+    registry.register('dart:core::double::unary-#0', (args) {
+      return -(args[0] as double);
     });
 
     // ── Static methods ──

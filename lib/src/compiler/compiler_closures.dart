@@ -151,10 +151,16 @@ extension on DarticCompiler {
     _registerParams(fn.positionalParameters);
     _registerParams(fn.namedParameters);
 
-    // Compile function body.
-    final body = fn.body;
-    if (body != null) {
-      _compileStatement(body);
+    // Async/generator closures are not yet supported (Phase 6).
+    // Emit a stub that throws at runtime instead of failing at compile time.
+    if (fn.asyncMarker != ir.AsyncMarker.Sync) {
+      _emitAsyncStub(fn.asyncMarker, name ?? '<anonymous>');
+    } else {
+      // Compile function body.
+      final body = fn.body;
+      if (body != null) {
+        _compileStatement(body);
+      }
     }
 
     // Safety net: emit implicit RETURN_NULL if no explicit return.

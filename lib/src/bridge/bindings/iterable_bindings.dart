@@ -15,11 +15,10 @@ abstract final class IterableBindings {
     // Iterable.generate(int count, [E Function(int)? generator])
     registry.register('dart:core::Iterable::generate#2', (args) {
       final count = args[0] as int;
-      final generator = args[1] as Function;
-      return Iterable.generate(count, (i) => generator(i));
-    });
-    registry.register('dart:core::Iterable::generate#1', (args) {
-      final count = args[0] as int;
+      if (args.length > 1 && args[1] != null) {
+        final generator = args[1] as Function;
+        return Iterable.generate(count, (i) => generator(i));
+      }
       return Iterable.generate(count);
     });
 

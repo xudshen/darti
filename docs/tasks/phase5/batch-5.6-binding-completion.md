@@ -436,7 +436,8 @@ feat(bridge): add RegExp, DateTime, Uri, BigInt and other dart:core bindings (5.
 3. **Kernel 对 Uri.parse 的签名**: Kernel 解析 `Uri.parse` 带 3 个参数 (uri, start, end)，需注册 `#1` 和 `#3` 两个变体
 4. **BigInt.sign 返回 int**: 现代 Dart 中 `BigInt.sign` 返回 `int`（非 `BigInt`）
 5. **LateInitializationError 是 dart:_internal::LateError**: 非 dart:core 公开类，由 VM 内部创建，不需要用户绑定
-6. **Iterable.generate e2e 测试的 unwind 问题**: 使用 `Iterable.generate` 的 lazy iterable 通过 callback 方法（reduce/takeWhile/skipWhile/firstWhere/single/followedBy）在解释器 unwind handler 中触发 `RangeError (length)`，这是解释器层面的已知局限，与绑定层无关
+6. **Operator bindings needed for INVOKE_DYN**: When closure params are typed `dynamic` (e.g. `Iterable.generate(5).reduce((a, b) => a + b)`), the compiler emits `INVOKE_DYN` instead of specialized opcodes (`ADD_INT`, etc.). Operators (`+`, `-`, `<`, `>`, etc.) were missing from `num_bindings.dart` / `int_bindings.dart`. Fixed by adding 11 num operator bindings (arithmetic + comparison + unary-) and 8 int-specific operator bindings (bitwise/shift + `~` + `unary-`)
+7. **Iterable.generate e2e 测试的 unwind 问题**: 使用 `Iterable.generate` 的 lazy iterable 通过 callback 方法（reduce/takeWhile/skipWhile/firstWhere/single/followedBy）在解释器 unwind handler 中触发 `RangeError (length)`，这是解释器层面的已知局限，与绑定层无关
 
 ## Code Review 修复记录
 
@@ -461,7 +462,7 @@ feat(bridge): add RegExp, DateTime, Uri, BigInt and other dart:core bindings (5.
 - [x] 5.6.10 Stopwatch + StackTrace + Symbol + Expando + MapEntry + Iterator 绑定
 - [x] 5.6.11 Error/Exception 绑定补全
 - [x] `fvm dart analyze` 零警告
-- [x] `fvm dart test` bridge 测试 491 passed, 7 pre-existing failures（Iterable.generate lazy unwind，解释器层面已知局限）
+- [x] `fvm dart test` bridge 测试 491 passed, 7 → 3 pre-existing failures（Iterable.generate lazy unwind，解释器层面已知局限；4 个 operator-on-dynamic 失败已通过 num/int operator bindings 修复）
 - [ ] commit 已提交
 - [ ] overview.md 已更新
 - [x] code review 已完成（见上方修复记录）

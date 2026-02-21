@@ -1,7 +1,6 @@
 /// Registers `bool` host bindings for the CALL_HOST pipeline.
 ///
-/// Covers bool instance methods and getters. Boolean arithmetic and
-/// comparison operators use specialized opcodes and are NOT handled here.
+/// Covers bool instance methods, getters, and operators.
 ///
 /// See: docs/design/04-interop.md
 library;
@@ -23,6 +22,20 @@ abstract final class BoolBindings {
     // bool.hashCode getter
     registry.register('dart:core::bool::hashCode#0', (args) {
       return (args[0] as bool).hashCode;
+    });
+
+    // ── Operators ──
+    // Needed when receiver is dynamic-typed and INVOKE_DYN is emitted
+    // instead of specialized bool opcodes.
+
+    registry.register('dart:core::bool::&#1', (args) {
+      return (args[0] as bool) & (args[1] as bool);
+    });
+    registry.register('dart:core::bool::|#1', (args) {
+      return (args[0] as bool) | (args[1] as bool);
+    });
+    registry.register('dart:core::bool::^#1', (args) {
+      return (args[0] as bool) ^ (args[1] as bool);
     });
   }
 }

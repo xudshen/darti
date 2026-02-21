@@ -135,6 +135,35 @@ abstract final class IntBindings {
       return (args[0] as int).toStringAsExponential();
     });
 
+    // ── Operators ──
+    // Bitwise/shift operators are int-only; arithmetic/comparison operators
+    // are inherited from num via the dispatcher prefix chain.
+
+    registry.register('dart:core::int::&#1', (args) {
+      return (args[0] as int) & (args[1] as int);
+    });
+    registry.register('dart:core::int::|#1', (args) {
+      return (args[0] as int) | (args[1] as int);
+    });
+    registry.register('dart:core::int::^#1', (args) {
+      return (args[0] as int) ^ (args[1] as int);
+    });
+    registry.register('dart:core::int::<<#1', (args) {
+      return (args[0] as int) << (args[1] as int);
+    });
+    registry.register('dart:core::int::>>#1', (args) {
+      return (args[0] as int) >> (args[1] as int);
+    });
+    registry.register('dart:core::int::>>>#1', (args) {
+      return (args[0] as int) >>> (args[1] as int);
+    });
+    registry.register('dart:core::int::~#0', (args) {
+      return ~(args[0] as int);
+    });
+    registry.register('dart:core::int::unary-#0', (args) {
+      return -(args[0] as int);
+    });
+
     // ── Static methods ──
 
     // int.parse(String source, {int? radix, int Function(String)? onError})
