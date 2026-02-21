@@ -1047,22 +1047,19 @@ extension on DarticCompiler {
         targetClass == _coreTypes.numClass) {
       final receiverKind = _inferStackKind(expr.receiver);
 
-      // int `/` always returns double — delegate to _emitBinaryOp(divDbl).
-      // Auto-coercion handles both int/int and int/double operands.
-      if (name == '/' && receiverKind == StackKind.intVal) {
-        return _emitBinaryOp(expr, Op.divDbl)!;
-      }
-
       // Check if receiver is statically int.
       if (receiverKind == StackKind.intVal) {
-        final op = _intBinaryOp(name);
-        if (op != null) {
-          final result = _emitBinaryOp(expr, op);
+        final intOp = _intBinaryOp(name);
+        if (intOp != null) {
+          final result = _emitBinaryOp(expr, intOp);
           if (result != null) return result;
+        } else {
+          // No int opcode — check double (catches `/`: no int version, has double).
+          final dblOp = _doubleBinaryOp(name);
+          if (dblOp != null) return _emitBinaryOp(expr, dblOp)!;
         }
-        if (name == 'unary-') return _emitUnaryOp(expr, Op.negInt);
-        if (name == '~') return _emitUnaryOp(expr, Op.bitNot);
-        if (name == 'toDouble') return _emitUnaryOp(expr, Op.intToDbl);
+        final unOp = _intUnaryOp(name);
+        if (unOp != null) return _emitUnaryOp(expr, unOp);
       }
 
       // Check if receiver is statically double.
@@ -1147,13 +1144,13 @@ extension on DarticCompiler {
     ir.InstanceInvocation expr,
     String name,
   ) {
-    final op = _doubleBinaryOp(name);
-    if (op != null) {
-      final result = _emitBinaryOp(expr, op);
+    final binOp = _doubleBinaryOp(name);
+    if (binOp != null) {
+      final result = _emitBinaryOp(expr, binOp);
       if (result != null) return result;
     }
-    if (name == 'unary-') return _emitUnaryOp(expr, Op.negDbl);
-    if (name == 'toInt') return _emitUnaryOp(expr, Op.dblToInt);
+    final unOp = _doubleUnaryOp(name);
+    if (unOp != null) return _emitUnaryOp(expr, unOp);
     return null;
   }
 

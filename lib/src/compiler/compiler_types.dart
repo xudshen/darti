@@ -389,6 +389,21 @@ int? _intToDoubleOp(int op) => switch (op) {
       _ => null,
     };
 
+/// Maps int unary operator/method names to opcodes.
+int? _intUnaryOp(String name) => switch (name) {
+      'unary-'   => Op.negInt,
+      '~'        => Op.bitNot,
+      'toDouble' => Op.intToDbl,
+      _ => null,
+    };
+
+/// Maps double unary operator/method names to opcodes.
+int? _doubleUnaryOp(String name) => switch (name) {
+      'unary-' => Op.negDbl,
+      'toInt'  => Op.dblToInt,
+      _ => null,
+    };
+
 /// Returns true if the operator name is a comparison operator.
 bool _isCompareOp(String name) =>
     name == '<' || name == '<=' || name == '>' || name == '>=';
