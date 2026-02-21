@@ -1066,7 +1066,11 @@ extension on DarticCompiler {
       // Check if receiver is statically int.
       if (receiverKind == StackKind.intVal) {
         final op = _intBinaryOp(name);
-        if (op != null) return _emitBinaryOp(expr, op);
+        if (op != null) {
+          final result = _emitBinaryOp(expr, op);
+          if (result != null) return result;
+          // Auto-promotion failed (divInt + double arg) → fall through.
+        }
         if (name == 'unary-') return _emitUnaryOp(expr, Op.negInt);
         if (name == '~') return _emitUnaryOp(expr, Op.bitNot);
         if (name == 'toDouble') return _emitUnaryOp(expr, Op.intToDbl);
@@ -1155,7 +1159,10 @@ extension on DarticCompiler {
     String name,
   ) {
     final op = _doubleBinaryOp(name);
-    if (op != null) return _emitBinaryOp(expr, op);
+    if (op != null) {
+      final result = _emitBinaryOp(expr, op);
+      if (result != null) return result;
+    }
     if (name == 'unary-') return _emitUnaryOp(expr, Op.negDbl);
     if (name == 'toInt') return _emitUnaryOp(expr, Op.dblToInt);
     return null;

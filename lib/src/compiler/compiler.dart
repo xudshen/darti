@@ -739,18 +739,43 @@ class DarticCompiler {
     _emitter.emit(encodeABC(op, destReg, srcReg, 0));
   }
 
-  /// Compiles a binary value-stack operation: receiver op arg[0].
+  /// Compiles a binary value-stack operation with mixed-type auto-promotion.
   ///
-  /// If either operand is on the ref-stack (e.g., from a generic field access),
-  /// it is unboxed first. The unbox type (int vs double) is inferred from the
-  /// opcode itself — the caller has already chosen the correct opcode based on
-  /// the operand types.
-  (int, ResultLoc) _emitBinaryOp(ir.InstanceInvocation expr, int op) {
+  /// Pre-checks operand types BEFORE compiling them. If one operand is int
+  /// and the other is double, auto-promotes the int opcode to its double
+  /// equivalent and converts the int operand via INT_TO_DBL.
+  ///
+  /// Returns null if auto-promotion is impossible (e.g., divInt has no double
+  /// equivalent). When null is returned, NO operands have been compiled —
+  /// the caller can safely fall through to an alternative path.
+  (int, ResultLoc)? _emitBinaryOp(ir.InstanceInvocation expr, int op) {
+    var targetKind =
+        _isDoubleBinaryOp(op) ? StackKind.doubleVal : StackKind.intVal;
+
+    // Pre-check: infer actual operand kinds (cheap, no side effects).
+    final lhsKind = _inferStackKind(expr.receiver);
+    final rhsKind = expr.arguments.positional.isNotEmpty
+        ? _inferStackKind(expr.arguments.positional[0])
+        : targetKind;
+
+    // Auto-promote int opcode to double when one operand is double.
+    if (targetKind == StackKind.intVal &&
+        (lhsKind == StackKind.doubleVal || rhsKind == StackKind.doubleVal)) {
+      final promoted = _intToDoubleOp(op);
+      if (promoted == null) return null; // No double equivalent → bail out
+      op = promoted;
+      targetKind = StackKind.doubleVal;
+    }
+
+    // Compile operands (only after pre-check passes).
     var (lhsReg, lhsLoc) = _compileExpression(expr.receiver);
-    var (rhsReg, rhsLoc) = _compileExpression(expr.arguments.positional[0]);
-    final kind = _isDoubleBinaryOp(op) ? StackKind.doubleVal : StackKind.intVal;
-    lhsReg = _ensureValue(lhsReg, lhsLoc, kind);
-    rhsReg = _ensureValue(rhsReg, rhsLoc, kind);
+    var (rhsReg, rhsLoc) =
+        _compileExpression(expr.arguments.positional[0]);
+
+    // Coerce both operands to target kind (handles ref→value AND int↔double).
+    lhsReg = _coerceToValueKind(lhsReg, lhsLoc, lhsKind, targetKind);
+    rhsReg = _coerceToValueKind(rhsReg, rhsLoc, rhsKind, targetKind);
+
     final resultReg = _allocValueReg();
     _emitter.emit(encodeABC(op, resultReg, lhsReg, rhsReg));
     return (resultReg, ResultLoc.value);
@@ -791,6 +816,29 @@ class DarticCompiler {
     return reg;
   }
 
+  /// Ensures a register is on the value stack with the target [StackKind].
+  ///
+  /// Unlike [_ensureValue] which only handles ref→value (unbox), this method
+  /// also handles value-stack int↔double conversion via INT_TO_DBL / DBL_TO_INT.
+  int _coerceToValueKind(
+    int reg, ResultLoc loc, StackKind actualKind, StackKind targetKind,
+  ) {
+    if (loc == ResultLoc.ref) {
+      return _emitUnbox(reg, targetKind);
+    }
+    if (actualKind == StackKind.intVal && targetKind == StackKind.doubleVal) {
+      final converted = _allocValueReg();
+      _emitter.emit(encodeABC(Op.intToDbl, converted, reg, 0));
+      return converted;
+    }
+    if (actualKind == StackKind.doubleVal && targetKind == StackKind.intVal) {
+      final converted = _allocValueReg();
+      _emitter.emit(encodeABC(Op.dblToInt, converted, reg, 0));
+      return converted;
+    }
+    return reg;
+  }
+
   /// Ensures a boolean expression result is on the value stack.
   int _ensureBoolValue(int reg, ResultLoc loc) =>
       _ensureValue(reg, loc, StackKind.boolVal);
@@ -827,7 +875,8 @@ class DarticCompiler {
   bool _isDoubleBinaryOp(int op) =>
       (op >= Op.addDbl && op <= Op.divDbl) ||
       (op >= Op.ltDbl && op <= Op.geDbl) ||
-      op == Op.eqDbl;
+      op == Op.eqDbl ||
+      op == Op.modDbl;
 
   /// Compiles [branchExpr], boxing and moving the result into [targetReg].
   ///

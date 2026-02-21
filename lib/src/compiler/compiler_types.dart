@@ -354,10 +354,25 @@ int? _doubleBinaryOp(String name) => switch (name) {
       '-' => Op.subDbl,
       '*' => Op.mulDbl,
       '/' => Op.divDbl,
+      '%' => Op.modDbl,
       '<' => Op.ltDbl,
       '<=' => Op.leDbl,
       '>' => Op.gtDbl,
       '>=' => Op.geDbl,
+      _ => null,
+    };
+
+/// Maps int binary opcodes to their double equivalents for auto-promotion.
+/// Returns null for ops without double equivalents (divInt, bitwise/shift).
+int? _intToDoubleOp(int op) => switch (op) {
+      Op.addInt => Op.addDbl,
+      Op.subInt => Op.subDbl,
+      Op.mulInt => Op.mulDbl,
+      Op.modInt => Op.modDbl,
+      Op.ltInt  => Op.ltDbl,
+      Op.leInt  => Op.leDbl,
+      Op.gtInt  => Op.gtDbl,
+      Op.geInt  => Op.geDbl,
       _ => null,
     };
 
