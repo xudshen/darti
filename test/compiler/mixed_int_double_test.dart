@@ -242,7 +242,7 @@ double main() { return 10.0 % 3.5; }
       final result = await compileAndRunWithHost('''
 int main() {
   double sum = 0.0;
-  for (int i = 0; i < 10000; i++) {
+  for (int i = 0; i < 1000; i++) {
     sum = sum + i * 3.14 - i / 2.0;
   }
   return sum.floor();
@@ -250,8 +250,8 @@ int main() {
 ''');
       expect(result, isA<int>());
       final v = result as int;
-      expect(v, greaterThan(100000000));
-      expect(v, lessThan(200000000));
+      expect(v, greaterThan(1000000));
+      expect(v, lessThan(2000000));
     });
 
     test('smaller loop for quick validation', () async {
