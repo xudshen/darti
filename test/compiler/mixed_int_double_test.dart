@@ -268,4 +268,109 @@ int main() {
       expect(result, greaterThan(0));
     });
   });
+
+  // ── Mixed int/double equality ──
+  group('mixed int/double equality — bytecode', () {
+    test('int == double → INT_TO_DBL + EQ_DBL (not EQ_GENERIC)', () async {
+      final module = await compileDart('''
+bool f(int a, double b) => a == b;
+void main() {}
+''');
+      final f = findFunc(module, 'f');
+      expect(findOp(f.bytecode, Op.intToDbl), isNot(-1),
+          reason: 'INT_TO_DBL not found — int not promoted');
+      expect(findOp(f.bytecode, Op.eqDbl), isNot(-1),
+          reason: 'EQ_DBL not found');
+      expect(findOp(f.bytecode, Op.eqGeneric), -1,
+          reason: 'EQ_GENERIC should not appear for int == double');
+    });
+
+    test('double == int → INT_TO_DBL + EQ_DBL', () async {
+      final module = await compileDart('''
+bool f(double a, int b) => a == b;
+void main() {}
+''');
+      final f = findFunc(module, 'f');
+      expect(findOp(f.bytecode, Op.intToDbl), isNot(-1),
+          reason: 'INT_TO_DBL not found — int not promoted');
+      expect(findOp(f.bytecode, Op.eqDbl), isNot(-1),
+          reason: 'EQ_DBL not found');
+      expect(findOp(f.bytecode, Op.eqGeneric), -1,
+          reason: 'EQ_GENERIC should not appear for double == int');
+    });
+  });
+
+  group('mixed int/double equality — end-to-end', () {
+    test('3 == 3.0 → true', () async {
+      expect(await compileAndRun('''
+bool main() { int a = 3; double b = 3.0; return a == b; }
+'''), true);
+    });
+
+    test('3 == 3.1 → false', () async {
+      expect(await compileAndRun('''
+bool main() { int a = 3; double b = 3.1; return a == b; }
+'''), false);
+    });
+
+    test('3.0 == 3 → true', () async {
+      expect(await compileAndRun('''
+bool main() { double a = 3.0; int b = 3; return a == b; }
+'''), true);
+    });
+  });
+
+  // ── double ~/ (truncating division) ──
+  group('double ~/ — bytecode', () {
+    test('double ~/ int → INT_TO_DBL + DIV_DBL + DBL_TO_INT', () async {
+      final module = await compileDart('''
+int f(double a, int b) => a ~/ b;
+void main() {}
+''');
+      final f = findFunc(module, 'f');
+      expect(findOp(f.bytecode, Op.intToDbl), isNot(-1),
+          reason: 'INT_TO_DBL not found — int arg not promoted');
+      expect(findOp(f.bytecode, Op.divDbl), isNot(-1),
+          reason: 'DIV_DBL not found');
+      expect(findOp(f.bytecode, Op.dblToInt), isNot(-1),
+          reason: 'DBL_TO_INT not found — result not truncated');
+    });
+
+    test('double ~/ double → DIV_DBL + DBL_TO_INT (no INT_TO_DBL)', () async {
+      final module = await compileDart('''
+int f(double a, double b) => a ~/ b;
+void main() {}
+''');
+      final f = findFunc(module, 'f');
+      expect(findOp(f.bytecode, Op.intToDbl), -1,
+          reason: 'INT_TO_DBL should not appear for double ~/ double');
+      expect(findOp(f.bytecode, Op.divDbl), isNot(-1),
+          reason: 'DIV_DBL not found');
+      expect(findOp(f.bytecode, Op.dblToInt), isNot(-1),
+          reason: 'DBL_TO_INT not found — result not truncated');
+    });
+  });
+
+  group('double ~/ — end-to-end', () {
+    test('7.5 ~/ 2 → 3', () async {
+      expect(await compileAndRun('''
+int main() { double a = 7.5; int b = 2; return a ~/ b; }
+'''), 3);
+    });
+
+    test('7.5 ~/ 2.5 → 3', () async {
+      expect(await compileAndRun('''
+int main() { double a = 7.5; double b = 2.5; return a ~/ b; }
+'''), 3);
+    });
+  });
+
+  // ── != symmetry ──
+  group('!= symmetry', () {
+    test('3 != 3.1 → true (optimized path)', () async {
+      expect(await compileAndRun('''
+bool main() { int a = 3; double b = 3.1; return a != b; }
+'''), true);
+    });
+  });
 }
