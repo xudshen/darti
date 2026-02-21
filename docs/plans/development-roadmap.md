@@ -818,7 +818,7 @@ review 发现的问题直接修复，修复后重新 review 直到通过。
 - [x] 执行 Phase 4（Batch 4.1 → 4.4，共 16 个 Task）— co19 Phase 4 五类 53.5% (1834/3426)，全十一类累计 60.1% (4566/7593)，0 回归
 - [x] ~~为 Phase 5 编写 Task 文件~~ → 已完成，见 [`docs/tasks/phase5/`](../tasks/phase5/README.md)
 - [x] 执行 Phase 5（Batch 5.1 → 5.6，共 35 个 Task）— LibTest/core 54.4% (611/1124)，Phase 2-4 81.8% (3407/4167)，累计 5,852 pass，0 回归
-- [ ] 为 Phase 6 编写 Task 文件
-- [ ] 执行 Phase 6（Batch 6.1 → 6.4）
+- [x] ~~为 Phase 6 编写 Task 文件~~ → 已完成，见 [`docs/tasks/phase6/`](../tasks/phase6/README.md)
+- [ ] 执行 Phase 6（Batch 6.1 → 6.4，共 20 个 Task）
 - [ ] 为 Phase 7 编写 Task 文件 — 公开 API 设计已完成，见 [`docs/plans/2026-02-20-bridge-api-design.md`](2026-02-20-bridge-api-design.md)
 - [ ] 执行 Phase 7（Batch 7.1 → 7.3）
