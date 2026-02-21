@@ -152,15 +152,20 @@ feat(sandbox): add DarticVerifier bytecode validation and resource limits
 
 ## 核心发现
 
-_(执行时填写：验证器的检查项覆盖情况、CRC32 校验的实际开销、fuel 粒度对用户体验的影响、maxTotalFuel/executionTimeout 的合理默认值、已发现的安全问题、Bridge 依赖检查对模块加载速度的影响等)_
+- DarticVerifier 覆盖全部 12 项检查：操作码合法性、寄存器边界（value/ref 分别检查）、跳转目标、常量池索引、WIDE 前缀、函数引用、IC 表、异常处理器、上值描述符、类表、入口点
+- CRC32 开销极低（纯整数运算），实际模块验证远小于 1ms
+- maxTotalFuel/executionTimeout 默认 null（无限制），由宿主按需配置。fuel 仅在 exhaustion boundary 检查（零每指令开销）
+- Bridge 依赖检查在验证阶段完成，发现全部未注册绑定后统一报错
+- 错误分类：DarticLoadError（加载/验证失败）、DarticError（运行时可恢复，含 FuelExhaustedError / ExecutionTimeoutError）、DarticInternalError（实现 bug，应丢弃实例）
+- 测试：50 verifier + 17 resource limits + 14 integration = 81 new tests，全量 2764 pass，0 regressions
 
 ## Batch 完成检查
 
-- [ ] 6.4.1 DarticVerifier 字节码验证器
-- [ ] 6.4.2 资源限制增强 — maxTotalFuel + executionTimeout + 错误分类
-- [ ] 6.4.3 沙箱集成测试 + 加载验证管线
-- [ ] `fvm dart analyze` 零警告
-- [ ] `fvm dart test` 全部通过
-- [ ] commit 已提交
-- [ ] overview.md 已更新
-- [ ] code review 已完成
+- [x] 6.4.1 DarticVerifier 字节码验证器
+- [x] 6.4.2 资源限制增强 — maxTotalFuel + executionTimeout + 错误分类
+- [x] 6.4.3 沙箱集成测试 + 加载验证管线
+- [x] `fvm dart analyze` 零警告
+- [x] `fvm dart test` 全部通过（2764 tests）
+- [x] commit 已提交
+- [x] overview.md 已更新
+- [x] code review 已完成

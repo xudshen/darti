@@ -118,7 +118,7 @@
 
 ---
 
-## Phase 6: 异步 + 高级语言特性 — 进行中
+## Phase 6: 异步 + 高级语言特性 — ✅ 已完成
 
 **目标：** 实现 async/await、sync*/async* 生成器、extension methods、records、pattern matching、constructor tearoffs 等高级语言特性，构建字节码加载验证器（沙箱），通过 co19 harness v4 验证
 
@@ -130,7 +130,7 @@
 | [6.2](phase6/batch-6.2-language-features.md) | 高级语言特性 — Records/Tearoffs/Extensions/Patterns | 6 | ✅ |
 | [6.3](phase6/batch-6.3-co19-harness-v4.md) | co19 Harness v4 — dart:async Bridge + 异步测试协议 | 6 | ✅ |
 | [6.3+](phase6/batch-6.3-binding-gaps.md) | Async/Collection/Math Binding 缺口补全 | 12 | ✅ |
-| [6.4](phase6/batch-6.4-sandbox.md) | 沙箱 (Ch8) — DarticVerifier + 资源限制 | 3 | |
+| [6.4](phase6/batch-6.4-sandbox.md) | 沙箱 (Ch8) — DarticVerifier + 资源限制 | 3 | ✅ |
 
 **里程碑：**
 - [x] co19 `LibTest/async` 通过率 > 30% — 实际 **37.2%** (142/382)，Batch 6.3+ 绑定补全后达标

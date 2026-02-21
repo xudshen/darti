@@ -96,4 +96,13 @@ class CallStack {
 
   /// Returns `true` if the current frame is a HOST_BOUNDARY sentinel.
   bool get isHostBoundary => funcId == sentinelHostBoundary;
+
+  /// Resets the call stack to its initial empty state.
+  ///
+  /// Used by [DarticInterpreter._resetState] for error recovery after
+  /// resource limit errors (FuelExhaustedError, ExecutionTimeoutError).
+  void reset() {
+    _fp = 0;
+    _depth = 0;
+  }
 }

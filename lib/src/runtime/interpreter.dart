@@ -4,8 +4,11 @@ import 'dart:typed_data';
 import '../bridge/callback_proxy.dart';
 import '../bridge/host_function_registry.dart';
 import '../bridge/dynamic_dispatch.dart';
+import '../bytecode/deserializer.dart';
 import '../bytecode/module.dart';
 import '../bytecode/opcodes.dart';
+import '../sandbox/load_error.dart';
+import '../sandbox/verifier.dart';
 import '../compiler/type_template.dart';
 import 'call_stack.dart';
 import 'class_info.dart' show StackKind;
@@ -40,6 +43,8 @@ class DarticInterpreter {
     this.typeRegistry,
     this.hostFunctionRegistry,
     this.fuelBudget = defaultFuelBudget,
+    this.maxTotalFuel,
+    this.executionTimeout,
   })  : valueStack = valueStack ?? ValueStack(),
         refStack = refStack ?? RefStack(),
         callStack = callStack ?? CallStack();
@@ -50,6 +55,20 @@ class DarticInterpreter {
   final RefStack refStack;
   final CallStack callStack;
   final int fuelBudget;
+
+  /// Maximum cumulative instruction count across all rounds.
+  ///
+  /// When the total number of executed instructions exceeds this limit,
+  /// the interpreter throws [FuelExhaustedError]. Null means unlimited
+  /// (default).
+  final int? maxTotalFuel;
+
+  /// Maximum wall-clock execution time.
+  ///
+  /// When the elapsed time exceeds this limit, the interpreter throws
+  /// [ExecutionTimeoutError]. Checked at fuel exhaustion boundaries to
+  /// avoid per-instruction overhead. Null means unlimited (default).
+  final Duration? executionTimeout;
 
   /// Type registry for generics support. If null, generics instructions throw.
   final TypeRegistry? typeRegistry;
@@ -65,6 +84,14 @@ class DarticInterpreter {
 
   /// Remaining fuel — shared across initializer and main execution.
   int _fuel = 0;
+
+  /// Cumulative instruction count across all rounds within a single
+  /// [execute] call. Incremented at each fuel exhaustion boundary.
+  int _totalFuelConsumed = 0;
+
+  /// Stopwatch for [executionTimeout] tracking. Created and started
+  /// at the beginning of [execute] when [executionTimeout] is non-null.
+  Stopwatch? _executionStopwatch;
 
   /// Open upvalue tracking: maps absolute ref stack index to the open
   /// [Upvalue] cell. When CLOSURE captures a local variable, it looks up
@@ -121,11 +148,79 @@ class DarticInterpreter {
   /// async* context from sync* and regular async contexts.
   DarticFrame? _currentAsyncStarFrame;
 
+  /// Deserializes, validates, and prepares a bytecode module for execution.
+  ///
+  /// Pipeline: bytes → deserialize → structural verification → bridge
+  /// dependency check → verified [DarticModule].
+  ///
+  /// Throws [DarticLoadError] if any stage fails:
+  /// - Deserialization failure (bad magic, wrong version, CRC mismatch)
+  /// - Structural verification failure (invalid opcodes, out-of-bounds refs)
+  /// - Missing host function bindings
+  ///
+  /// The returned module can be passed directly to [execute].
+  DarticModule loadAndVerify(Uint8List bytes) {
+    // Stage 1: Deserialize.
+    final DarticModule module;
+    try {
+      module = DarticDeserializer().deserialize(bytes);
+    } on FormatException catch (e) {
+      throw DarticLoadError([e.message]);
+    }
+
+    // Stage 2: Structural verification.
+    final verifier = DarticVerifier();
+    if (!verifier.verify(module)) {
+      throw DarticLoadError(verifier.errors);
+    }
+
+    // Stage 3: Bridge dependency check.
+    _checkBridgeDependencies(module);
+
+    return module;
+  }
+
+  /// Verifies that all host bindings required by [module] are available.
+  ///
+  /// Throws [DarticLoadError] if any binding name cannot be resolved
+  /// against [hostFunctionRegistry].
+  void _checkBridgeDependencies(DarticModule module) {
+    if (module.bindingNames.isEmpty) return;
+
+    final hfr = hostFunctionRegistry;
+    if (hfr == null) {
+      throw DarticLoadError([
+        'Module requires ${module.bindingNames.length} host binding(s) '
+            'but no HostFunctionRegistry is configured',
+      ]);
+    }
+
+    final missing = <String>[];
+    for (final entry in module.bindingNames) {
+      if (hfr.lookupByName(entry.name) < 0) {
+        missing.add(entry.name);
+      }
+    }
+    if (missing.isNotEmpty) {
+      throw DarticLoadError([
+        for (final name in missing) 'Unresolved host binding: $name',
+      ]);
+    }
+  }
+
   /// Executes [module] starting from its entry function.
   ///
   /// Runs the dispatch loop until HALT is reached or fuel is exhausted.
+  /// When [maxTotalFuel] or [executionTimeout] is set, resource limit
+  /// violations throw [FuelExhaustedError] or [ExecutionTimeoutError]
+  /// respectively. After either error, the interpreter state is reset
+  /// and the instance remains usable for subsequent calls.
   void execute(DarticModule module) {
     _fuel = fuelBudget;
+    _totalFuelConsumed = 0;
+    _executionStopwatch = executionTimeout != null
+        ? (Stopwatch()..start())
+        : null;
     _lastEntryResult = null;
     _activeModule = module;
     _openUpvalues.clear();
@@ -142,20 +237,51 @@ class DarticInterpreter {
     final hfr = hostFunctionRegistry;
     _hostClassRegistry = hfr != null ? HostDispatchRegistry(hfr) : null;
 
-    // Set up global table and run initializers.
-    if (module.globalCount > 0) {
-      _globalTable = DarticGlobalTable(module.globalCount);
-      // Run initializers (each ends with STORE_GLOBAL + HALT).
-      for (var i = 0; i < module.globalCount; i++) {
-        final initFuncId = module.globalInitializerIds[i];
-        if (initFuncId >= 0) {
-          _executeEntry(module, initFuncId);
+    try {
+      // Set up global table and run initializers.
+      if (module.globalCount > 0) {
+        _globalTable = DarticGlobalTable(module.globalCount);
+        // Run initializers (each ends with STORE_GLOBAL + HALT).
+        for (var i = 0; i < module.globalCount; i++) {
+          final initFuncId = module.globalInitializerIds[i];
+          if (initFuncId >= 0) {
+            _executeEntry(module, initFuncId);
+          }
         }
       }
-    }
 
-    // Run main.
-    _executeEntry(module, module.entryFuncId);
+      // Run main.
+      _executeEntry(module, module.entryFuncId);
+    } on DarticError {
+      // Resource limit errors (FuelExhaustedError, ExecutionTimeoutError)
+      // and other DarticErrors — clean up interpreter state for reuse.
+      _resetState();
+      rethrow;
+    } finally {
+      _executionStopwatch?.stop();
+      _executionStopwatch = null;
+    }
+  }
+
+  /// Resets the interpreter to a clean state after an error.
+  ///
+  /// Called when a [DarticError] (including [FuelExhaustedError] and
+  /// [ExecutionTimeoutError]) escapes [execute]. Ensures the interpreter
+  /// instance can be reused for subsequent [execute] calls.
+  void _resetState() {
+    refStack.clearRange(0, refStack.sp);
+    valueStack.sp = 0;
+    refStack.sp = 0;
+    callStack.reset();
+    _openUpvalues.clear();
+    _upvalueStack.clear();
+    _currentAsyncFrame = null;
+    _currentAsyncStarFrame = null;
+    _activeSyncStarIterator = null;
+    _syncStarStatus = null;
+    _syncStarSuspendedFrame = null;
+    _activeModule = null;
+    _callbackResult = null;
   }
 
   /// Creates TypeRegistry and SubtypeChecker from module metadata if available.
@@ -1123,6 +1249,14 @@ class DarticInterpreter {
       throw NoSuchMethodError.withInvocation(receiver, invocation);
     }
 
+    // Whether resource limits are active. When true, fuel exhaustion refills
+    // fuel and continues the dispatch loop (checking limits at each boundary)
+    // instead of silently returning.
+    final bool hasResourceLimits =
+        maxTotalFuel != null || executionTimeout != null;
+
+    for (;;) {
+    // Inner fuel-bounded dispatch loop.
     while (_fuel-- > 0) {
       final instr = code[pc++];
       final op = instr & 0xFF;
@@ -2931,7 +3065,25 @@ class DarticInterpreter {
           );
       }
     }
-    // Fuel exhausted — Phase 1: silently return.
+    // Fuel exhausted — track cumulative consumption and check limits.
+    _totalFuelConsumed += fuelBudget;
+    _fuel = fuelBudget; // refill for next round
+
+    if (maxTotalFuel != null && _totalFuelConsumed >= maxTotalFuel!) {
+      throw FuelExhaustedError(_totalFuelConsumed, maxTotalFuel!);
+    }
+    if (executionTimeout != null &&
+        _executionStopwatch!.elapsed >= executionTimeout!) {
+      throw ExecutionTimeoutError(
+          _executionStopwatch!.elapsed, executionTimeout!);
+    }
+
+    // If no resource limits are active, silently return on fuel exhaustion
+    // (Phase 1 behavior for async round scheduling).
+    if (!hasResourceLimits) return;
+
+    // Otherwise, continue the outer loop for the next fuel round.
+    } // end for (;;)
   }
 
   /// Builds a [DarticInvocation] for a CALL_VIRTUAL noSuchMethod fallback.
