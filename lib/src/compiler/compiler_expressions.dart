@@ -1055,33 +1055,10 @@ extension on DarticCompiler {
 
       // Check if receiver is statically int.
       if (receiverKind == StackKind.intVal) {
-        // ~/ with double arg: intToDbl → divDbl → dblToInt (no double opcode
-        // for truncating division, but we can compose it from 3 instructions).
-        if (name == '~/') {
-          final args = expr.arguments.positional;
-          final argKind = args.isNotEmpty
-              ? _inferStackKind(args[0])
-              : StackKind.intVal;
-          if (argKind == StackKind.doubleVal) {
-            var (lhsReg, lhsLoc) = _compileExpression(expr.receiver);
-            var (rhsReg, rhsLoc) = _compileExpression(args[0]);
-            lhsReg = _ensureValue(lhsReg, lhsLoc, StackKind.intVal);
-            rhsReg = _ensureValue(rhsReg, rhsLoc, StackKind.doubleVal);
-            final lhsDbl = _allocValueReg();
-            _emitter.emit(encodeABC(Op.intToDbl, lhsDbl, lhsReg, 0));
-            final divResult = _allocValueReg();
-            _emitter.emit(encodeABC(Op.divDbl, divResult, lhsDbl, rhsReg));
-            final intResult = _allocValueReg();
-            _emitter.emit(encodeABC(Op.dblToInt, intResult, divResult, 0));
-            return (intResult, ResultLoc.value);
-          }
-        }
-
         final op = _intBinaryOp(name);
         if (op != null) {
           final result = _emitBinaryOp(expr, op);
           if (result != null) return result;
-          // Auto-promotion failed (divInt + double arg) → fall through.
         }
         if (name == 'unary-') return _emitUnaryOp(expr, Op.negInt);
         if (name == '~') return _emitUnaryOp(expr, Op.bitNot);

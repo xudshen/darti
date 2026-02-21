@@ -751,6 +751,7 @@ class DarticCompiler {
   (int, ResultLoc)? _emitBinaryOp(ir.InstanceInvocation expr, int op) {
     var targetKind =
         _isDoubleBinaryOp(op) ? StackKind.doubleVal : StackKind.intVal;
+    var truncateResult = false;
 
     // Pre-check: infer actual operand kinds (cheap, no side effects).
     final lhsKind = _inferStackKind(expr.receiver);
@@ -762,9 +763,17 @@ class DarticCompiler {
     if (targetKind == StackKind.intVal &&
         (lhsKind == StackKind.doubleVal || rhsKind == StackKind.doubleVal)) {
       final promoted = _intToDoubleOp(op);
-      if (promoted == null) return null; // No double equivalent → bail out
-      op = promoted;
-      targetKind = StackKind.doubleVal;
+      if (promoted != null) {
+        op = promoted;
+        targetKind = StackKind.doubleVal;
+      } else if (op == Op.divInt) {
+        // ~/ with mixed types: promote to divDbl, post-convert back to int.
+        op = Op.divDbl;
+        targetKind = StackKind.doubleVal;
+        truncateResult = true;
+      } else {
+        return null; // bitwise/shift — no double equivalent
+      }
     }
 
     // Compile operands (only after pre-check passes).
@@ -776,8 +785,16 @@ class DarticCompiler {
     lhsReg = _coerceToValueKind(lhsReg, lhsLoc, lhsKind, targetKind);
     rhsReg = _coerceToValueKind(rhsReg, rhsLoc, rhsKind, targetKind);
 
-    final resultReg = _allocValueReg();
+    var resultReg = _allocValueReg();
     _emitter.emit(encodeABC(op, resultReg, lhsReg, rhsReg));
+
+    // divInt promoted to divDbl → truncate back to int.
+    if (truncateResult) {
+      final intResult = _allocValueReg();
+      _emitter.emit(encodeABC(Op.dblToInt, intResult, resultReg, 0));
+      resultReg = intResult;
+    }
+
     return (resultReg, ResultLoc.value);
   }
 
