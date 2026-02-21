@@ -463,6 +463,6 @@ feat(bridge): add RegExp, DateTime, Uri, BigInt and other dart:core bindings (5.
 - [x] 5.6.11 Error/Exception 绑定补全
 - [x] `fvm dart analyze` 零警告
 - [x] `fvm dart test` bridge 测试 491 passed, 7 → 3 pre-existing failures（Iterable.generate lazy unwind，解释器层面已知局限；4 个 operator-on-dynamic 失败已通过 num/int operator bindings 修复）
-- [ ] commit 已提交
-- [ ] overview.md 已更新
+- [x] commit 已提交 — `588ed28` (feat) + `9de605c` (callback) + `adbfcdb` (review fix)
+- [x] overview.md 已更新
 - [x] code review 已完成（见上方修复记录）
