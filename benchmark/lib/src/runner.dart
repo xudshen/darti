@@ -27,55 +27,68 @@ class BenchmarkRunner {
     for (final bc in cases) {
       print('  ${bc.name} ...');
 
-      // --- Pre-compile dartic module ---
-      final darticModule = await _compileDartic(bc.dartSource);
+      try {
+        // --- Pre-compile dartic module ---
+        final darticModule = await _compileDartic(bc.dartSource);
 
-      // --- Pre-compile dart_eval program (if enabled + supported) ---
-      de.Program? dartEvalProgram;
-      if (config.enableDartEval && bc.dartEvalSupported) {
-        dartEvalProgram = _compileDartEval(bc.dartSource);
-      }
+        // --- Pre-compile dart_eval program (if enabled + supported) ---
+        de.Program? dartEvalProgram;
+        if (config.enableDartEval && bc.dartEvalSupported) {
+          try {
+            dartEvalProgram = _compileDartEval(bc.dartSource);
+          } catch (e) {
+            print('    dart_eval compile FAILED: $e');
+          }
+        }
 
-      // --- Calibrate iteration count ---
-      final hostIters = _calibrate(bc.hostFn);
-      final darticIters = _calibrate(
-        () => _executeDartic(darticModule),
-      );
-      int? dartEvalIters;
-      if (dartEvalProgram != null) {
-        dartEvalIters = _calibrate(
-          () => _executeDartEval(dartEvalProgram!),
+        // --- Calibrate iteration count ---
+        final hostIters = _calibrate(bc.hostFn);
+        final darticIters = _calibrate(
+          () => _executeDartic(darticModule),
         );
-      }
+        int? dartEvalIters;
+        if (dartEvalProgram != null) {
+          try {
+            dartEvalIters = _calibrate(
+              () => _executeDartEval(dartEvalProgram!),
+            );
+          } catch (e) {
+            print('    dart_eval calibrate FAILED: $e');
+            dartEvalProgram = null;
+          }
+        }
 
-      // --- Warmup ---
-      _warmup(bc.hostFn, hostIters);
-      _warmup(() => _executeDartic(darticModule), darticIters);
-      if (dartEvalProgram != null) {
-        _warmup(() => _executeDartEval(dartEvalProgram!), dartEvalIters!);
-      }
+        // --- Warmup ---
+        _warmup(bc.hostFn, hostIters);
+        _warmup(() => _executeDartic(darticModule), darticIters);
+        if (dartEvalProgram != null) {
+          _warmup(() => _executeDartEval(dartEvalProgram!), dartEvalIters!);
+        }
 
-      // --- Measure ---
-      final hostResult = _measure(bc.hostFn, hostIters);
-      final darticResult = _measure(
-        () => _executeDartic(darticModule),
-        darticIters,
-      );
-      ChannelResult? dartEvalResult;
-      if (dartEvalProgram != null) {
-        dartEvalResult = _measure(
-          () => _executeDartEval(dartEvalProgram!),
-          dartEvalIters!,
+        // --- Measure ---
+        final hostResult = _measure(bc.hostFn, hostIters);
+        final darticResult = _measure(
+          () => _executeDartic(darticModule),
+          darticIters,
         );
-      }
+        ChannelResult? dartEvalResult;
+        if (dartEvalProgram != null) {
+          dartEvalResult = _measure(
+            () => _executeDartEval(dartEvalProgram!),
+            dartEvalIters!,
+          );
+        }
 
-      results.add(BenchmarkResult(
-        name: bc.name,
-        category: bc.category,
-        host: hostResult,
-        dartic: darticResult,
-        dartEval: dartEvalResult,
-      ));
+        results.add(BenchmarkResult(
+          name: bc.name,
+          category: bc.category,
+          host: hostResult,
+          dartic: darticResult,
+          dartEval: dartEvalResult,
+        ));
+      } catch (e) {
+        print('    FAILED: $e');
+      }
     }
 
     return results;
