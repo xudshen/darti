@@ -98,6 +98,18 @@ abstract final class MapBindings {
       );
     });
 
+    // Map.fromEntries(Iterable<MapEntry<K, V>> entries)
+    // CFE may emit this as dart:core::Map::fromEntries rather than
+    // dart:collection::LinkedHashMap::_fromEntries.
+    registry.register('dart:core::Map::fromEntries#1', (args) {
+      return Map.fromEntries((args[0] as Iterable).cast<MapEntry>());
+    });
+
+    // map.cast<RK, RV>() → Map<RK, RV>
+    registry.register('dart:core::Map::cast#0', (args) {
+      return (args[0] as Map).cast();
+    });
+
     // ── Callback methods ──
 
     registry.register('dart:core::Map::forEach#1', (args) {

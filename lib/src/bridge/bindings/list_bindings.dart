@@ -125,6 +125,11 @@ abstract final class ListBindings {
       return (args[0] as List).toList();
     });
 
+    // list.cast<R>() → List<R>
+    registry.register('dart:core::List::cast#0', (args) {
+      return (args[0] as List).cast();
+    });
+
     // ── Static constructors ──
 
     // List.filled(int length, E fill, {bool growable = false}) -- 3 formal params
@@ -655,6 +660,10 @@ abstract final class ListBindings {
     });
     registry.register('dart:core::_GrowableList::single#0', (args) {
       return (args[0] as List).single;
+    });
+
+    registry.register('dart:core::_GrowableList::cast#0', (args) {
+      return (args[0] as List).cast();
     });
 
     // _GrowableList.generate -- Kernel may resolve List.generate to _GrowableList.generate

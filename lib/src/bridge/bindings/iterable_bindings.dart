@@ -22,6 +22,11 @@ abstract final class IterableBindings {
       return Iterable.generate(count);
     });
 
+    // iterable.cast<R>() → Iterable<R>
+    registry.register('dart:core::Iterable::cast#0', (args) {
+      return (args[0] as Iterable).cast();
+    });
+
     // ── Getters ──
     registry.register('dart:core::Iterable::length#0', (args) {
       return (args[0] as Iterable).length;

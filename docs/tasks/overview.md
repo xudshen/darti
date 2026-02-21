@@ -129,6 +129,7 @@
 | [6.1](phase6/batch-6.1-async-core.md) | 异步核心 (Ch7) — Frame-as-Continuation | 5 | ✅ |
 | [6.2](phase6/batch-6.2-language-features.md) | 高级语言特性 — Records/Tearoffs/Extensions/Patterns | 6 | ✅ |
 | [6.3](phase6/batch-6.3-co19-harness-v4.md) | co19 Harness v4 — dart:async Bridge + 异步测试协议 | 6 | |
+| [6.3+](phase6/batch-6.3-binding-gaps.md) | Async/Collection/Math Binding 缺口补全 | 12 | ✅ |
 | [6.4](phase6/batch-6.4-sandbox.md) | 沙箱 (Ch8) — DarticVerifier + 资源限制 | 3 | |
 
 **里程碑：**

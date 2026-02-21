@@ -22,6 +22,11 @@ abstract final class SetBindings {
       return (args[0] as Set).add(args[1]);
     });
 
+    // _Set.cast<R>() → Set<R>
+    registry.register('dart:_compact_hash::_Set::cast#0', (args) {
+      return (args[0] as Set).cast();
+    });
+
     // ── Getters ──
     registry.register('dart:core::Set::length#0', (args) {
       return (args[0] as Set).length;
@@ -72,6 +77,15 @@ abstract final class SetBindings {
     });
     registry.register('dart:core::Set::difference#1', (args) {
       return (args[0] as Set).difference(args[1] as Set);
+    });
+    // set.cast<R>() → Set<R>
+    registry.register('dart:core::Set::cast#0', (args) {
+      return (args[0] as Set).cast();
+    });
+    registry.register('dart:core::Set::symmetricDifference#1', (args) {
+      final a = args[0] as Set;
+      final b = args[1] as Set;
+      return a.union(b).difference(a.intersection(b));
     });
     registry.register('dart:core::Set::toList#1', (args) {
       if (args.length > 1 && args[1] != null) {

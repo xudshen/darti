@@ -8,13 +8,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:dartic/src/bridge/core_bindings.dart';
-import 'package:dartic/src/bridge/host_function_registry.dart';
-import 'package:dartic/src/compiler/compiler.dart';
-import 'package:dartic/src/runtime/interpreter.dart';
-import 'package:kernel/ast.dart' as ir;
-import 'package:kernel/binary/ast_from_binary.dart';
-
 // ---------------------------------------------------------------------------
 // Data model
 // ---------------------------------------------------------------------------
@@ -168,7 +161,12 @@ bool isNegativeTest(String source) {
 /// the test to be skipped. Transitive imports (e.g., `Utils/expect.dart`
 /// importing `dart:async`) are NOT checked — only the test file's own source
 /// is scanned.
-const _supportedDartLibraries = {'dart:core', 'dart:async'};
+const _supportedDartLibraries = {
+  'dart:core',
+  'dart:async',
+  'dart:math',
+  'dart:collection',
+};
 
 
 /// Regex matching `import 'dart:xxx'` or `import "dart:xxx"` statements.
@@ -338,7 +336,14 @@ List<TestEntry> discoverTests(List<String> rootDirs) {
 ///   exception, the test passes. If execution throws, the test fails.
 /// - **Error**: If the test file cannot be read or an unexpected internal error
 ///   occurs, the result is [TestResult.error].
-Future<TestOutcome> runTest(TestEntry entry) async {
+/// Path to the pre-compiled dartic_run kernel snapshot.
+/// Set by [_precompileRunner] before tests are executed.
+String? _darticRunnerDill;
+
+Future<TestOutcome> runTest(
+  TestEntry entry, {
+  Duration timeout = const Duration(seconds: 30),
+}) async {
   // Check that the file exists.
   final file = File(entry.path);
   if (!file.existsSync()) {
@@ -409,27 +414,62 @@ Future<TestOutcome> runTest(TestEntry entry) async {
       );
     }
 
-    // Step 2: Load the .dill and compile to dartic bytecode.
-    final bytes = File(dillPath).readAsBytesSync();
-    final component = ir.Component();
-    BinaryBuilder(bytes).readComponent(component);
-    final module = DarticCompiler(component).compile();
+    // Step 2: Execute via subprocess.
+    // dartic_run.dart compiles .dill → dartic bytecode and executes.
+    // The Dart VM naturally keeps the event loop running until all pending
+    // async operations complete — matching how the official co19 runner
+    // works (process-based execution).
+    final process = await Process.start(
+      'fvm',
+      ['dart', _darticRunnerDill!, dillPath],
+    );
+    final stdoutFuture = process.stdout.transform(utf8.decoder).join();
+    final stderrFuture = process.stderr.transform(utf8.decoder).join();
 
-    // Step 3: Execute in the interpreter with host function bindings.
-    final registry = HostFunctionRegistry();
-    CoreBindings.registerAll(registry);
-    final interp = DarticInterpreter(hostFunctionRegistry: registry);
-    interp.execute(module);
+    final exitCode = await process.exitCode.timeout(
+      timeout,
+      onTimeout: () {
+        process.kill();
+        return -1;
+      },
+    );
+
+    final output = await stdoutFuture
+        .timeout(const Duration(seconds: 2), onTimeout: () => '');
+    final errors = (await stderrFuture
+            .timeout(const Duration(seconds: 2), onTimeout: () => ''))
+        .trim();
+
+    if (exitCode == -1) {
+      return TestOutcome(
+        entry: entry,
+        result: TestResult.error,
+        message: 'timeout after ${timeout.inSeconds}s',
+      );
+    }
+
+    // Check async test markers in stdout.
+    final hasWaitForDone = output.contains('unittest-suite-wait-for-done');
+    final hasSuccess = output.contains('unittest-suite-success');
+
+    if (exitCode != 0) {
+      return TestOutcome(
+        entry: entry,
+        result: TestResult.fail,
+        message: errors.isNotEmpty ? errors : 'exit code $exitCode',
+      );
+    }
+
+    if (hasWaitForDone && !hasSuccess) {
+      return TestOutcome(
+        entry: entry,
+        result: TestResult.fail,
+        message: 'async test: wait-for-done without success',
+      );
+    }
 
     return TestOutcome(entry: entry, result: TestResult.pass);
   } on Object catch (e) {
-    // Catch-all for any unexpected error during compilation or execution.
-    // Distinguish between test failures (runtime throws from the test program)
-    // and internal errors (harness/compiler bugs).
-    //
-    // For now, treat all exceptions during execution as test failures rather
-    // than errors, since the most common case is the interpreter throwing
-    // because of unsupported features exercised by the test.
     return TestOutcome(
       entry: entry,
       result: TestResult.fail,
@@ -496,21 +536,26 @@ class Pool {
 /// returns [TestResult.error] with a timeout message.
 ///
 /// An optional [runner] parameter allows injecting a custom test function
-/// for testing purposes.
+/// for testing purposes (legacy path — uses Future.timeout).
 Future<TestOutcome> runTestWithTimeout(
   TestEntry entry,
   Duration timeout, {
   Future<TestOutcome> Function(TestEntry)? runner,
 }) async {
-  try {
-    return await (runner ?? runTest)(entry).timeout(timeout);
-  } on TimeoutException {
-    return TestOutcome(
-      entry: entry,
-      result: TestResult.error,
-      message: 'timeout after ${timeout.inSeconds}s',
-    );
+  if (runner != null) {
+    // Legacy path for test injection — uses Future.timeout.
+    try {
+      return await runner(entry).timeout(timeout);
+    } on TimeoutException {
+      return TestOutcome(
+        entry: entry,
+        result: TestResult.error,
+        message: 'timeout after ${timeout.inSeconds}s',
+      );
+    }
   }
+  // Subprocess path — timeout is handled inside runTest via process.kill().
+  return runTest(entry, timeout: timeout);
 }
 
 /// Runs all [entries] in parallel with at most [jobs] concurrent executions.
@@ -533,7 +578,7 @@ Future<List<TestOutcome>> runTestsParallel(
   Future<void> runOne(int index) async {
     await pool.acquire();
     try {
-      results[index] = await runTestWithTimeout(entries[index], timeout);
+      results[index] = await runTest(entries[index], timeout: timeout);
     } finally {
       pool.release();
       completed++;
@@ -1116,7 +1161,7 @@ Future<void> main(List<String> args) async {
   }
 
   // Default jobs to CPU core count.
-  jobs ??= Platform.numberOfProcessors;
+  final effectiveJobs = jobs ?? Platform.numberOfProcessors;
 
   // -- Discover tests. --
   final entries = discoverTests(dirs);
@@ -1130,20 +1175,44 @@ Future<void> main(List<String> args) async {
     return;
   }
 
+  // -- Pre-compile the subprocess runner for faster execution. --
+  stderr.writeln('Pre-compiling dartic runner...');
+  final runnerDillDir = await Directory.systemTemp.createTemp('dartic_runner_');
+  final runnerDillPath = '${runnerDillDir.path}/dartic_run.dill';
+  final precompileResult = await Process.run(
+    'fvm',
+    ['dart', 'compile', 'kernel', 'tool/dartic_run.dart', '-o', runnerDillPath],
+  );
+  if (precompileResult.exitCode != 0) {
+    stderr.writeln('Failed to compile dartic_run.dart:');
+    stderr.writeln(precompileResult.stderr);
+    exit(1);
+  }
+  _darticRunnerDill = runnerDillPath;
+
   // -- Run mode: execute tests in parallel. --
   stderr.writeln(
     'Discovered ${entries.length} test(s). '
-    'Running with $jobs worker(s), ${timeoutSeconds}s timeout...',
+    'Running with $effectiveJobs worker(s), ${timeoutSeconds}s timeout...',
   );
 
   final progress = _ProgressReporter(entries.length);
+
+  // Each test runs as a subprocess (fvm dart dartic_run.dill test.dill).
+  // The Dart VM naturally handles async test completion — the process stays
+  // alive until all pending Futures/Timers complete, then exits.
+  // Timeout is handled by killing the subprocess.
   final outcomes = await runTestsParallel(
     entries,
-    jobs: jobs,
+    jobs: effectiveJobs,
     timeout: Duration(seconds: timeoutSeconds),
     onProgress: (completed, total, result) => progress.report(result),
   );
+
   progress.finish();
+
+  // Clean up pre-compiled runner.
+  await runnerDillDir.delete(recursive: true);
   stderr.writeln('');
 
   // -- Compute stats and print report to stdout. --
@@ -1168,4 +1237,8 @@ Future<void> main(List<String> args) async {
       stdout.write(formatDiff(diff));
     }
   }
+
+  // Force exit: timed-out tests leave stale async operations (pending
+  // Futures, Timers, microtasks) that keep the Dart event loop alive.
+  exit(0);
 }

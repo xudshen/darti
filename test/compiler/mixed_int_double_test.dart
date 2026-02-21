@@ -1,5 +1,4 @@
 import 'package:dartic/src/bytecode/opcodes.dart';
-import 'package:dartic/src/runtime/interpreter.dart';
 import 'package:test/test.dart';
 
 import '../helpers/compile_helper.dart';

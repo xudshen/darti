@@ -115,13 +115,22 @@ void main() {}
       expect(findUnsupportedImport(source), isNull);
     });
 
-    test('detects dart:math as unsupported', () {
+    test('dart:math is now supported (Phase 6)', () {
       const source = '''
 import 'dart:math';
 
 void main() {}
 ''';
-      expect(findUnsupportedImport(source), equals('dart:math'));
+      expect(findUnsupportedImport(source), isNull);
+    });
+
+    test('dart:collection is now supported (Phase 6)', () {
+      const source = '''
+import 'dart:collection';
+
+void main() {}
+''';
+      expect(findUnsupportedImport(source), isNull);
     });
 
     test('detects dart:convert as unsupported', () {
