@@ -211,10 +211,10 @@ Top 失败原因：
 - [x] 5.4.2 expect_common 完整接入 + skip list 管理
 - [x] 5.4.3 验证——跑 LibTest/core + 新增类别 — **54.4% (611/1124)**
 - [x] 5.4.4 回归跑——重跑 Phase 2-4 全部类别 — **81.8% (3407/4167), 0 regression (10 async skipped)**
-- [ ] `fvm dart analyze` 零警告
-- [ ] `fvm dart test` 全部通过
+- [x] `fvm dart analyze` 零警告
+- [x] `fvm dart test` 全部通过 — 2340/2340
 - [x] 零回归（或回归已修复）— 10 async regressions moved to skip list
-- [ ] commit 已提交
-- [ ] overview.md 已更新
-- [ ] development-roadmap.md Phase 5 里程碑已更新
-- [ ] code review 已完成
+- [x] commit 已提交 — `ef18855`
+- [x] overview.md 已更新
+- [x] development-roadmap.md Phase 5 里程碑已更新
+- [x] code review 已完成 — 0 critical, 2 important (已修复), 4 suggestions (documented)

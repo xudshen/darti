@@ -528,6 +528,8 @@ extension on DarticCompiler {
         valLoc == ResultLoc.ref ? _allocRefReg() : _allocValueReg();
     _emitMove(savedReg, valReg, valLoc);
 
+    // Use original valReg (not savedReg) — _emitCallHost copies via MOVE,
+    // it does not destroy the source register.
     final compiledArgs = <(int, ResultLoc, ir.DartType?)>[
       (valReg, valLoc, valType),
     ];

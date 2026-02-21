@@ -20,8 +20,8 @@ import '../host_function_registry.dart';
 abstract final class ErrorBindings {
   static void register(HostFunctionRegistry registry) {
     // ── ArgumentError ──
-    // Kernel may report 1 or 2 params depending on SDK version (hidden
-    // _hasMessage field). Register both variants.
+    // Kernel may report 1 or 2 params depending on SDK version (the
+    // optional `name` parameter). Register both variants.
     registry.register('dart:core::ArgumentError::#1', (args) {
       return ArgumentError(args[0]);
     });
