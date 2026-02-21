@@ -37,7 +37,7 @@ abstract final class Op {
   static const ushr = 0x1C;
   static const addIntImm = 0x1D;
 
-  // ── Float Arithmetic (0x20-0x24) ──
+  // ── Float Arithmetic (0x20-0x24, 0x2E) ──
   static const addDbl = 0x20;
   static const subDbl = 0x21;
   static const mulDbl = 0x22;
@@ -54,6 +54,7 @@ abstract final class Op {
   static const unboxDouble = 0x2B;
   static const unboxBool = 0x2C;
   static const notBool = 0x2D;
+  static const modDbl = 0x2E;
 
   // ── Comparison (0x30-0x3F) ──
   static const ltInt = 0x30;

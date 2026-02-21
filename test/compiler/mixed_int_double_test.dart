@@ -218,24 +218,23 @@ void main() {}
   });
 
   // ── modDbl opcode verification ──
-  // TODO: uncomment after Task 2 adds modDbl opcode
-  // group('modDbl opcode', () {
-  //   test('double % double uses MOD_DBL', () async {
-  //     final module = await compileDart('''
-  // double f(double a, double b) => a % b;
-  // void main() {}
-  // ''');
-  //     final f = findFunc(module, 'f');
-  //     expect(findOp(f.bytecode, Op.modDbl), isNot(-1),
-  //         reason: 'MOD_DBL not found');
-  //   });
-  //
-  //   test('double % double end-to-end', () async {
-  //     expect(await compileAndRun('''
-  // double main() { return 10.0 % 3.5; }
-  // '''), closeTo(3.0, 0.001));
-  //   });
-  // });
+  group('modDbl opcode', () {
+    test('double % double uses MOD_DBL', () async {
+      final module = await compileDart('''
+double f(double a, double b) => a % b;
+void main() {}
+''');
+      final f = findFunc(module, 'f');
+      expect(findOp(f.bytecode, Op.modDbl), isNot(-1),
+          reason: 'MOD_DBL not found');
+    });
+
+    test('double % double end-to-end', () async {
+      expect(await compileAndRun('''
+double main() { return 10.0 % 3.5; }
+'''), closeTo(3.0, 0.001));
+    });
+  });
 
   // ── Benchmark reproducer ──
   group('benchmark reproducer', () {

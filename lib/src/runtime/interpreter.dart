@@ -1344,6 +1344,13 @@ class DarticInterpreter {
           vs.writeDouble(
               vBase + a, vs.readDouble(vBase + b) / vs.readDouble(vBase + c));
 
+        case Op.modDbl: // MOD_DBL A, B, C — doubleView[A] = doubleView[B] % doubleView[C]
+          final a = (instr >> 8) & 0xFF;
+          final b = (instr >> 16) & 0xFF;
+          final c = (instr >> 24) & 0xFF;
+          vs.writeDouble(
+              vBase + a, vs.readDouble(vBase + b) % vs.readDouble(vBase + c));
+
         case Op.negDbl: // NEG_DBL A, B — doubleView[A] = -doubleView[B]
           final a = (instr >> 8) & 0xFF;
           final b = (instr >> 16) & 0xFF;
