@@ -706,13 +706,16 @@ class DarticCompiler {
   int _compileGlobalInitializer(ir.Field field, int globalIndex) {
     _resetFunctionState(isEntry: true);
     _currentInitializingField = field;
-
-    final (reg, loc) = _compileExpression(field.initializer!);
-    // Use the *initializer's* inferred type for boxing — field.type may be
-    // too broad (dynamic, Object, num) to distinguish int vs double.
-    final refReg = _boxToRefIfValue(reg, loc, _inferExprType(field.initializer!));
-    _emitter.emit(encodeABx(Op.storeGlobal, refReg, globalIndex));
-    _currentInitializingField = null;
+    try {
+      final (reg, loc) = _compileExpression(field.initializer!);
+      // Use the *initializer's* inferred type for boxing — field.type may be
+      // too broad (dynamic, Object, num) to distinguish int vs double.
+      final refReg =
+          _boxToRefIfValue(reg, loc, _inferExprType(field.initializer!));
+      _emitter.emit(encodeABx(Op.storeGlobal, refReg, globalIndex));
+    } finally {
+      _currentInitializingField = null;
+    }
 
     // HALT (end of initializer).
     _emitter.emit(encodeAx(Op.halt, 0));

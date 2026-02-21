@@ -110,8 +110,10 @@ abstract final class FutureBindings {
       final future = args[0] as Future;
       final onError = args[1] as Function;
       final test = args.length > 2 ? args[2] as Function? : null;
+      // Pass onError directly — catchError natively dispatches to 1-arg
+      // (Object) or 2-arg (Object, StackTrace) based on function arity.
       return future.catchError(
-        (e) => onError(e),
+        onError,
         test: test != null ? (e) => test(e) as bool : null,
       );
     });

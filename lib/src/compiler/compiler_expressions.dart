@@ -2270,6 +2270,9 @@ extension on DarticCompiler {
       // Empty record: shape = [0], no field registers needed.
       final shape = <Object>[0];
       final shapeIdx = _constantPool.addRef(shape);
+      assert(shapeIdx <= 0xFF,
+          'CREATE_RECORD shape index $shapeIdx exceeds 8-bit C operand; '
+          'WIDE prefix not yet supported for this opcode');
       _emitter.emit(encodeABC(Op.createRecord, destReg, 0, shapeIdx));
       return (destReg, ResultLoc.ref);
     }
@@ -2293,6 +2296,9 @@ extension on DarticCompiler {
       ...named.map((n) => n.name),
     ];
     final shapeIdx = _constantPool.addRef(shape);
+    assert(shapeIdx <= 0xFF,
+        'CREATE_RECORD shape index $shapeIdx exceeds 8-bit C operand; '
+        'WIDE prefix not yet supported for this opcode');
 
     // Move all field values into consecutive ref registers.
     final targetRegs = List.generate(fieldRegs.length, (_) => _allocRefReg());
@@ -2362,6 +2368,9 @@ extension on DarticCompiler {
     if (totalFields == 0) {
       final shape = <Object>[0];
       final shapeIdx = _constantPool.addRef(shape);
+      assert(shapeIdx <= 0xFF,
+          'CREATE_RECORD shape index $shapeIdx exceeds 8-bit C operand; '
+          'WIDE prefix not yet supported for this opcode');
       _emitter.emit(encodeABC(Op.createRecord, destReg, 0, shapeIdx));
       return (destReg, ResultLoc.ref);
     }
@@ -2387,6 +2396,9 @@ extension on DarticCompiler {
       ...namedEntries.map((e) => e.key),
     ];
     final shapeIdx = _constantPool.addRef(shape);
+    assert(shapeIdx <= 0xFF,
+        'CREATE_RECORD shape index $shapeIdx exceeds 8-bit C operand; '
+        'WIDE prefix not yet supported for this opcode');
 
     // Move into consecutive ref registers.
     final targetRegs = List.generate(fieldRegs.length, (_) => _allocRefReg());
